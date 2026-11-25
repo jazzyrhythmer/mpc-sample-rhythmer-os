@@ -4,13 +4,13 @@ RHYTHMER OS **0.3.0** for MPC Sample. Choose a chapter from the contents, or fol
 
 ## Essential controls
 
-![Essential button combinations](../runtime/docs/images/rhythmer/essential-controls.png)
+![Essential button combinations](../runtime/docs/images/rhythmer/030-essential-controls.png)
 
 **Push** means press and release the large rotary encoder. **Turn** means rotate it. **B1 / B2 / B3** are the three buttons above the screen, from left to right. **K1 / K2 / K3** are the three knobs below it.
 
 | Task | Controls | Result |
 | --- | --- | --- |
-| Return or cancel | Hold SHIFT, push the encoder, then release SHIFT | Back one level. A confirmation is cancelled. It also works in MENU. |
+| Return or cancel | Hold SHIFT, push the encoder, then release SHIFT | Back/cancel on most pages and in MENU. In MIXER it renames a used track; in SONG it adds a marker. |
 | Open MIXER | Press PAD FX + KNOB FX together | Select and mix tracks; MENU → HERE → TRACK SETUP changes the selected track's instrument/type. |
 | Select a track | Hold PAD BANK, tap pad 1–16, release PAD BANK | The header changes to that track. This does not record a note. |
 | Play the selected instrument | Press SAMPLE | Pads play the selected instrument. |
@@ -45,11 +45,11 @@ A track with no notes in a launched sequence is silent. Changing just one track'
 - **Drum / Sample Kit:** independently loaded audio pads. Load samples or an MPC kit.
 - **Keygroup:** one sample or multisampled instrument played across notes.
 - **Plugin:** one synth/percussion instrument. **Rhythmer Kit is a plug-in** with sixteen different pad sounds; other instruments focus on one sound across pitches.
-- **MIDI, Full:** notes/control sent to an external instrument. It needs external audio routing to be heard.
-- **Audio, Full:** an input take recorded against a pattern.
+- **MIDI:** notes/control sent to an external instrument. It needs external audio routing to be heard.
+- **Audio:** an input take recorded against a pattern.
 - **EMPTY:** no instrument. TRACK TYPE can make a track EMPTY while keeping its patterns. DELETE TRACK separately removes its sound and patterns after confirmation.
 
-A first install starts in Basic. Settings → FEATURES = FULL shows MIDI/Audio and advanced pages such as Sends and Motion/Mod/Macro. Existing project content is not deleted when switching modes.
+A first install starts in Basic. Track types remain available in both modes. Settings → FEATURES = FULL exposes advanced pages such as Sends and Motion/Mod/Macro. Existing project content is not deleted when switching modes.
 
 ### Where a change applies
 
@@ -89,7 +89,7 @@ If a pad changes a pattern number instead of playing a sound, you are on PATTERN
 
 ## 3. Start a project and add an instrument
 
-![Track type cards: choose the role of the selected empty track](../runtime/docs/images/rhythmer/020-tracktypes.png)
+![An unused track: turn to Plugin and push; MIDI/Audio are also available](../runtime/docs/images/rhythmer/030-stageemptytypes.png)
 
 A normal NEW project loads **Rhythmer Kit / K-WASUB / 909** on track 1. Opening a saved project keeps its saved instruments. To start with an empty kit instead: **SHIFT + Pad 16 → B3 NEW → B2 EMPTY** on the confirmation. Do this only when you intend to start a new project.
 
@@ -101,7 +101,7 @@ To add a plug-in on a different track:
 4. In the plug-in browser, turn to the engine name and push to load it.
 5. Wait for loading to finish. Press **SAMPLE** to play it.
 
-The type cards are **Drum / Keygroup / Plugin** in Basic. **MIDI / Audio** are added in Full. To show Full: **SHIFT + Pad 8 → Settings → K1 FEATURES = FULL** on the main Settings page. Changing Basic/Full does not delete tracks or notes.
+The type cards are **Drum / Keygroup / Plugin / MIDI / Audio**. The existing-track **TRACK TYPE** menu also offers **EMPTY**; these types are available in Basic and Full. To show Full: **SHIFT + Pad 8 → Settings → K1 FEATURES = FULL** on the main Settings page. Changing Basic/Full does not delete tracks or notes.
 
 | Type | What it contains | What to load |
 | --- | --- | --- |
@@ -117,7 +117,11 @@ An intentionally empty **Sample Kit** is not the same as an EMPTY track. On its 
 
 ## 4. Replace an instrument or change track type
 
-![TRACK SETUP: replace an instrument, change type or delete separately](../runtime/docs/images/rhythmer/020-trackactions.png)
+![MIXER → hold encoder → HERE: select TRACK SETUP](../runtime/docs/images/rhythmer/030-menumixer.png)
+
+![TRACK SETUP: replace an instrument, change type or delete separately](../runtime/docs/images/rhythmer/030-trackactions.png)
+
+![TRACK TYPE changes the selected track’s role while retaining its patterns; all six types are available in Basic and Full](../runtime/docs/images/rhythmer/030-tracktypes.png)
 
 **Start:** select the target track, then press **PAD FX + KNOB FX → hold encoder → HERE → TRACK SETUP**.
 
@@ -125,7 +129,7 @@ An intentionally empty **Sample Kit** is not the same as an EMPTY track. On its 
 | --- | --- | --- |
 | CHANGE PLUG-IN | The selected track's plug-in | Patterns and track mix; confirm replacement when asked |
 | LOAD SAMPLE on a sample track | The selected pad's sample | Other pads and the track's patterns |
-| TRACK TYPE | Plugin / Sample Kit / Keygroup / Empty; Full also offers MIDI / Audio | All 128 patterns, selected pattern and track mix; type-specific sound state is replaced |
+| TRACK TYPE | Plugin / Sample Kit / Keygroup / MIDI / Audio / Empty in Basic and Full | All 128 patterns, selected pattern and track mix; type-specific sound state is replaced |
 | LOAD MPC KIT | The kit from a project/program | Destination patterns; it does not open the whole source project |
 | DELETE TRACK | Sound and patterns | This is a separate confirmed deletion; Undo can restore it |
 
@@ -135,9 +139,9 @@ You can also open an instrument's preset list and press **B2 PLUG-INS**, or pres
 
 ## 5. Find and load presets
 
-![Rhythmer Kit: kit name, selected pad and whole-kit filter](../runtime/docs/images/rhythmer/020-kit-home.png)
+![Rhythmer Kit PRESETS: DRUM-X, whole-kit CUTOFF / RESONANCE and TRACK LEVEL](../runtime/docs/images/rhythmer/030-kit-home.png)
 
-![FM-106: original A11 Brass preset](../runtime/docs/images/rhythmer/020-fm106-home.png)
+![FM-106: original A11 Brass preset](../runtime/docs/images/rhythmer/030-chords-home.png)
 
 1. Select the plug-in track and press **SAMPLE**.
 2. Press **B1** until its **PRESETS** page is selected. The engine and current preset name are shown.
@@ -244,9 +248,9 @@ On the native sample track, press **B1/B2/B3 repeatedly until the required capti
 
 ## 9. Record and play patterns
 
-![PATTERNS: set length, quantise and swing](../runtime/docs/images/rhythmer/020-patterns.png)
+![PATTERNS: set length, quantise and swing](../runtime/docs/images/rhythmer/030-patterns.png)
 
-![Recording: enter notes on the selected track](../runtime/docs/images/rhythmer/020-recordseq.png)
+![Note recording in SEQ view: the recording indicator is active; return to SAMPLE to play the instrument](../runtime/docs/images/rhythmer/030-note-recording.png)
 
 A track's **pattern** stores its notes and supported motion. A **sequence** launches its numbered pattern across tracks. Track 1 pattern 1 and track 2 pattern 1 are different patterns.
 
@@ -385,19 +389,29 @@ Load A and Load B are different actions. On source B changes, the bar structure 
 
 ## 13. Mix and identify the filter/effect you are changing
 
-![MIXER: select a track and balance LEVEL, PAN and SEND A](../runtime/docs/images/rhythmer/020-tracks.png)
+![MIXER overview: select a track; the fader sets its level and K1–K3 control sends A–C](../runtime/docs/images/rhythmer/030-mixer.png)
 
-![Full mode: track sends to shared buses](../runtime/docs/images/rhythmer/020-sends.png)
+![FULL SENDS, second row: tap + for PAN / OUTPUT / SEND D](../runtime/docs/images/rhythmer/030-mixerrow.png)
+
+![Hold +: selected-channel card, with K1–K3 on SEND A / B / C](../runtime/docs/images/rhythmer/030-mixercard.png)
 
 ### Track levels and sends A–D
 
-1. Press **PAD FX + KNOB FX** together to open **MIXER**. Turn the encoder or press the track's pad to select it. Use the **fader** for that channel's level.
+1. Press **PAD FX + KNOB FX** together to open **MIXER**. Turn the encoder or press the track's pad to select it. Use the **fader** for that channel's level. Hold **+** to open the selected-channel card; release it to keep that view. Hold **−** to return to all strips. Short + / − taps change parameter rows; they do not switch these views.
 2. In BASIC, **B1 SENDS** offers **ENABLE FULL** for the advanced mixer. **B1 CANCEL** keeps BASIC; **B3 ENABLE FULL** changes the existing FEATURES setting without changing sounds or patterns.
 3. In FULL, press **B1** until **SENDS** is selected. **K1 / K2 / K3** adjust this channel's sends **A / B / C** directly. Press **+** for the second row: **PAN / OUT / SEND D**; K3 adjusts D. Press **−** for A / B / C again. SHIFT temporarily shows the other row.
 4. Press **PAD BANK** to show the other mixer channels. Select the labelled bus A–D and use the **fader** for its shared return level. Press PAD BANK again for the tracks.
 5. **B1** switches SENDS and FX. **B2 EQ** and **B3 COMP** select the other mixer blocks in FULL. Turn NOTE REPEAT off to use those page buttons when its rate overlay is active.
 
-![BASIC: confirm FULL mode before opening SENDS](../runtime/docs/images/rhythmer/020-sends-enable-full.png)
+![BASIC: confirm FULL mode before opening SENDS](../runtime/docs/images/rhythmer/030-sends-enable-full.png)
+
+![BASIC channel card: K1 is SEND A; SHIFT + K1 is PAN](../runtime/docs/images/rhythmer/030-mixerbasic.png)
+
+![PAD BANK selects the bus row; use the selected bus’s fader for its return level](../runtime/docs/images/rhythmer/030-mixerbus.png)
+
+![B2 EQ: press again for the next band group; K1–K3 edit the visible bands](../runtime/docs/images/rhythmer/030-mixereq.png)
+
+![B3 COMP: K1–K3 edit the visible compressor controls; a short + tap selects its second row](../runtime/docs/images/rhythmer/030-mixercomp.png)
 
 **SHIFT + encoder push** cancels the confirmation. In the Mixer itself, that gesture names a selected used track; press **SAMPLE** to return to its sound. **MENU → HERE → TRACK SETUP** opens instrument/type changes. Its BACK/SELECT buttons retain their own jobs while Note Repeat continues running.
 
@@ -491,7 +505,7 @@ MIDI clock display is stabilised, but the clock-following algorithm is unchanged
 | Kit knob changes the wrong sound | Selected P number | Hit the intended pad; check its Pxx label before turning the knob |
 | Sound is quiet or silent | Track/pad level, main filter, mute and outputs | Try a known factory preset; open cutoff; check native/engine effects and MIDI input/port |
 | Sound continues after STOP | Sustained notes/effect tails | Double STOP within 400 ms |
-| TRACK SETUP is replaced by rate buttons | NOTE REPEAT / ARP | Turn that feature off; return to MIXER |
+| Mixer soft keys show repeat rates | NOTE REPEAT / ARP | Turn that feature off. Hold encoder → HERE → TRACK SETUP changes track type. |
 | Break is half/double speed | LOAD BARS | Reload using the source's actual bar count |
 | LOOP variation or Grain does nothing | CHOP vs LOOP; Hold; STRETCH status | Use the conditions in the six-page table above |
 | Save says error or a User preset is missing | Card space/write access; STATUS | Fix storage and save again. Do not assume the preset exists until READY |

@@ -18,8 +18,8 @@ A track with no notes in a launched sequence is silent. Changing just one track'
 - **Drum / Sample Kit:** independently loaded audio pads. Load samples or an MPC kit.
 - **Keygroup:** one sample or multisampled instrument played across notes.
 - **Plugin:** one synth/percussion instrument. **Rhythmer Kit is a plug-in** with sixteen different pad sounds; other instruments focus on one sound across pitches.
-- **MIDI, Full:** notes/control sent to an external instrument. It needs external audio routing to be heard.
-- **Audio, Full:** an input take recorded against a pattern.
+- **MIDI:** notes/control sent to an external instrument. It needs external audio routing to be heard.
+- **Audio:** an input take recorded against a pattern.
 - **EMPTY:** no instrument. TRACK TYPE can make a track EMPTY while keeping its patterns. DELETE TRACK separately removes its sound and patterns after confirmation.
 
 A first install starts in Basic. Settings → FEATURES = FULL shows MIDI/Audio and advanced pages such as Sends and Motion/Mod/Macro. Existing project content is not deleted when switching modes.

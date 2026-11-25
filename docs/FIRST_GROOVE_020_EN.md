@@ -33,14 +33,16 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 2. Load the drum kit on track 1
 
-![Empty track: choose its type](../runtime/docs/images/rhythmer/020-tracktypes.png)
+![MIXER → hold encoder → HERE: select TRACK SETUP](../runtime/docs/images/rhythmer/030-menumixer.png)
 
-![Rhythmer Kit: choose a complete kit preset](../runtime/docs/images/rhythmer/020-kit-presets.png)
+![TRACK TYPE: choose PLUG-IN for the existing sample-kit track; MIDI/Audio are also available](../runtime/docs/images/rhythmer/030-tracktypes.png)
 
-![Rhythmer Kit: kit name, selected pad and whole-kit filter](../runtime/docs/images/rhythmer/020-kit-home.png)
+![Rhythmer Kit: choose a complete kit preset](../runtime/docs/images/rhythmer/030-kit-presets.png)
+
+![Rhythmer Kit PRESETS: DRUM-X, whole-kit CUTOFF / RESONANCE and TRACK LEVEL](../runtime/docs/images/rhythmer/030-kit-home.png)
 
 1. Press **PAD FX + KNOB FX together** to open MIXER.
-2. Press **MENU → HERE → TRACK SETUP**, select **TRACK TYPE**, then **PLUG-IN**.
+2. Hold the **encoder** to open **MENU**, select **HERE → TRACK SETUP**, select **TRACK TYPE**, then **PLUG-IN**.
 3. Choose **Rhythmer Kit** from the top of the plug-in list and push to load it.
 4. Press **SAMPLE**, then B1 until **PRESETS** is selected.
 5. Push to open the preset list, choose **DRUM-X**, then push / **B3 LOAD**.
@@ -51,9 +53,9 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 3. Set tempo and the drum pattern length
 
-![Hold TAP TEMPO and turn the encoder](../runtime/docs/images/rhythmer/020-tempo.png)
+![Hold TAP TEMPO and turn the encoder](../runtime/docs/images/rhythmer/030-tempo.png)
 
-![PATTERNS: length, quantise and swing controls](../runtime/docs/images/rhythmer/020-patterns.png)
+![PATTERNS: length, quantise and swing controls](../runtime/docs/images/rhythmer/030-patterns.png)
 
 1. Hold **TAP TEMPO** and turn the encoder to **140 BPM**, then release it.
 2. Press **SEQ**. If an editor opens, press B1 for SEQUENCES; press B1 again for **PATTERNS**.
@@ -65,7 +67,7 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 4. Record drums
 
-![Record notes into the selected pattern](../runtime/docs/images/rhythmer/020-recordseq.png)
+![Note recording in SEQ view: the recording dot is active; press SAMPLE before playing instrument pads](../runtime/docs/images/rhythmer/030-note-recording.png)
 
 ![Step Edit: select and edit the current pattern](../runtime/docs/images/rhythmer/020-stepedit.png)
 
@@ -80,9 +82,9 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 5. Load and record a bass on track 2
 
-![FMini-1: open the list and choose MOOG BASS](../runtime/docs/images/rhythmer/020-fmini-presets.png)
+![FMini-1: open the list and choose MOOG BASS](../runtime/docs/images/rhythmer/030-bass-presets.png)
 
-![Track 2: FMini-1 with MOOG BASS loaded](../runtime/docs/images/rhythmer/020-fmini-home.png)
+![Track 2: FMini-1 with MOOG BASS loaded](../runtime/docs/images/rhythmer/030-bass-home.png)
 
 ![Hold SAMPLE to open the Keys settings](../runtime/docs/images/rhythmer/020-sampleheldkeys.png)
 
@@ -98,7 +100,7 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 6. Add chords on track 3
 
-![FM-106: original A11 Brass preset](../runtime/docs/images/rhythmer/020-fm106-home.png)
+![FM-106: original A11 Brass preset](../runtime/docs/images/rhythmer/030-chords-home.png)
 
 1. Select **track 3** with PAD BANK + pad 3.
 2. Choose Plugin → **FM-106**. Open its preset list and load **A11 Brass**.
@@ -135,11 +137,13 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 7. Balance the tracks
 
-![MIXER: select a track and balance LEVEL, PAN and SEND A](../runtime/docs/images/rhythmer/020-tracks.png)
+![MIXER overview: select a track; the fader sets its level and K1–K3 control sends A–C](../runtime/docs/images/rhythmer/030-mixer.png)
+
+![Hold +: track 2 Bass in the channel card; K1/K2/K3 are sends A/B/C](../runtime/docs/images/rhythmer/030-mixercard.png)
 
 ![Rhythmer Kit: selected pad sound controls](../runtime/docs/images/rhythmer/020-kit-edit.png)
 
-1. Press PAD FX + KNOB FX together for **MIXER**.
+1. Press PAD FX + KNOB FX together for **MIXER**. Hold **+** to show the selected-channel card; hold **−** to return to all channel strips. A short + / − tap changes the controls row instead.
 2. Select track 1, 2 or 3 using the encoder or PAD BANK + its pad.
 3. Use the **fader** to balance its level. In FULL MIXER → SENDS, K1–K3 adjust sends A/B/C; press + for PAN/OUT/D. In BASIC, K1 is send A and SHIFT + K1 is pan.
 4. To adjust the whole drum kit's filter: select track 1 → SAMPLE → B1 PRESETS → **KIT CUTOFF / KIT RESONANCE**.
@@ -194,9 +198,9 @@ Automatic recovery is separate: it updates one entry for this project under Rhyt
 
 ![Break source browser: select the source and its bar length](../runtime/docs/images/rhythmer/020-break-browse-open.png)
 
-![BRK PERF 1: play sixteen chops](../runtime/docs/images/rhythmer/020-break-perf-0.png)
+![BRK PERF 1: hold and release performance commands](../runtime/docs/images/rhythmer/020-break-perf-0.png)
 
-![BRK PERF 2: hold and release performance commands](../runtime/docs/images/rhythmer/020-break-perf-1.png)
+![BRK PERF 2: play sixteen chops](../runtime/docs/images/rhythmer/020-break-perf-1.png)
 
 1. Put a loop you may use in the card's Samples folder. Start with a known **two-bar** loop.
 2. Select track 5 → Plugin → **Break Engine**.
@@ -216,7 +220,7 @@ If it plays at half/double the intended speed, check the source's bar count. Cha
 | Pads switch patterns | Release SEQ; press SAMPLE |
 | Wrong track is being edited | PAD BANK + target pad; check the header |
 | No plug-ins listed | Check the full SD installation and Rhythmer/Plugins |
-| B1 is a rate instead of TRACK SETUP | Turn off NOTE REPEAT / ARP, then reopen MIXER |
+| B1 shows repeat rates instead of mixer controls | Turn off NOTE REPEAT / ARP. TRACK SETUP is under hold encoder → HERE, not B1. |
 | I see Save Slot instead of synth controls | SHIFT + encoder push; return to sound-screen EDIT |
 | I lost the Break menu | SEQ → B1 PATTERNS → SHIFT + B3 GEN → BREAK GEN |
 | An effect or note will not stop | STOP twice within 400 ms |

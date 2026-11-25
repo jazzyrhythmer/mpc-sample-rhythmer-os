@@ -263,5 +263,187 @@
     "file": "os-structure.png",
     "source": "reference/os-structure.png",
     "sha256": "c9067f87c5653ace8dd617121074e41470bc11b6ada4e302016c127146ea7a7f"
+  },
+  {
+    "file": "030-menumixer.png",
+    "sha256": "7b47866ad217ff5edff9bb61e0125c63bc11d8efac6de088f9bad765a071c976",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-trackactions.png",
+    "sha256": "180b5fec7ebaa557da4f7714d2740af3493468dd5f64ab4e531f9caf960e1c83",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-tracktypes.png",
+    "sha256": "137a1d938935f1da399bdffc251c2139478bab91337441d80760426131daf509",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-stageemptytypes.png",
+    "sha256": "f14ddfde74ae75bb813896f09fca4c7bb293deafed3ccdc8f8dfc4ae49a896f6",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-mixer.png",
+    "sha256": "72da40e1cbc27f3d15b121f9b8fb8277489c1cce17a4a52702bdaed7757ed618",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-mixerbasic.png",
+    "sha256": "f83def85e824bbb47074ea39e158c3961993826163c876c48b133d752f54aeff",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-mixercard.png",
+    "sha256": "91ce2227eb97f6ec38f9acdae9ff0ccf1396294b82b9ac10bfac2cce5f46659d",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-mixerrow.png",
+    "sha256": "096462cf31e73d5fc8992831d7aeac18a215e6f0ebf31e3ac13d10bc5fe7fc96",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-mixerbus.png",
+    "sha256": "b41c0fe952898a2d806d28363b3ed6c4d1b29233e823708281cda535d06fa738",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-mixereq.png",
+    "sha256": "71ee2e9f6cbfb8d070cf7ba7101a0661a518e0e3aec025603a462e3831a1c676",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-mixercomp.png",
+    "sha256": "262e9c40d72c7dce2c73b28e8907dff33cabdc46482324f4f80e586b02d4a654",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-sends-enable-full.png",
+    "sha256": "8c93353d4a44e2a4dd64d6d47f2c4fad145bd6c4812d05173ebdcffd8ce1824a",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-patterns.png",
+    "sha256": "8c0ccb587319c9db6adaa568e231f917531b6af81c8e9efd693e3e99b13ee33a",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-note-recording.png",
+    "sha256": "4a03ec57ce0035088d80995e7644be5ccff28c8558a5db9a0a1c0bd644eaf0ed",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-tempo.png",
+    "sha256": "6740f23455ebf87b026c633269317567b22a9c0b24f3849e066a808d0a69eb60",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-bass-presets.png",
+    "sha256": "3a7baa1f498a633a56d2b16aa5a8524dff6a12a2b77ce93e307162314d913e7b",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-bass-home.png",
+    "sha256": "8274a7b16545f3c5aa14f113fdfc2e367673657dc07018d1fa3bc5df7e42ebe8",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-chords-home.png",
+    "sha256": "2c633d5e5375c0a40d87001befce4982d8a1d5c131855ba699c7bddfa883960f",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-kit-presets.png",
+    "sha256": "3082851e9b3d22964e96444dac430d193b26fa2583c93bad22ef39e09fcd994a",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-kit-home.png",
+    "sha256": "c2070e0219b4cc629e78452f31f8887c417516b5180aa266ae15597bd5e74e90",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-essential-controls.png",
+    "sha256": "e0cd8d80c3496b39570d91a62e4a7b385c18637ebb303f4b8edb1523d759a912",
+    "ui_version": "0.3.0",
+    "capture_kind": "Vector control reference verified against current controls",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-fizzik.png",
+    "sha256": "ff6c1acd01aa687ccd5c1b28ee0325ec96402818abd53b5921267a853504d981",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-essential-controls.svg",
+    "sha256": "ecb3a7df2a4ffc0ff26ac9936e3e3da4baca4b55434527482e70c3f3b6aee563",
+    "ui_version": "0.3.0",
+    "capture_kind": "Vector control reference verified against current controls",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-weird-dreams.png",
+    "sha256": "dd022bff69d40e3a2e531a7979cbb97058c929d1d7c10c79fea9124b3256e0dd",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-krautdrums.png",
+    "sha256": "d073b3a767437d6bf28b68f01e7ce32e17798fbcd108e745ec1f5155d5200d1c",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
+  },
+  {
+    "file": "030-amino.png",
+    "sha256": "e222f59d249bba60e49e0f4ce56da06599c3b44a20d933df491d6ece5d5da7df",
+    "ui_version": "0.3.0",
+    "capture_kind": "Native UI documentation fixture",
+    "physical_device_photo": false
   }
 ]

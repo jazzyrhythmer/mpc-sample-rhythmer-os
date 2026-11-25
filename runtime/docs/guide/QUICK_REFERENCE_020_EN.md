@@ -2,7 +2,7 @@
 
 **PUSH = press the large encoder. TURN = rotate it.** B1–B3 are the three screen buttons; K1–K3 are the knobs below the screen. Use the currently displayed labels.
 
-![Essential controls](../images/rhythmer/essential-controls.png)
+![Essential controls](../images/rhythmer/030-essential-controls.png)
 
 | Do this | Controls | Check afterwards |
 | --- | --- | --- |

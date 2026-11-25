@@ -1,256 +1,473 @@
 {
-  "version": "0.2.0",
-  "physical_device_capture": false,
-  "images": [
+  "version": "0.3.0",
+  "screens": [
     {
+      "source": "QUICK_REFERENCE_020_EN.md",
+      "file": "030-essential-controls.png",
+      "caption": "Essential controls",
+      "sha256": "e0cd8d80c3496b39570d91a62e4a7b385c18637ebb303f4b8edb1523d759a912"
+    },
+    {
+      "source": "FIRST_GROOVE_020_EN.md",
       "file": "020-project.png",
-      "source": "0.2.0 UI with documentation fixtures / project",
-      "sha256": "80feec9887854e25fac88f8fb00e2103068edfdd64c640996fcd1c466c336eb7",
-      "caption": "Project: NEW, OPEN and SAVE AS"
+      "caption": "Project: SAVE, OPEN and NEW",
+      "sha256": "4bed705d53da96e01c1060cb57897d3af6fb478281d234e1a7af8568124eac60"
     },
     {
+      "source": "FIRST_GROOVE_020_EN.md",
       "file": "020-newproject.png",
-      "source": "0.2.0 UI with documentation fixtures / newproject",
-      "sha256": "b0c7a8e8178512f56ad0b9307a5532316eb869618685989ee3ffa31267cc313c",
-      "caption": "New project confirmation: choose EMPTY"
+      "caption": "New project confirmation: choose EMPTY",
+      "sha256": "e9c4181b8a0a292f211993258c4ac1a7825d98d496970024cbc4f49934e4aa98"
     },
     {
-      "file": "020-padbankheld.png",
-      "source": "0.2.0 UI with documentation fixtures / padbankheld",
-      "sha256": "30fdca2e55549febe6e7430d595a22d7cfdd612252892fb8addccb536f429a7e",
-      "caption": "Hold PAD BANK and tap a pad to select its track"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "030-menumixer.png",
+      "caption": "MIXER \u2192 hold encoder \u2192 HERE: select TRACK SETUP",
+      "sha256": "7b47866ad217ff5edff9bb61e0125c63bc11d8efac6de088f9bad765a071c976"
     },
     {
-      "file": "020-tracktypes.png",
-      "source": "0.2.0 UI with documentation fixtures / tracktypes",
-      "sha256": "10fdaeb9bbf3309369848c919d4bce8bb8e7647cd32254c85184643c187b2eb5",
-      "caption": "Empty track: choose its type"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "030-tracktypes.png",
+      "caption": "TRACK TYPE: choose PLUG-IN for the existing sample-kit track; MIDI/Audio are also available",
+      "sha256": "137a1d938935f1da399bdffc251c2139478bab91337441d80760426131daf509"
     },
     {
-      "file": "020-patterns.png",
-      "source": "0.2.0 UI with documentation fixtures / patterns",
-      "sha256": "d892cb30a07c7103d1712cd947ace976256e3eedc8b5c6a6ae47c027609cd7ff",
-      "caption": "PATTERNS: length, quantise and swing controls"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "030-kit-presets.png",
+      "caption": "Rhythmer Kit: choose a complete kit preset",
+      "sha256": "3082851e9b3d22964e96444dac430d193b26fa2583c93bad22ef39e09fcd994a"
     },
     {
-      "file": "020-tempo.png",
-      "source": "0.2.0 UI with documentation fixtures / tempo",
-      "sha256": "0511ebcc921b18bfd2c99d23edb30ea350d5b88b851e50518e3a13308b0b5ae1",
-      "caption": "Hold TAP TEMPO and turn the encoder"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "030-kit-home.png",
+      "caption": "Rhythmer Kit PRESETS: DRUM-X, whole-kit CUTOFF / RESONANCE and TRACK LEVEL",
+      "sha256": "c2070e0219b4cc629e78452f31f8887c417516b5180aa266ae15597bd5e74e90"
     },
     {
-      "file": "020-recordseq.png",
-      "source": "0.2.0 UI with documentation fixtures / recordseq",
-      "sha256": "61fee77ddb20dc16c5f650101c5a11cdb243134c9c4b9ab674a282053a10353b",
-      "caption": "Record notes into the selected pattern"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "030-tempo.png",
+      "caption": "Hold TAP TEMPO and turn the encoder",
+      "sha256": "6740f23455ebf87b026c633269317567b22a9c0b24f3849e066a808d0a69eb60"
     },
     {
-      "file": "020-sampleheldkeys.png",
-      "source": "0.2.0 UI with documentation fixtures / sampleheldkeys",
-      "sha256": "2dcd092609186bbee5eb883b7eccbaba4e78bc3c282e8c0476b65a6cc9051a0e",
-      "caption": "Hold SAMPLE to open the Keys settings"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "030-patterns.png",
+      "caption": "PATTERNS: length, quantise and swing controls",
+      "sha256": "8c0ccb587319c9db6adaa568e231f917531b6af81c8e9efd693e3e99b13ee33a"
     },
     {
-      "file": "020-keys.png",
-      "source": "0.2.0 UI with documentation fixtures / keys",
-      "sha256": "eeccd957cbf82363e1935615cf5f38e559ca4690dfaef216e9d7a927be85e5f6",
-      "caption": "Keys: choose root, scale and layout"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "030-note-recording.png",
+      "caption": "Note recording in SEQ view: the recording dot is active; press SAMPLE before playing instrument pads",
+      "sha256": "4a03ec57ce0035088d80995e7644be5ccff28c8558a5db9a0a1c0bd644eaf0ed"
     },
     {
-      "file": "020-tracks.png",
-      "source": "0.2.0 UI with documentation fixtures / tracks",
-      "sha256": "28b571025b530cd88c052f87aba186e40c786e61de546de40d4296bb0ee4ef02",
-      "caption": "TRACKS: select a track and balance LEVEL, PAN and SEND A"
-    },
-    {
-      "file": "020-nameproject.png",
-      "source": "0.2.0 UI with documentation fixtures / nameproject",
-      "sha256": "6e035fac695a5a39d9059e18d23bd1d5cee3af760ebe04af060906a370f25460",
-      "caption": "SAVE AS: name the project, then confirm SAVE"
-    },
-    {
-      "file": "020-projectlist.png",
-      "source": "0.2.0 UI with documentation fixtures / projectlist",
-      "sha256": "9132c2f68e317258dafbb5836eca8431909bbcc4898b43843f12bda16a12d7d0",
-      "caption": "OPEN: select the saved project"
-    },
-    {
-      "file": "020-gen-group-0-main.png",
-      "source": "0.2.0 UI with documentation fixtures / gen-group-0-main",
-      "sha256": "1d10f221d5543500fa5bc2d29d61b4d416beb879ae29b5d2ce32430c0bcd1cb2",
-      "caption": "GEN main menu: check the target tracks before applying"
-    },
-    {
-      "file": "020-gen-group-0-setup.png",
-      "source": "0.2.0 UI with documentation fixtures / gen-group-0-setup",
-      "sha256": "a39ebed6af58f1ca9bc59c1ae04813f980068f40bf8a6ce5d85a0d32acefb2c5",
-      "caption": "GEN setup: select a four-track group and sound replacement mode"
-    },
-    {
-      "file": "020-modlfo.png",
-      "source": "0.2.0 UI with documentation fixtures / modlfo",
-      "sha256": "57b340adeb6890e9f78b3dc4c73c4e0c86c4dcbd1efad9c79edb7b99d71cec6e",
-      "caption": "MOD: connect a project modulator to a target"
-    },
-    {
-      "file": "020-motion.png",
-      "source": "0.2.0 UI with documentation fixtures / motion",
-      "sha256": "e7990dceff6e70602a68c900c4f40a3f07dd6a266a58cf9840c7e29004b433ca",
-      "caption": "MOTION: edit recorded parameter changes"
-    },
-    {
-      "file": "020-break-browse-open.png",
-      "source": "0.2.0 UI with documentation fixtures / break-browse-open",
-      "sha256": "1f07b82900e6e34638609f3d1f7ab447964e9c5d4e435608eca43cbf240874d2",
-      "caption": "Break source browser: select the source and its bar length"
-    },
-    {
-      "file": "020-break-perf-0.png",
-      "source": "0.2.0 UI with documentation fixtures / break-perf-0",
-      "sha256": "3cd0029dcb574dbc7e5ea918c6420f3a1c84eb693f6eda9d52486ce38ed0b439",
-      "caption": "BRK PERF 1: play sixteen chops"
-    },
-    {
-      "file": "020-break-perf-1.png",
-      "source": "0.2.0 UI with documentation fixtures / break-perf-1",
-      "sha256": "ab4509511dc89435de0c9498d3fc72df4e57a219ab88b27ca73e9e76959fd3b9",
-      "caption": "BRK PERF 2: hold and release performance commands"
-    },
-    {
-      "file": "020-break-perf-2.png",
-      "source": "0.2.0 UI with documentation fixtures / break-perf-2",
-      "sha256": "ea10d0387c59bca97132bbc5aefb6986f012d6358b80bde6275f681f1d0e92ca",
-      "caption": "BRK PERF 3: source A, source B and Return"
-    },
-    {
-      "file": "020-break-perf-3.png",
-      "source": "0.2.0 UI with documentation fixtures / break-perf-3",
-      "sha256": "fe88cd07c6ff7bbf007b9c39cda3c18fb8c896511270388d5bbf1eb109f49d3b",
-      "caption": "BRK PERF 4: LOOP variations"
-    },
-    {
-      "file": "020-break-perf-4.png",
-      "source": "0.2.0 UI with documentation fixtures / break-perf-4",
-      "sha256": "c1e2ab1a3f66cee301970b82b4b80f62dd0dce21999711648511e63724fd2641",
-      "caption": "BRK PERF 5: Grain controls while STRETCH is active"
-    },
-    {
-      "file": "020-break-perf-5.png",
-      "source": "0.2.0 UI with documentation fixtures / break-perf-5",
-      "sha256": "ad49484b61ace361018a970111abf131d48df9abc464527b04f7ea228dccff20",
-      "caption": "BRK PERF 6: track mix"
-    },
-    {
-      "file": "020-acid-settings-0.png",
-      "source": "0.2.0 UI with documentation fixtures / acid-settings-0",
-      "sha256": "3e2e4eb74207873264f875fd6ea441544a48cb37c1dac36221df79ffd966f094",
-      "caption": "Acid settings 1 of 2: Density, Accent and Slide"
-    },
-    {
-      "file": "020-acid-settings-1.png",
-      "source": "0.2.0 UI with documentation fixtures / acid-settings-1",
-      "sha256": "868d7f4c7844335b458576a698d39c3ee2ca5be68005992ce2229bf7f96aa066",
-      "caption": "Acid settings 2 of 2: Octaves, Base Octave and Auto Mutate"
-    },
-    {
+      "source": "FIRST_GROOVE_020_EN.md",
       "file": "020-stepedit.png",
-      "source": "0.2.0 UI with documentation fixtures / stepedit",
-      "sha256": "b2165ff6b53061f540fc6b60e90838f02249be9a631f3442bced69434f5d273d",
-      "caption": "Step Edit: select and edit the current pattern"
+      "caption": "Step Edit: select and edit the current pattern",
+      "sha256": "990695ad3dca6824fb1ec2cdfa09eb30f7e60ca72de91a553c85624cc6432e71"
     },
     {
-      "file": "020-sends.png",
-      "source": "0.2.0 UI with documentation fixtures / sends",
-      "sha256": "31560d41de047c1146967a96b4c1326c2115926ded4fc22c7d4727b188bd8ecf",
-      "caption": "Full mode: track sends to shared buses"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "030-bass-presets.png",
+      "caption": "FMini-1: open the list and choose MOOG BASS",
+      "sha256": "3a7baa1f498a633a56d2b16aa5a8524dff6a12a2b77ce93e307162314d913e7b"
     },
     {
-      "file": "020-settings.png",
-      "source": "0.2.0 UI with documentation fixtures / settings",
-      "sha256": "f27c27af357a564be5071a1eb8ec2b3fadeb2d0e43ab157b3243e11d58810a44",
-      "caption": "Settings: select Basic or Full features"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "030-bass-home.png",
+      "caption": "Track 2: FMini-1 with MOOG BASS loaded",
+      "sha256": "8274a7b16545f3c5aa14f113fdfc2e367673657dc07018d1fa3bc5df7e42ebe8"
     },
     {
-      "file": "020-samplespreview.png",
-      "source": "0.2.0 UI with documentation fixtures / samplespreview",
-      "sha256": "0ab216b192edb774ce8332a6fdb312292b760b11cea98af3090a74bcffa242bc",
-      "caption": "Sample browser: select a file and preview it"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "020-sampleheldkeys.png",
+      "caption": "Hold SAMPLE to open the Keys settings",
+      "sha256": "2ecbff7e369a5342cb6ea31aae03cda9687e287393e4181beacbd04f328a2249"
     },
     {
-      "file": "020-kit-home.png",
-      "source": "Production UI with host-inspected RHYTHMER engine state and guide track/tempo fixture",
-      "sha256": "93462367d8217132f809f70dd246511e8eaa095ab971f2a597a877ad2cabc3d4",
-      "caption": "Rhythmer Kit: kit name, selected pad and whole-kit filter"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "030-chords-home.png",
+      "caption": "FM-106: original A11 Brass preset",
+      "sha256": "2c633d5e5375c0a40d87001befce4982d8a1d5c131855ba699c7bddfa883960f"
     },
     {
-      "file": "020-fm106-home.png",
-      "source": "Production UI with host-inspected RHYTHMER engine state and guide track/tempo fixture",
-      "sha256": "35b09d4ef3872c0d5dcb2576030f66c88c16cc7613aab5c331c646bcaff5a3ea",
-      "caption": "FM-106: original A11 Brass preset"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "020-chord-gen-entry.png",
+      "caption": "GEN: keep single-track generation and Chord GEN separate",
+      "sha256": "a152d3cdb44a425dc6afb0b2fcea2a12cf199baa7e87aba086906fa4cfbe1030"
     },
     {
-      "file": "020-fmini-home.png",
-      "source": "Production UI with host-inspected RHYTHMER engine state and guide track/tempo fixture",
-      "sha256": "a2fe02ac0e0c51ae409f68318d8528f4e1eba9527f705eac8519a3b0cf2484e5",
-      "caption": "FMini-1: select MOOG BASS in the preset list"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "020-chord-gen-1.png",
+      "caption": "Chord GEN: choose the chord progression and number of changes",
+      "sha256": "6d3861977bbf17c990ee4c42901cde364f4b84b033ca5942b8acc0bab1bbc893"
     },
     {
-      "file": "020-kit-presets.png",
-      "source": "Production UI with host-inspected RHYTHMER engine state and guide track/tempo fixture",
-      "sha256": "482ff2a90cce4d4ee21113830a22ac08970863db9fa33c6213dae6b2dfb9dbee",
-      "caption": "Rhythmer Kit: choose a complete kit preset"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "020-chord-gen-3.png",
+      "caption": "Chord GEN: compare Block, Arp and Strum",
+      "sha256": "b8fe5efdcc84d35ddd31bcb7e1fca2646b7735fc5822410084d51b4dfd73ba90"
     },
     {
-      "file": "020-fmini-presets.png",
-      "source": "Production UI with host-inspected RHYTHMER engine state and guide track/tempo fixture",
-      "sha256": "4b7e88600b4cb40d77551ec1057b09f92ae0d6977ea6ae70dcd52ce9a88be1f5",
-      "caption": "FMini-1: open the list and choose MOOG BASS"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "020-chord-gen-5.png",
+      "caption": "Chord GEN: use the current project's key and scale",
+      "sha256": "f139b46d1c67818b36b99343bef07a7b2289293057ae0319928288796d009e6f"
     },
     {
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "030-mixer.png",
+      "caption": "MIXER overview: select a track; the fader sets its level and K1\u2013K3 control sends A\u2013C",
+      "sha256": "72da40e1cbc27f3d15b121f9b8fb8277489c1cce17a4a52702bdaed7757ed618"
+    },
+    {
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "030-mixercard.png",
+      "caption": "Hold +: track 2 Bass in the channel card; K1/K2/K3 are sends A/B/C",
+      "sha256": "91ce2227eb97f6ec38f9acdae9ff0ccf1396294b82b9ac10bfac2cce5f46659d"
+    },
+    {
+      "source": "FIRST_GROOVE_020_EN.md",
       "file": "020-kit-edit.png",
-      "source": "Production UI with host-inspected RHYTHMER engine state and guide track/tempo fixture",
-      "sha256": "11725738ea8bf78d1b9b4b421eedffb2de9563a11b01d306dc4b12a80118efc5",
-      "caption": "Rhythmer Kit: selected pad sound controls"
+      "caption": "Rhythmer Kit: selected pad sound controls",
+      "sha256": "f0ac5ccb6ecbfcccf9ef4e99b58175031024c996f90073793cd302901d1fd936"
     },
     {
-      "file": "020-kit-source.png",
-      "source": "Production UI with host-inspected RHYTHMER engine state and guide track/tempo fixture",
-      "sha256": "cd9beb735a0954bd6967909fc3b5625591b2da419038664315fc5cdf45622c8a",
-      "caption": "Rhythmer Kit: choose a pad engine and sound"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "020-nameproject.png",
+      "caption": "SAVE: name the project after choosing its folder",
+      "sha256": "c25ad10465d98df0723289072c10695e4390642ed2efd5a8c5a898be57e3f09f"
     },
     {
-      "file": "020-kit-save.png",
-      "source": "Production UI with host-inspected RHYTHMER engine state and guide track/tempo fixture",
-      "sha256": "809cf3a5fdb481f6165829cd2915302a508c2a7e389903e67c725884a05a0cf9",
-      "caption": "User Kit: choose a slot and save"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "020-projectlist.png",
+      "caption": "OPEN: select the saved project",
+      "sha256": "ee0a447cfb2ff66d0adca0efaa2de1ba95fed0aa2b4900327016d5a9ef8df256"
     },
     {
-      "file": "020-fmini-save.png",
-      "source": "Production UI with host-inspected RHYTHMER engine state and guide track/tempo fixture",
-      "sha256": "72d93472a3cfdd15861cb7179d5309215a42beff83d263b7b64df02749be2ac3",
-      "caption": "User Sound: choose a slot and save"
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "020-acid-settings-0.png",
+      "caption": "Acid settings 1 of 2: Density, Accent and Slide",
+      "sha256": "2d2bf7b524ec3ab9213cdf21352604c9dfa6985d25d3aea5b15a939e02a5219c"
     },
     {
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "020-acid-settings-1.png",
+      "caption": "Acid settings 2 of 2: Octaves, Base Octave and Auto Mutate",
+      "sha256": "ed49c7ec774d56bee670bde8090273686d7c54bd454a8051d1d7e06ede71857b"
+    },
+    {
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "020-break-browse-open.png",
+      "caption": "Break source browser: select the source and its bar length",
+      "sha256": "f1eb32f232058850bb67c27a8951d2e6234bcf40d04c299acbb6815936d9d9db"
+    },
+    {
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "020-break-perf-0.png",
+      "caption": "BRK PERF 1: hold and release performance commands",
+      "sha256": "b904a7f1dd11b9db8533672501ce6511179eb43a21b3887c7e8de5473af4f615"
+    },
+    {
+      "source": "FIRST_GROOVE_020_EN.md",
+      "file": "020-break-perf-1.png",
+      "caption": "BRK PERF 2: play sixteen chops",
+      "sha256": "6b6e2858d379a5636f70c295770bc16633af95a836968f68ed58e2e1460682dc"
+    },
+    {
+      "source": "SYSTEM_MAP_020_EN.md",
+      "file": "os-structure.png",
+      "caption": "System structure",
+      "sha256": "c9067f87c5653ace8dd617121074e41470bc11b6ada4e302016c127146ea7a7f"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-essential-controls.png",
+      "caption": "Essential button combinations",
+      "sha256": "e0cd8d80c3496b39570d91a62e4a7b385c18637ebb303f4b8edb1523d759a912"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "os-structure.png",
+      "caption": "Projects, tracks, patterns and sequences",
+      "sha256": "c9067f87c5653ace8dd617121074e41470bc11b6ada4e302016c127146ea7a7f"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-padbankheld.png",
+      "caption": "Hold PAD BANK and tap a pad to select its track",
+      "sha256": "1aa2d051a7e89c50e86558d14fe96f214ab35e117366f49071d6651a6d9449c2"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-stageemptytypes.png",
+      "caption": "An unused track: turn to Plugin and push; MIDI/Audio are also available",
+      "sha256": "f14ddfde74ae75bb813896f09fca4c7bb293deafed3ccdc8f8dfc4ae49a896f6"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-menumixer.png",
+      "caption": "MIXER \u2192 hold encoder \u2192 HERE: select TRACK SETUP",
+      "sha256": "7b47866ad217ff5edff9bb61e0125c63bc11d8efac6de088f9bad765a071c976"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-trackactions.png",
+      "caption": "TRACK SETUP: replace an instrument, change type or delete separately",
+      "sha256": "180b5fec7ebaa557da4f7714d2740af3493468dd5f64ab4e531f9caf960e1c83"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-tracktypes.png",
+      "caption": "TRACK TYPE changes the selected track\u2019s role while retaining its patterns; all six types are available in Basic and Full",
+      "sha256": "137a1d938935f1da399bdffc251c2139478bab91337441d80760426131daf509"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-kit-home.png",
+      "caption": "Rhythmer Kit PRESETS: DRUM-X, whole-kit CUTOFF / RESONANCE and TRACK LEVEL",
+      "sha256": "c2070e0219b4cc629e78452f31f8887c417516b5180aa266ae15597bd5e74e90"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-chords-home.png",
+      "caption": "FM-106: original A11 Brass preset",
+      "sha256": "2c633d5e5375c0a40d87001befce4982d8a1d5c131855ba699c7bddfa883960f"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
       "file": "020-fmini-edit.png",
-      "source": "Production UI with host-inspected RHYTHMER engine state and guide track/tempo fixture",
-      "sha256": "13747c8fe64b06dd8d4cd835a53ed103c06d58ffb266c5bf1eb695b1f53fbfaf",
-      "caption": "FMini-1: source sound-design controls"
+      "caption": "FMini-1: source sound-design controls",
+      "sha256": "f01ac49d4c2a47dc02da531e34b4aa5f6c49e0517a4db97cebaeb0ace0a9cb1e"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-fmini-save.png",
+      "caption": "User Sound: choose a slot and save",
+      "sha256": "47384564cd8834908feb6dcb3eea544d3b963268c8c875b848136ceb46885812"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-kit-save.png",
+      "caption": "User Kit: choose a slot and save the complete kit",
+      "sha256": "35978ebbbcaeadbf950604d48bf52b45509ffae0fa9f08fdc339e5ad515b72a1"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-kit-edit.png",
+      "caption": "Rhythmer Kit: selected pad sound controls",
+      "sha256": "f0ac5ccb6ecbfcccf9ef4e99b58175031024c996f90073793cd302901d1fd936"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-kit-source.png",
+      "caption": "Rhythmer Kit: choose a pad engine and sound",
+      "sha256": "e3d963e9a757d602f44064dfe047842ef1a088a1114a5240cbf686d8a8fe7595"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-samplespreview.png",
+      "caption": "Sample browser: choose and preview a file for the selected pad",
+      "sha256": "f5ed364bb98295395d111cab4e618d29eb90440915990ad5b8cd91740e395228"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-empty-sample-pad.png",
+      "caption": "Empty sample pad: push to load; SAMPLE SELECT browses files and SAMPLE RECORD records input",
+      "sha256": "64428bfced7addf53cf2218d5c9314f47c41d9bcf34441eed89cb63d8bba0264"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-patterns.png",
+      "caption": "PATTERNS: set length, quantise and swing",
+      "sha256": "8c0ccb587319c9db6adaa568e231f917531b6af81c8e9efd693e3e99b13ee33a"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-note-recording.png",
+      "caption": "Note recording in SEQ view: the recording indicator is active; return to SAMPLE to play the instrument",
+      "sha256": "4a03ec57ce0035088d80995e7644be5ccff28c8558a5db9a0a1c0bd644eaf0ed"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-motion.png",
+      "caption": "MOTION: edit recorded parameter changes",
+      "sha256": "f13643ff2453ce671b0db7fa30b3e5149f717894d17ba5805addebf424079737"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-modlfo.png",
+      "caption": "MOD: connect a project modulator to a target",
+      "sha256": "c173fd2b3b1c312ea17b2a07970e736ad04f968cba330665986e046114f70f0a"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-gen-group-0-main.png",
+      "caption": "GEN main menu: check the target tracks before applying",
+      "sha256": "9e9a763cd3c4645825c270798ad8f5e063901cd7560adb519f4062720f4b8764"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-gen-group-0-setup.png",
+      "caption": "GEN setup: select a four-track group and sound replacement mode",
+      "sha256": "31979954b45b706932d8c8d4d7f5a52b3eff08a0c4fee7908cab1682606acf39"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-chord-gen-entry.png",
+      "caption": "GEN: GENERATE Tn and CHORD GEN are separate entries",
+      "sha256": "a152d3cdb44a425dc6afb0b2fcea2a12cf199baa7e87aba086906fa4cfbe1030"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-chord-gen-1.png",
+      "caption": "Chord GEN page 1: genre, progression family and number of chord changes",
+      "sha256": "6d3861977bbf17c990ee4c42901cde364f4b84b033ca5942b8acc0bab1bbc893"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-chord-gen-2.png",
+      "caption": "Chord GEN page 2: phrase bars, rhythmic density and chord complexity",
+      "sha256": "fbb3176048994568572f13d343ff1ec2c0e9c3682470de1a688a2fa221b99366"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-chord-gen-3.png",
+      "caption": "Chord GEN page 3: energy, Block or Arp or Strum, and gate",
+      "sha256": "b8fe5efdcc84d35ddd31bcb7e1fca2646b7735fc5822410084d51b4dfd73ba90"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-chord-gen-4.png",
+      "caption": "Chord GEN page 4: voicing, register, arp subdivision or strum spacing",
+      "sha256": "f47d0c3314983e83c65c28e62a07dd651c0cff87f1239ec0b4ded7ae333527e5"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-chord-gen-5.png",
+      "caption": "Chord GEN page 5: follow project key and scale or select a local override",
+      "sha256": "f139b46d1c67818b36b99343bef07a7b2289293057ae0319928288796d009e6f"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-acid-settings-0.png",
+      "caption": "Acid GEN: Density, Accent and Slide",
+      "sha256": "2d2bf7b524ec3ab9213cdf21352604c9dfa6985d25d3aea5b15a939e02a5219c"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-break-menu.png",
+      "caption": "BREAK GEN: source, generation and performance entry",
+      "sha256": "34325c595b0835fba3085841a650bfae7e53099a5603c9a41493087f70ceda52"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-break-perf-0.png",
+      "caption": "BRK PERF 1: hold and release performance commands",
+      "sha256": "b904a7f1dd11b9db8533672501ce6511179eb43a21b3887c7e8de5473af4f615"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-break-perf-1.png",
+      "caption": "BRK PERF 2: play sixteen chops",
+      "sha256": "6b6e2858d379a5636f70c295770bc16633af95a836968f68ed58e2e1460682dc"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-break-perf-2.png",
+      "caption": "BRK PERF 3: source A, source B and Return",
+      "sha256": "1ee9221a66c5f821dee9597264445f40ac716acf96a57edf23c032b045ee7a76"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-break-perf-3.png",
+      "caption": "BRK PERF 4: LOOP variations",
+      "sha256": "a23c2c4e3dc5bac79390ac67369539c2a1588f7c4f5372b700e06aeb08545b35"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-break-perf-4.png",
+      "caption": "BRK PERF 5: Grain controls while STRETCH is active",
+      "sha256": "61159b8cf9d9f7d9e3f2534997100c360ccbad6be1965e2b9971fc76b843aeb8"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-break-perf-5.png",
+      "caption": "BRK PERF 6: track mix",
+      "sha256": "6ab273b0adf18801b44f60535d33ed9930020fa40b052e73543ba68cd342fba9"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-mixer.png",
+      "caption": "MIXER overview: select a track; the fader sets its level and K1\u2013K3 control sends A\u2013C",
+      "sha256": "72da40e1cbc27f3d15b121f9b8fb8277489c1cce17a4a52702bdaed7757ed618"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-mixerrow.png",
+      "caption": "FULL SENDS, second row: tap + for PAN / OUTPUT / SEND D",
+      "sha256": "096462cf31e73d5fc8992831d7aeac18a215e6f0ebf31e3ac13d10bc5fe7fc96"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-mixercard.png",
+      "caption": "Hold +: selected-channel card, with K1\u2013K3 on SEND A / B / C",
+      "sha256": "91ce2227eb97f6ec38f9acdae9ff0ccf1396294b82b9ac10bfac2cce5f46659d"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-sends-enable-full.png",
+      "caption": "BASIC: confirm FULL mode before opening SENDS",
+      "sha256": "8c93353d4a44e2a4dd64d6d47f2c4fad145bd6c4812d05173ebdcffd8ce1824a"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-mixerbasic.png",
+      "caption": "BASIC channel card: K1 is SEND A; SHIFT + K1 is PAN",
+      "sha256": "f83def85e824bbb47074ea39e158c3961993826163c876c48b133d752f54aeff"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-mixerbus.png",
+      "caption": "PAD BANK selects the bus row; use the selected bus\u2019s fader for its return level",
+      "sha256": "b41c0fe952898a2d806d28363b3ed6c4d1b29233e823708281cda535d06fa738"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-mixereq.png",
+      "caption": "B2 EQ: press again for the next band group; K1\u2013K3 edit the visible bands",
+      "sha256": "71ee2e9f6cbfb8d070cf7ba7101a0661a518e0e3aec025603a462e3831a1c676"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "030-mixercomp.png",
+      "caption": "B3 COMP: K1\u2013K3 edit the visible compressor controls; a short + tap selects its second row",
+      "sha256": "262e9c40d72c7dce2c73b28e8907dff33cabdc46482324f4f80e586b02d4a654"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-project.png",
+      "caption": "Project: SAVE, OPEN and NEW",
+      "sha256": "4bed705d53da96e01c1060cb57897d3af6fb478281d234e1a7af8568124eac60"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-save-folder.png",
+      "caption": "SAVE: choose the destination folder",
+      "sha256": "307b33ad410f65a3f024b46d46e800af5fb47a4182090993f0fcb8aa112d452a"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-nameproject.png",
+      "caption": "SAVE: enter the file name",
+      "sha256": "c25ad10465d98df0723289072c10695e4390642ed2efd5a8c5a898be57e3f09f"
+    },
+    {
+      "source": "MANUAL_020_EN.md",
+      "file": "020-recovery.png",
+      "caption": "RECOVERY: one entry per project",
+      "sha256": "7b125fa647622b3fbe704d18c9f46ff8f79c7307580132b876bae13c3cfad124"
     }
-  ],
-  "fixture_settings": {
-    "tempo_bpm": 140,
-    "root": "C",
-    "scale": "Minor",
-    "bars": 4,
-    "instrument_examples": [
-      "Rhythmer Kit",
-      "FMini-1",
-      "FM-106",
-      "Acid Engine",
-      "Break Engine"
-    ],
-    "render_fixture_sha256": "a85286f6d4b36e5efa0adb4c7fec1b994c513053b397eb446b9fe8bb58135193",
-    "shipping_runtime_changed": false,
-    "engine_fixture_sha256": "e7e75a3f360d94cab3ce36e59b1cd334fd55c8a5fc60d5ad5797e11933ad32db"
-  }
+  ]
 }

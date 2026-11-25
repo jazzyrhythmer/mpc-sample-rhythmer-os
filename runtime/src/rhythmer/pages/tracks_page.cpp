@@ -36,7 +36,10 @@ void actions_draw(Paint& p, const Snapshot& s) {
         list_row(p,zone::pad,zone::picture_y+i*(list_row_h+list_row_gap),zone::width-2*zone::pad,row);
     }
     const char* hint = !s.ui.track_types && s.ui.track_action==4 ? "Removes sound AND all patterns" : "Change sound / type; patterns stay";
-    p.text(hint,zone::pad,zone::picture_y+count*(list_row_h+list_row_gap)+4,zone::width-2*zone::pad,16,caps_text(colour::dim),juce::Justification::centred);
+    const float hint_y = zone::picture_y + count * (list_row_h + list_row_gap) + 4;
+    // Never let an optional hint enter the native bottom control strip.
+    if (hint_y + 16 <= zone::knobs_y - 4)
+        p.text(hint,zone::pad,hint_y,zone::width-2*zone::pad,16,caps_text(colour::dim),juce::Justification::centred);
 }
 void actions_wheel(Context& c,int delta) { c.ui.track_action=uint8_t(std::clamp<int>(int(c.ui.track_action)+delta,0,c.ui.track_types?int(type_count(c.ui))-1:4)); }
 void actions_push(Context& c) {
