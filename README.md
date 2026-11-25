@@ -302,6 +302,18 @@ Saw, pulse, hard sync, FM, bell, wavetable, formant and pitch-drop models feed t
 
 **Try it for:** Driven bass, drifting pads, evolving leads, bells and textured electronic phrases.
 
+### Amino
+
+<img src="assets/engines/amino-still.png" width="400" alt="Amino — RHYTHMER OS engine screen">
+
+Wavetable synthesis with 324 original presets. Explore layered pads, moving textures, basses and leads.
+
+### Fizzik
+
+<img src="assets/engines/fizzik-still.png" width="400" alt="Fizzik — RHYTHMER OS engine screen">
+
+Physical-modeling synthesis with 31 original presets. Shape the exciter, two resonators, envelopes, modulation and effects.
+
 ### The drum palette inside Rhythmer Kit
 
 DRUM-X, K-WASUB drum mode, 6W6, 8W8, 9W9, CW-78 and TR-MPC are kit-only sources. Sophie, Elixir and Hortator are available both as individual instruments and as kit-pad sources. The classic families cover 606-, 808-, 909- and CR-78-style drum colours without filling the main instrument list with kit-only duplicates.
@@ -319,15 +331,15 @@ GEN can assign a kit and three complementary melodic roles to a chosen four-trac
 
 Use the **complete SD ZIP** from the [installation page](https://jazzyrhythmer.github.io/mpc-sample/installer/). It includes the app, plug-ins, kits, preset catalogue and current guides. Check the matching SHA-256 before copying the contents to the card root.
 
-Target: **MPC Sample AC50 with stock firmware 1.3.0.12**. Back up the entire card first. **UPDATE.zip is app-only**, not a first-install package. SOURCE, MOVE-SOURCE and SUPPORT-SOURCE contain corresponding source, not installers.
+Target: **MPC Sample AC50 with stock firmware 1.3.0.12, 1.4.0.7 or 1.4.0.8**. On 1.4, enable Developer Mode before direct installation. Back up the entire card first. Use the full SD ZIP for 0.3.0 so the app, plug-ins and catalogue match. Source archives contain corresponding code, not installers.
 
 [Installation / stock-app recovery](docs/SD_CARD_GUIDE.md) · [Release files and notes](https://github.com/jazzyrhythmer/mpc-sample-rhythmer-os/releases)
 
 ## Source, credits and contributing
 
-This repository contains the OS integration, runtime and corresponding port sources. The [engine-port repository](https://github.com/jazzyrhythmer/mpc-sample-engine-ports) provides the engine-focused view. To rebuild, start with [BUILD.md](docs/BUILD.md) and the matching SOURCE / MOVE-SOURCE / SUPPORT-SOURCE archives.
+This repository contains the OS integration, runtime and corresponding port sources. The [engine-port repository](https://github.com/jazzyrhythmer/mpc-sample-engine-ports) provides the engine-focused view. To rebuild, start with [BUILD-0.3.0.md](docs/BUILD-0.3.0.md) and the matching application, engine-port and support-source archives.
 
-Original engine names, licences and author credits are preserved. The catalogue has 2,845 retained original selections and 43 identified Rhythmer-authored selections. External Sequential / Erica / Hrtl banks are excluded. [Original preset provenance](docs/ORIGINAL_PRESET_AUDIT_KO.md) · [Rhythmer presets](docs/RHYTHMER_PRESETS.md).
+Original engine names, licences and author credits are preserved. The current catalogue exposes 3,812 sound selections across 31 source views; original names and source credits are retained. External Sequential / Erica / Hrtl banks are excluded. [Original preset provenance](docs/ORIGINAL_PRESET_AUDIT_KO.md) · [Rhythmer presets](docs/RHYTHMER_PRESETS.md).
 
 Built on Melodee by Kerem Kiliç (Ellic Studio) and contributors, with instruments and tools by their credited authors. [Full third-party notices](THIRD_PARTY_NOTICES.md) · [Component licences](LICENSES) · [Project licence](LICENSE).
 
@@ -340,18 +352,6 @@ If you find a problem, open an issue with the engine/preset, track type, exact b
 [Instagram](https://www.instagram.com/jazzyrhythmer/) · [YouTube](https://www.youtube.com/@jazzyrhythmer) · [Patreon](https://www.patreon.com/JazzyRhythmer/) · [Leave a tip](https://ko-fi.com/jazzyrhythmer)
 
 *In search of feel-good rhythms.*
-
-### Amino
-
-<img src="assets/engines/amino-still.png" width="400" alt="Amino native UI">
-
-Wavetable synthesis with 324 original presets. Explore layered pads, moving textures, basses and leads.
-
-### Fizzik
-
-<img src="assets/engines/fizzik-still.png" width="400" alt="Fizzik native UI">
-
-Physical-modeling synthesis with 31 original presets. Shape the exciter, two resonators, envelopes, modulation and effects.
 
 ## Matching release source
 

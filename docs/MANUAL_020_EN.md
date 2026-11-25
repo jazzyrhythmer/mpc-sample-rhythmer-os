@@ -2,32 +2,6 @@
 
 RHYTHMER OS **0.3.0** for MPC Sample. Choose a chapter from the contents, or follow [Your first groove](FIRST_GROOVE_020_EN.md) to build and save a pattern from scratch.
 
-## New in 0.3.0
-
-- **24 engine entries:** Amino adds wavetable synthesis with **324 original presets**; Fizzik adds physical-modeling synthesis with **31 original presets**. Both have their own input-responsive engine screen.
-- **69 Rhythmer Kits:** 32 new sixteen-pad kits pair Weird Dreams' original eight-voice banks; one KrautDrums kit contains all sixteen original voices. These are **33 added complete kits**.
-- **Break PERF:** held effects remain active across performance pages. A/B switching and Return follow the FM-1 performance workflow more closely; performance-pad velocity does not reduce the break's level.
-- **Clearer editing:** source-ordered parameter groups, selected-pad controls, step lights and navigation across GEN, Acid and Break.
-- **Stock firmware:** 1.3.0.12, 1.4.0.7 and 1.4.0.8. You do not need to update the official firmware to use 0.3.0. Firmware 1.4 needs Developer Mode; follow the [installation guide](install.md).
-
-Original preset names are retained. Rhythmer Kit, Acid and Break are integrated host workflows; the original engine authors retain credit for their instruments and sounds.
-
-### Amino and Fizzik
-
-![Amino: original PD Wave Drift preset](../runtime/docs/images/rhythmer/030-amino.png)
-
-![Fizzik: original StarlightPad preset](../runtime/docs/images/rhythmer/030-fizzik.png)
-
-Load either engine on a Plugin track. On PRESETS, turn the encoder to browse; push / LOAD to choose the original program. PLAY a note to hear it, and use EDIT for the source controls. Amino groups layers, oscillators, filter, envelopes, modulation and FX; Fizzik groups its exciter, two resonators, envelopes, modulation and FX. These source parameters retain their original sound behavior.
-
-### The added kits
-
-![Weird Dreams: a complete sixteen-pad kit](../runtime/docs/images/rhythmer/030-weird-dreams.png)
-
-![KrautDrums: all sixteen original voices](../runtime/docs/images/rhythmer/030-krautdrums.png)
-
-Choose a complete kit in Rhythmer Kit PRESETS. PAD SOURCE changes one selected pad; it does not load a full kit. Save an edited kit as a User Kit before switching factory kits.
-
 ## Essential controls
 
 ![Essential button combinations](../runtime/docs/images/rhythmer/essential-controls.png)
@@ -175,6 +149,13 @@ Encoder and −/+ navigation wrap from the last preset to the first, and back. T
 
 A normal instrument plays **one sound across pitches**. It does not assign a different factory preset to every pad. Use Rhythmer Kit when you want sixteen different sounds on one track.
 
+### Factory presets
+
+| Engine | Included original presets | Notes |
+| --- | --- | --- |
+| Amino | 324 | The original factory bank and embedded waves |
+| Fizzik | 31 | The original factory bank |
+
 ## 6. Edit the sound, then save a reusable preset
 
 ![FMini-1: source sound-design controls](../runtime/docs/images/rhythmer/020-fmini-edit.png)
@@ -202,15 +183,6 @@ To save a User Sound:
 
 The same slot is overwritten. User presets save instrument settings, not the song's notes or original sample files. Save the project separately and keep source samples on the card.
 
-### Factory presets and source sounds
-
-| Engine | Included original presets | Notes |
-| --- | --- | --- |
-| Amino | 324 | The original factory bank and embedded waves |
-| Fizzik | 31 | The original factory bank |
-
-Rhythmer Kit includes 32 Weird Dreams kits made by pairing its 64 original eight-voice banks, plus one KrautDrums kit with all 16 original voices. Source patches keep their original values. Pad routes are ordered for Rhythmer's GEN lanes. KrautDrums uses its second snare in the clap lane; the original source has no clap instrument. Both sources are selected inside Rhythmer Kit rather than as separate instruments in the main plug-in list.
-
 ## 7. Use Rhythmer Kit
 
 ![User Kit: choose a slot and save the complete kit](../runtime/docs/images/rhythmer/020-kit-save.png)
@@ -220,6 +192,9 @@ Rhythmer Kit includes 32 Weird Dreams kits made by pairing its 64 original eight
 ![Rhythmer Kit: choose a pad engine and sound](../runtime/docs/images/rhythmer/020-kit-source.png)
 
 Load **Rhythmer Kit** from the top of the plug-in list. It has **69 complete factory kits**, with pads 1–16 filled. Start with bank A.
+
+Rhythmer Kit includes 32 Weird Dreams kits made by pairing its 64 original eight-voice banks, plus one KrautDrums kit with all 16 original voices. Source patches keep their original values. Pad routes are ordered for Rhythmer's GEN lanes. KrautDrums uses its second snare in the clap lane; the original source has no clap instrument. Both sources are selected inside Rhythmer Kit rather than as separate instruments in the main plug-in list.
+
 
 | Task | Procedure | Check |
 | --- | --- | --- |
@@ -393,7 +368,7 @@ For a new rhythm, select **Straight / Genre / Random / Mutate / Tail Fill** in B
 
 ![BRK PERF 6: track mix](../runtime/docs/images/rhythmer/020-break-perf-5.png)
 
-Turn the encoder to move through the six numbered pages. The caption shows your position.
+Turn the encoder to move through the six numbered pages. The caption shows your position. Hold a performance pad while changing pages to keep its effect active; releasing the pad ends it. Performance-pad velocity does not lower the break’s level. Use TRACK MIX or MIXER to set its level.
 
 | Page | Action to try | What must be true / expected result |
 | --- | --- | --- |
