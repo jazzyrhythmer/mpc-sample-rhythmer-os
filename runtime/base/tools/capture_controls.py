@@ -312,7 +312,7 @@ class StreamControl:
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--host", default="192.168.155.1")
-    parser.add_argument("--port", type=int, default=2222)
+    parser.add_argument("--port", type=int, help="SSH port (default: 22, else 2222 for firmware 1.3.0.12)")
     parser.add_argument("--key", default="~/.ssh/mpc_sample_client_ed25519")
     parser.add_argument("--seconds", type=int, default=1500, help="give up after N seconds")
     parser.add_argument("--only", help="comma-separated control ids to capture, e.g. power,k1")

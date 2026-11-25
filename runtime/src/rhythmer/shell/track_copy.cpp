@@ -6,6 +6,7 @@
 #include "rhythmer/shell/sample_library.h"
 #include "rhythmer/shell/print_engine.h"
 #include "rhythmer/plugin/plugin_rack.h"
+#include "rhythmer/shell/mod_jobs.h"
 #include "rhythmer/shell/track_swap.h"
 #include <cstring>
 
@@ -14,6 +15,7 @@ namespace rhythmer {
 namespace {
 // Track t as it is now, whole, to the audio thread (its patterns' motion in them).
 void send_track(Context& c, unsigned t) {
+    ++c.heavy_serial; // the track's kit and patterns, whole
     auto* pack = new TrackPack(t, c.project.tracks[t], c.patterns.at[t]);
     Command load {Command::Type::TrackLoad, uint8_t(t)};
     load.track_pack = pack;
@@ -98,6 +100,9 @@ void trade_tracks(Context& c, unsigned a, unsigned b) {
     send_track(c, b);
     if (changed.song) c.sync_song();
     if (changed.punches) c.sync_punches();
+    for (auto [t, n] : changed.kept) c.sync_pattern(t, n); // pad-fx C: other tracks' kept punches on one of the two
+    for (unsigned m = 0; m < modulator_count; ++m) // roadmap P4: the modulators whose lanes or source moved
+        if ((changed.mods >> m) & 1) send_modulator(c, m);
     for (unsigned l = 0; l < loop_tracks; ++l)
         if ((changed.loops >> l) & 1)
             c.send({Command::Type::Looper, uint8_t(l), 0, uint16_t(looper::Do::Source), int16_t(c.project.looper.loops[l].source)});
@@ -115,10 +120,14 @@ void trade_tracks(Context& c, unsigned a, unsigned b) {
     }
     if (changed.key) c.set_compressor(7, c.project.compressor.key);
     if (changed.fx_keys) // roadmap P4: every chain's keys again (the two tracks' own came with them)
-        for (unsigned n = 0; n < chain_count; ++n)
+    {
+        for (unsigned n = 0; n < mix_chain_count; ++n)
             for (unsigned k = 0; k < max_slots; ++k)
                 if (fx_keyable(c.project.chain(n).slots[k].kind))
                     c.send({Command::Type::FxKey, uint8_t(n), 0, uint16_t(k), int16_t(c.project.chain(n).slots[k].key)});
+        for (unsigned n = 0; n < strip_channels; ++n) // the mixer strips' compressor keys
+            c.send({Command::Type::StripValue, uint8_t(n), 0, uint16_t(StripPart::Key), int16_t(c.project.strip(n).comp_key)});
+    }
     const auto& in = c.ui.settings.input; // Input Config's track follows the sound it names
     if (in.source == InputSource::Track && (in.track == a || in.track == b) && !c.host_recording())
         c.set_input_source(InputSource::Track, swapped(in.track, a, b));

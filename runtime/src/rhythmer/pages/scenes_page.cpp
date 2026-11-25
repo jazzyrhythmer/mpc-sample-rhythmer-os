@@ -2,19 +2,23 @@
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // SEQUENCES (roadmap P5's scenes; Seq's home, B1's first page, B1 again: Patterns): the bank's sixteen sequences laid out
 // as the pads sit (pad 1 bottom left; Pad Bank another bank of
-// them), each a column of patterns, pattern n of every track. A pad launches its sequence: pattern n on every used
-// track at the next bar (a track with no notes there goes silent, shell/sequences.h), the scene's tempo with
-// it; Erase + pad clears its name and tempo. Push names the scene in hand,
-// the wheel sets its tempo (below 30 BPM: none of its own). The cards are the
+// them), each keeping a pattern or off for each track (model/scene_links.h). A pad launches its sequence at the next
+// bar: each track on its kept pattern, a track kept off stops, a track it keeps nothing for plays on
+// (shell/sequences.h), the scene's tempo with it. A cell is tinted when the sequence keeps patterns, plain when it
+// keeps nothing, and marked – when it keeps only silence. Erase + pad clears it (one undo). Push names the scene in hand,
+// the wheel sets its tempo (below 30 BPM: none of its own), Shift + wheel its
+// colour (issue 19: its cell and pad in it; Shift held shows it). The cards are the
 // selected track's pattern's follow action (model/follow.h): K1 FOLLOW, K2
 // AFTER (bars or plays), K3 CHANCE, Shift + K1 OR (the second action, on the
 // odds the first leaves); Shift + B3 ALL puts it on every track's pattern in its
 // column. Minus / Plus move the track. Beside the grid: the scene in hand's
-// name and tempo, the follow action in glyphs, and a dot a track (in the
-// scene, playing something else, stopped by a follow action).
+// name and tempo, the follow action in glyphs, and a mark a track (a dot on
+// what the sequence keeps, dim off it, a square kept off, a red ring stopped
+// by a follow action).
 #include "rhythmer/pages/common.h"
 #include "rhythmer/pages/pages.h"
 #include "rhythmer/shell/features.h"
+#include "rhythmer/shell/sequences.h"
 #include "rhythmer/ui/widgets.h"
 #include <algorithm>
 
@@ -46,7 +50,7 @@ void draw_follow(Paint& p, const Snapshot& s, float x, float y, float w, juce::C
 
 void draw(Paint& p, const Snapshot& s) {
     auto c = colour_of(s);
-    unsigned hand = s.ui.scene % pattern_count;
+    unsigned hand = s.project.scene % pattern_count;
     const auto& scene = s.project.scenes[hand];
     Header h = header_of(s);
     // the pads chip names the page: SEQUENCES (a scene on screen is a sequence, the panel's word; shell/pad_job.h)
@@ -63,25 +67,30 @@ void draw(Paint& p, const Snapshot& s) {
     float gx = zone::pad, gy = zone::picture_y + (zone::picture_h - grid_h) / 2;
     bool blink = (s.now / 150) % 2;
     for (unsigned k = 0; k < pattern_pads; ++k) {
-        unsigned n = s.ui.pad_pattern(k), row = 3 - k / 4, column = k % 4, with = 0, on = 0, waiting = 0;
+        unsigned n = s.ui.pad_pattern(k), row = 3 - k / 4, column = k % 4, with = 0, waiting = 0;
+        bool kept = false;
         for (unsigned t = 0; t < track_count; ++t) {
             const auto& tr = s.project.tracks[t];
-            if (!tr.used() || !s.sketches[t][n].notes) continue;
-            ++with;
-            bool live = s.playing ? s.playing_patterns[t] == n && s.positions[t] >= 0 : tr.pattern == n;
-            on += live;
-            waiting += s.playing && !live && tr.pattern == n;
+            const int target = tr.used() ? scene_target(tr, n) : scene_plays_on;
+            kept |= target != scene_plays_on;
+            if (target < 0) continue;
+            with += s.sketches[t][unsigned(target)].notes;
+            // in hand: a launch of it still waiting for its bar
+            waiting += n == hand && s.playing && !tr.off && tr.pattern == unsigned(target) && s.playing_patterns[t] != unsigned(target);
         }
         float x = gx + column * (cw + gap), y = gy + row * (ch + gap);
-        bool playing = with && on == with;
-        juce::Colour text = with ? colour::sec : colour::dim;
-        if (playing) { p.fill(x, y, cw, ch, colour::text, 5); text = colour::bg; }
-        else if (waiting) { p.fill(x, y, cw, ch, colour::text.withAlpha(blink ? 0.4f : 0.12f), 5); p.ring(x, y, cw, ch, colour::text, 5, 1.5f); text = colour::text; }
-        else if (with) p.fill(x, y, cw, ch, colour::text.withAlpha(0.06f + 0.02f * float(std::min(with, 8u))), 5);
-        else p.fill(x, y, cw, ch, colour::quiet, 5);
-        if (n == hand) p.ring(x - 1, y - 1, cw + 2, ch + 2, c, 6, 1.5f);
         const auto& sc = s.project.scenes[n];
+        const juce::Colour ink = sc.colour ? track_colour(sc.colour - 1u) : colour::text; // its colour (issue 19), else white
+        bool playing = kept && n == hand && !waiting; // only the sequence in hand lights
+        bool silence = kept && !with;                 // it keeps only empty patterns or off
+        juce::Colour text = kept ? colour::sec : colour::dim;
+        if (playing) { p.fill(x, y, cw, ch, ink, 5); text = colour::bg; }
+        else if (waiting) { p.fill(x, y, cw, ch, ink.withAlpha(blink ? 0.4f : 0.12f), 5); p.ring(x, y, cw, ch, ink, 5, 1.5f); text = colour::text; }
+        else if (kept) p.fill(x, y, cw, ch, ink.withAlpha((sc.colour ? 0.18f : 0.10f) + 0.02f * float(std::min(with, 8u))), 5);
+        else p.fill(x, y, cw, ch, sc.colour ? ink.withAlpha(0.14f) : colour::quiet, 5); // a coloured new sequence says so too
+        if (n == hand) p.ring(x - 1, y - 1, cw + 2, ch + 2, c, 6, 1.5f);
         p.text(juce::String(n + 1), x + 4, y + 2, cw - 8, 13, plain(text, type::small, Weight::Bold));
+        if (silence) p.fill(x + cw - 17, y + 8, 7, 1.5f, playing ? colour::bg : colour::sec); // – : silence
         if (sc.tempo) p.fill(x + cw - 7, y + 6, 3, 3, playing ? colour::bg : colour::amber, 1.5f); // a tempo of its own
         if (sc.name[0]) { // as much of its name as fits, as the MPC shortens names
             auto style = plain(text, type::small, Weight::Medium);
@@ -95,41 +104,55 @@ void draw(Paint& p, const Snapshot& s) {
     float x = gx + grid_w + 10, w = zone::width - zone::pad - x, y = gy;
     juce::String title = "SEQ " + juce::String(hand + 1) + (scene.name[0] ? " " + juce::String(scene.name) : juce::String());
     p.text(title, x, y, w, 18, p.fit(title, plain(colour::text, type::list, Weight::SemiBold), w, type::floor));
-    icon(p, Icon::Metro, x, y + 21, 13, scene.tempo ? colour::amber : colour::dim, 1.3f);
-    p.text(scene.tempo ? tempo_text(scene.tempo) + " BPM" : juce::String::fromUTF8("\xe2\x80\x94"), x + 17, y + 19, w - 17, 16,
-           plain(scene.tempo ? colour::text : colour::dim, type::body, Weight::Medium));
+    if (s.ui.shift) { // Shift + wheel: its colour, in place of its tempo
+        if (scene.colour) p.fill(x, y + 22, 12, 12, track_colour(scene.colour - 1u), 3);
+        else p.ring(x, y + 22, 12, 12, colour::dim, 3, 1.2f);
+        p.text(scene.colour ? juce::String(ui::track_colour_names[size_t(scene.colour - 1) % 16]) : juce::String("No colour"), x + 17, y + 19, w - 17, 16,
+               plain(scene.colour ? colour::text : colour::dim, type::body, Weight::Medium));
+    } else {
+        icon(p, Icon::Metro, x, y + 21, 13, scene.tempo ? colour::amber : colour::dim, 1.3f);
+        p.text(scene.tempo ? tempo_text(scene.tempo) + " BPM" : juce::String::fromUTF8("\xe2\x80\x94"), x + 17, y + 19, w - 17, 16,
+               plain(scene.tempo ? colour::text : colour::dim, type::body, Weight::Medium));
+    }
     if (follow_shown(s.ui)) { // the follow action: Full's (shell/features.h)
         p.fill(x, y + 40, w, 1, colour::line);
         draw_follow(p, s, x, y + 46, w, c);
     }
-    // A dot a track: in this scene (its colour), playing another pattern (dim), stopped by a follow action (a ring).
+    // A mark a track: on what the sequence in hand keeps for it (its colour), off it (dim), off in it (a square), stopped
+    // by a follow action (a ring).
     float dy = gy + grid_h - 9, dot = 6, step = w / 8;
     for (unsigned t = 0; t < track_count; ++t) {
         const auto& tr = s.project.tracks[t];
         float tx = x + (t % 8) * step, ty = dy - (t < 8 ? 10 : 0);
         if (!tr.used()) { p.fill(tx + 1, ty + 2, dot - 2, 1.5f, colour::line); continue; }
-        bool stopped = s.playing && !s.song_playing && s.positions[t] < 0;
-        bool in_scene = (s.playing ? s.playing_patterns[t] : tr.pattern) == hand;
-        if (stopped) p.ring(tx, ty, dot, dot, colour::rec, 3, 1.2f);
-        else p.fill(tx, ty, dot, dot, in_scene ? track_colour(t) : track_colour(t).withAlpha(0.3f), 3);
+        bool stopped = s.playing && !s.song_playing && s.positions[t] < 0 && !tr.off;
+        if (tr.off) p.ring(tx, ty, dot, dot, track_colour(t), 1, 1.2f);
+        else if (stopped) p.ring(tx, ty, dot, dot, colour::rec, 3, 1.2f);
+        else p.fill(tx, ty, dot, dot, own_pattern(s.project, s.ui, t) ? track_colour(t).withAlpha(0.3f) : track_colour(t), 3);
     }
 }
 
 void pad(Context& c, unsigned pad, uint8_t, bool down) {
     if (!down) return;
-    if (c.ui.scene_capture) { c.capture_scene(c.ui.pad_pattern(pad)); return; } // CAPTURE: this scene
-    if (c.ui.erase) { c.clear_scene(c.ui.pad_pattern(pad)); return; } // Erase + pad: its name and tempo
+    if (c.ui.scene_capture) { c.capture_scene(c.ui.pad_pattern(pad)); return; } // CAPTURE: this sequence keeps what plays
+    if (c.ui.erase) { c.clear_scene(c.ui.pad_pattern(pad)); return; } // Erase + pad: it keeps nothing, no name, tempo or colour
     c.launch_scene(c.ui.pad_pattern(pad));
 }
 
 // The wheel: the scene in hand's tempo by a BPM, from the tempo now when it has none; under 30, none of its own.
+// Shift + wheel: its colour, none then the sixteen track colours.
 void wheel(Context& c, int delta) {
-    unsigned hand = c.ui.scene % pattern_count;
+    unsigned hand = c.project.scene % pattern_count;
+    if (c.ui.shift) {
+        c.ui.shift_used = true;
+        c.set_scene_colour(hand, std::clamp(int(c.project.scenes[hand].colour) + delta, 0, 16));
+        return;
+    }
     int now = c.project.scenes[hand].tempo ? int(c.project.scenes[hand].tempo) : int(c.tempo_now()) / 10 * 10 - delta * 10;
     c.set_scene_tempo(hand, now + delta * 10);
 }
 
-void push(Context& c) { c.name_scene(c.ui.scene); }
+void push(Context& c) { c.name_scene(c.project.scene); }
 
 void soft(Context& c, int key) {
     if (c.ui.shift) { // CAPTURE, ALL

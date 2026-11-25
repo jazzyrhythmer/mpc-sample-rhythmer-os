@@ -30,7 +30,9 @@ No sibling checkout is a build dependency.
 The modules under `kernel/` are GPL-2.0 (text in `LICENSES/GPL-2.0.txt`),
 as the kernel they load into; each `.ko` is built from the source beside it
 by `tools/build_kernel_modules.sh` against inMusic's MPC Sample kernel
-source release (6.12.60, pinned in `docs/HARDWARE.md`).
+source release (6.12.60, pinned in `docs/HARDWARE.md`); each `-6.18.ko`
+against inMusic's public 6.18.45 release (`engine-os-g2/5.3`) brought to
+6.18.59 with kernel.org's stable increments, for firmware 1.4.0.7 and 1.4.0.8.
 
 - `kernel/panel/`: sample-base's panel driver, after inMusic's
   `drivers/gpu/drm/tiny/st7796s.c` (John Keeping), GPL-2.0+.
@@ -40,6 +42,9 @@ source release (6.12.60, pinned in `docs/HARDWARE.md`).
   others, GPL-2.0+) and `drivers/media/common/uvc.c` as `uvc_common.c`
   (GPL-2.0-or-later), copied from that release with their notices as they
   are; the changes are marked `sample-base:` in `f_uvc.c`.
+- `kernel/uvc-6.18/`: the same files for firmware 1.4's kernel, plus
+  `uvc_trace.c` and `uvc_trace.h`, copied from the 6.18 tree above with
+  their notices, with the same `sample-base:` changes.
 - `kernel/vepu/`: written for this project, GPL-2.0.
 
 ## Fonts and platform

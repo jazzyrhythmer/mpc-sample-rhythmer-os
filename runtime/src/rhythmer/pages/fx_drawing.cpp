@@ -4,6 +4,7 @@
 // chain's six slots as a strip, and under it the effect in hand drawn as what
 // it does to sound, from its own values (pages/common.h).
 #include "rhythmer/pages/common.h"
+#include "rhythmer/plugin/plugin_skin.h"
 #include "rhythmer/ui/widgets.h"
 #include <algorithm>
 #include <cmath>
@@ -272,6 +273,11 @@ void fx_in_hand(Paint& p, const Snapshot& s, const Chain& chain, unsigned cursor
     const auto& slot = chain.slots[cursor];
     const auto& info = effect_info(EffectKind(slot.kind));
     bool plugin = info.family == Family::Plugins;
+    if (plugin && !slot.bypass && plugin_screen_shown(s, 1) && s.plugin_picture->entry == unsigned(slot.params[0])) { // its own strip, to the bottom
+        draw_screen_picture(p, *s.plugin_picture, 0, float(zone::height) - float(s.plugin_picture->height));
+        return;
+    }
+    if (plugin && !slot.bypass && plugin_strip_shown(s, unsigned(slot.params[0]))) { draw_plugin_strip(p, s, 0, float(zone::height - skin_strip_rows)); return; } // the maker's skin strip, to the bottom
     juce::String name = plugin ? plugin_name(s, unsigned(slot.params[0])) : juce::String(info.name);
     juce::String family = plugin ? juce::String("PLUG-IN") : juce::String(family_name(info.family)).toUpperCase();
     auto fam = caps_text(colour::mid);
@@ -287,6 +293,7 @@ void fx_in_hand(Paint& p, const Snapshot& s, const Chain& chain, unsigned cursor
     // A plug-in draws nothing of its own here: its state, and which row of its parameters the cards hold.
     const auto& panel = s.ui.plugin_panel;
     bool ours = panel.entry == unsigned(slot.params[0]);
+    if (ours && panel.status == PluginStatus::Ready && !slot.bypass) { draw_plugin_sound(p, s, x, dy, w, dh); return; } // its page, its sound
     icon(p, panel.status == PluginStatus::Failed || panel.status == PluginStatus::Crashed ? Icon::PlugBroken : Icon::Plug, x, dy + 4, 28, colour::dim, 1.4f);
     juce::String state = !ours || panel.status == PluginStatus::Loading || panel.status == PluginStatus::None ? "OPENING"
                        : panel.status == PluginStatus::Failed ? "WON'T OPEN" : panel.status == PluginStatus::Crashed ? "STOPPED" : "";

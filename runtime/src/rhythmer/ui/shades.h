@@ -24,9 +24,19 @@ constexpr std::array<std::array<uint32_t, 3>, 16> track_shades {{
 constexpr std::array<const char*, 16> track_colour_names {
     "Coral", "Amber", "Teal", "Lavender", "Sky", "Pink", "Lime", "Violet", "Cyan", "Yellow", "Rose", "Green", "Blue", "Orange", "Magenta", "Grey",
 };
+// The sixteen as the nearest of Ableton Live's clip and track colours (its palette's index), for the Live Set export
+// (shell/live_export.h): Coral as Live's salmon, Amber its orange, and so on.
+constexpr std::array<uint8_t, 16> track_live_colours {28, 1, 20, 10, 8, 12, 4, 11, 21, 17, 0, 18, 9, 15, 26, 37};
 // The Looper's tracks L1-L4 (docs/LOOPER.md): colours of their own, apart from the sixteen, shaded the same way.
 constexpr std::array<std::array<uint32_t, 3>, 4> loop_shades {{
     {0x6FD3FF, 0x6FA6FF, 0x6FFFE5}, {0xFFA36F, 0xFF7A6F, 0xFFD06F}, {0xC09CFF, 0x9C9EFF, 0xE69CFF}, {0x7DEBA6, 0x7DEBD9, 0xA4EB7D},
+}};
+
+// The mixer's submixes S1-S8 (docs/MIXER_PLAN.md, decision 6): colours of their own, softer than the sixteen and
+// the loops' (OKLCH lightness 0.80, chroma 0.085, hues 45 degrees apart from 20), shaded the same way.
+constexpr std::array<std::array<uint32_t, 3>, 8> sub_shades {{
+    {0xF0A8A7, 0xECAE8E, 0xE9A7C3}, {0xE4B383, 0xD0BD7E, 0xEFAB97}, {0xC1C382, 0xA3CB96, 0xD9B97E}, {0x91CEA6, 0x7BD0C3, 0xAFC88D},
+    {0x77CFD3, 0x81C9E9, 0x82D0B7}, {0x8FC4F1, 0xABBBF5, 0x7BCCE1}, {0xBCB5F1, 0xD5ADE2, 0xA0BEF5}, {0xE1A9D4, 0xEDA7B8, 0xCCB0E9},
 }};
 
 } // namespace rhythmer::ui

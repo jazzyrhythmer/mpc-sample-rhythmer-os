@@ -38,7 +38,7 @@
 //   memory  what one host costs (lean=1: a print host, F2a)
 //   close   racks with the same plug-in closed one at a time, each timed; a hang aborts (F2d)
 //   project the bench's busy project as a project file for the app (F2a's check on the MPC): its four samples written
-//           as WAVs in <card>/Samples/<name>, the project in <card>/Rhythmer/Projects/<name>.mldp, track 16 a PLUGIN
+//           as WAVs in <card>/Rhythmer/Samples/<name>, the project in <card>/Rhythmer/Projects/<name>.mldp, track 16 a PLUGIN
 //           track on `plugin` (a path from the card's top) playing an arpeggio (card, name, plugin); effect=PATH puts
 //           a plug-in effect on its chain, with preset program=N in its saved state
 // Nothing opens the audio device. Run on the MPC beside the running app (and a --rhythmer-dsp-bench for load).
@@ -185,8 +185,9 @@ int project(const Args& a) {
     auto p = std::make_unique<Project>();
     auto b = std::make_unique<PatternBank>();
     busy_project(*p, *b);
-    std::string samples = card + "/Samples/" + name;
-    mkdir((card + "/Samples").c_str(), 0755);
+    std::string samples = card + "/Rhythmer/Samples/" + name;
+    mkdir((card + "/Rhythmer").c_str(), 0755);
+    mkdir((card + "/Rhythmer/Samples").c_str(), 0755);
     mkdir(samples.c_str(), 0755);
     auto data = bench_samples();
     const char* names[] {"Tone", "Noise", "Sweep", "Thump"};

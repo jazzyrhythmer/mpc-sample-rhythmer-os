@@ -12,24 +12,40 @@ Use these written instructions for the current controls. The earlier First Groov
 - **Push** = press the large encoder. **Turn** = rotate it. B1–B3 are the buttons above the screen; K1–K3 are the knobs below it.
 - Back/cancel is **SHIFT + encoder push**. SHIFT + encoder turn is fine adjustment, not Back.
 
-| Track | Instrument | Preset | Pattern length |
-| --- | --- | --- | --- |
-| 1 | Rhythmer Kit | DRUM-X | 4 bars |
-| 2 | FMini-1 | MOOG BASS | 4 bars |
-| 3 | FM-106 | A11 Brass | 4 bars |
-| 4, optional | Acid Engine | SQUELCH | Set before generation |
-| 5, optional | Break Engine | Your own two-bar loop | Its prepared loop pattern may be 2 bars |
+- An Akai MPC Sample with firmware **1.3.0.12**, **1.4.0.7** or
+  **1.4.0.8**. On any other firmware Rhythmer does not start and the stock app keeps running.
+- On firmware 1.4: **Developer Mode** on, in the stock app's Settings on
+  the **DEV ENHANCEMENTS (BETA)** page.
+- A microSD card.
+- The release zip, `Rhythmer-MPC-Sample-<version>.zip`.
 
-## 1. Create an empty project
+The zip holds the `autorun` folder and an `autorun.sh` file. The
+`README.txt` and the licences are in `autorun/rhythmer/`.
 
 1. Press **SHIFT + Pad 16** to open Project.
 2. Press **B3 NEW**. On its confirmation, press **B2 EMPTY**.
 3. Select track 1: hold **PAD BANK**, tap **pad 1**, then release PAD BANK.
 4. Press **SAMPLE**. You should have an empty sample-kit track.
 
-**Check:** there are no notes or samples you need to keep in this new project. Choosing NEW is not a way to add an instrument to an existing project.
+1. Back up the card. If it has an `autorun` folder at its top level, move
+   that folder somewhere safe. Rhythmer's `autorun` folder replaces it.
+2. Unzip the release and copy the `autorun` folder and `autorun.sh` to
+   the top level of the card. The card now has `autorun.sh`,
+   `autorun/autorun.sh` and `autorun/rhythmer/`. Do not edit or rename
+   anything inside them: the MPC does not start an autorun whose files
+   have changed.
+3. Optional: to use plug-ins, make a folder named `Plugins` inside the
+   `Rhythmer` folder on the card (`Rhythmer/Plugins`) and copy your plug-ins
+   into it. A plug-in's release zip can go in as it is: Rhythmer unzips it
+   the next time the plug-in picker opens. See
+   [Plug-ins](guide/plug-ins.md) for what runs.
+4. Put the card in the MPC and switch it on. The stock app starts first.
+   On firmware 1.4 it asks whether to run the card's autorun script: press
+   Yes. A few seconds later Rhythmer starts, with a new project open on
+   track 1.
 
-## 2. Load the drum kit on track 1
+Rhythmer changes nothing on the MPC itself. To stop it from starting, delete
+the `autorun` folder and `autorun.sh` from the card.
 
 1. Press **PAD FX + KNOB FX together** to open TRACKS.
 2. Press **B1 TRACK SETUP**, select **TRACK TYPE**, then **PLUG-IN**.
@@ -60,7 +76,91 @@ Use these written instructions for the current controls. The earlier First Groov
 5. Let it loop again. Add closed hat **pad 4** on the counts **1-and-2-and-3-and-4-and**.
 6. Press **SEQ RECORD** again to leave recording while playback continues. Press STOP when you want to stop.
 
-**Check:** after recording is off, the drums repeat without you pressing pads. If pads switch patterns instead of making drum sounds, stop, press SAMPLE and start again. SHIFT + − undoes a supported recording edit. For precise corrections use SHIFT + SEQ for Step Edit; this exercise does not require it.
+| Control | Action |
+| --- | --- |
+| **B1**, **B2**, **B3** | Select the page or action named above each key. |
+| **K1**, **K2**, **K3** | Set the value on the card above each knob. |
+| Encoder (turn) | Move through a list, or fine-tune the outlined card. |
+| Encoder (push) | Open the item under the cursor, or move to the next card. |
+| Encoder (hold) | Open the **Menu**: the page's jobs (**HERE**) and the 16 places (**GO**). |
+| **SHIFT** + encoder push | Go back one page. |
+| **SHIFT** + **−** / **+** | Undo / redo. |
+
+Rhythmer starts on **Full**, which shows every page. **Basic** shows the
+stock app's pages plus tracks, plug-ins, the mixer and Song. To switch, press
+**SHIFT** + **Pad 8** (Settings) and turn **K1** (**FEATURES**). See
+[Basic and Full](guide/settings.md#basic-and-full).
+
+Rhythmer has four short lessons. Hold the encoder, press **B3** (**GO**),
+then pad 16 (**LEARN**). See [Lessons](guide/basics.md#lessons).
+
+## 3. Select a track
+
+Rhythmer has 16 tracks, one for each pad. Pad 1 (bottom left) is track 1.
+
+To select a track, hold **PAD BANK** and press a pad. This works on any
+page.
+
+A new project has no tracks. It opens on track 1 with the track types, so
+you choose what it is first ([step 4](#4-load-samples-into-a-kit) makes it a
+kit). The other tracks stay empty until you choose what they are (see
+[step 7](#7-add-a-plug-in-instrument)).
+
+To mix the tracks, press **PAD FX** and **KNOB FX** together to open the
+mixer. Every track is a strip; the selected one is lit. Hold **+** to see
+its card (its sends, EQ or compressor), hold **−** to go back to the
+strips. Press a pad or turn the encoder to pick a track. The
+fader sets its level, **K1**–**K3** its sends A–C. Press **B2** for its EQ
+and **B3** for its compressor (see
+[The mixer](guide/mixer-and-effects.md#the-mixer)).
+
+![The mixer](images/screens/mixer.png)
+
+## 4. Load samples into a kit
+
+Rhythmer reads WAV (16, 24 or 32-bit), MP3, FLAC, Ogg Vorbis and AIFF files (any sample rate;
+a WAV up to 6 hours) from `Rhythmer/Samples` on the card, or anywhere else on it. It can
+also read the MPC's internal factory samples.
+
+1. Select track 1 (hold **PAD BANK**, press pad 1). In a new project it
+   shows the track types.
+2. Turn the encoder to **Drum** and push it, then push it on **Card**.
+   Track 1 is now a kit, and the sample browser opens. On a track that is already a
+   kit, press **SAMPLE SELECT** to open the browser.
+3. Turn the encoder to move through the list. Push the encoder to open a
+   folder. Press **B1** to go back out of a folder.
+4. Press **B2** to switch between the card (**CARD**) and the MPC's
+   factory samples (**INTERNAL**).
+5. Press **B3** to turn on **PREVIEW**. Each file plays when you move to it.
+   **PREVIEW** stays on until you turn it off.
+6. Hit the pad you want to load onto, then push the encoder on a file. The
+   file loads onto the last pad you hit.
+
+To load a file onto the next empty pad, hold **SHIFT** and press any pad.
+
+![The sample browser](images/screens/samples.png)
+
+The browser also loads SFZ, MPC programs and expansions, EXS24, SoundFont
+and DecentSampler instruments onto a pad. See
+[Sampled instruments](guide/kits-and-sampling.md#sampled-instruments).
+Push on an MPC kit to open **LOAD KIT**: it loads the whole kit, or only the
+banks you pick. See [Loading samples](guide/kits-and-sampling.md#loading-samples).
+
+## 5. Edit a pad
+
+Press **SAMPLE** to open **Stage**. Stage holds the quick pages of the
+selected track. On a kit, these are the stock Sample mode pages for the last
+pad you hit.
+
+![Stage on a kit: TRIM](images/screens/trim.png)
+
+- **B1** cycles **TRIM**, **LAYERS**, **TUNE** and **AMP ENV** (on a sampled
+  instrument: **ZONES**, **TUNE** and **AMP ENV**).
+- **B2** cycles **PLAY**, **COLOUR**, **FOLLOW** and **CLOUD**.
+- **B3** cycles **MIX**, **SENDS**, **FILTER**, **FILT ENV** and **KIT FILT**.
+
+Press the lit key again to go to its next page. The dots under a key show
+which page of its cycle is open.
 
 ## 5. Load and record a bass on track 2
 
@@ -76,15 +176,24 @@ Use these written instructions for the current controls. The earlier First Groov
 
 ## 6. Add chords on track 3
 
-1. Select **track 3** with PAD BANK + pad 3.
-2. Choose Plugin → **FM-106**. Open its preset list and load **A11 Brass**.
-3. In Keys, confirm **C / Minor / Scale**. In PATTERNS, set pattern 1 to **4 bars / 1/16 / 50%**.
-4. Press SAMPLE. Play pads **1, 3 and 5 together** for a minor chord.
-5. Record short chord hits with SEQ RECORD → PLAY. Release the pads between hits. Turn recording off afterwards.
+1. Press **SEQ** to open **Sequences**. If Patterns, Roll or Motion opens
+   instead, press **B1** (**SEQUENCES**). The bank's 16 sequences are laid out as
+   the pads: pad 1 bottom left. A sequence keeps one pattern for each
+   track.
+2. Hold **SEQ** and use **K1** to set the pattern length in bars and **K2**
+   the grid (Q) of the selected track's pattern. **K3** sets the swing of
+   the project.
+3. To change to another sequence, press its pad. Pad 1 is sequence 1. Every
+   track goes to the pattern that sequence keeps. A new sequence keeps
+   nothing: the tracks play on until you launch a pattern. On other pages,
+   hold **SEQ** and press **SHIFT** + a pad.
 
 **Check:** the displayed preset name is A11 Brass. This is the original brass preset, not a newly authored replacement or a patch described as a pad sound.
 
-## 7. Balance the tracks
+   To put one track on another pattern, press **B1** again for
+   **Patterns**. Its pads are the selected track's patterns. On any page,
+   hold **SEQ** and press a pad for the same. The sequence you are on keeps
+   the pattern you launch.
 
 1. Press PAD FX + KNOB FX together for **TRACKS**.
 2. Select track 1, 2 or 3 using the encoder or PAD BANK + its pad.
@@ -104,7 +213,10 @@ Use these written instructions for the current controls. The earlier First Groov
 
 Automatic recovery is separate: it updates one entry for this project under Rhythmer/Autosave, without overwriting your manual save. From the Project home tiles (SAVE / OPEN / NEW), **SHIFT + B3 RECOVERY** opens the recovery list. Use SAVE after loading a recovered copy to keep it deliberately.
 
-**Check:** saving a project is different from saving a User Sound/Kit. The project is what preserves the drum, bass and chord patterns together.
+- **SHIFT** + **Pad 4**: turn the one-bar count-in on or off.
+- **SHIFT** + **Pad 10**: turn **Rec Quantize** on or off. It is on at
+  first: recorded notes land on the pattern's Q.
+- **SHIFT** + **TAP TEMPO**: set the metronome to Off, On or Rec.
 
 ## Optional: generate an Acid line on track 4
 
@@ -120,28 +232,73 @@ Automatic recovery is separate: it updates one entry for this project under Rhyt
 
 ## Optional: add your own Break loop on track 5
 
-1. Put a loop you may use in the card's Samples folder. Start with a known **two-bar** loop.
-2. Select track 5 → Plugin → **Break Engine**.
-3. In the browser check **LOAD A** and set **K1 LOAD BARS = 2** before selecting the file and pushing.
-4. Wait for preparation. BREAK GEN stays open; a straight pattern is prepared if the destination pattern was empty.
-5. Press PLAY. A two-bar Break pattern can repeat while tracks 1–3 play four bars; their lengths do not have to match.
-6. Choose **BRK PERF**. Page **1 CHOPS** plays slices; turn the encoder to **2 ROLLS / HOLD PADS** and hold/release a repeat command.
-7. To reopen setup: select track 5 → SEQ → B1 PATTERNS → SHIFT + B3 GEN → BREAK GEN.
+1. Hold **PAD BANK** and press pad 2 to select track 2.
+2. The track is empty, so Stage opens with the track types, as on the MPC:
+   **Drum** (an empty kit, samples from the card, or a recording),
+   **Keygroup** (an instrument played across the keys), **Plugin** (a
+   plug-in instrument), **MIDI** (an external instrument on the MIDI Out
+   jack or USB) and **Audio** (a recording of the input).
 
 If it plays at half/double the intended speed, check the source's bar count. Changing Grain knobs alone does not trigger stretching: hold pad 3 STRETCH on page 2, keep it held and turn to page 5. LOOP VARIATIONS requires LOOP mode, playback and PATTERN HOLD off. See the [Break instructions](guide/MANUAL_020_EN.md#12-load-a-break-and-return-to-its-controls) before using those pages.
 
 ## If you get stuck
 
-| What happened | Do this |
-| --- | --- |
-| I cannot find the sound page | Press SAMPLE |
-| Pads switch patterns | Release SEQ; press SAMPLE |
-| Wrong track is being edited | PAD BANK + target pad; check the header |
-| No plug-ins listed | Check the full SD installation and Rhythmer/Plugins |
-| B1 is a rate instead of TRACK SETUP | Turn off NOTE REPEAT / ARP, then reopen TRACKS |
-| I see Save Slot instead of synth controls | SHIFT + encoder push; return to sound-screen EDIT |
-| I lost the Break menu | SEQ → B1 PATTERNS → SHIFT + B3 GEN → BREAK GEN |
-| An effect or note will not stop | STOP twice within 400 ms |
+   ![The plug-in picker](images/screens/plugins.png)
+
+5. Press **SAMPLE** to open Stage, and play the pads. To set the key and
+   scale the pads play in, hold **SAMPLE** to see **Keys** and turn **K1**
+   for the root, **K2** for the scale and **K3** for the pad layout. Press
+   **−** / **+** to change the octave.
+
+   ![Keys](images/screens/keys.png)
+
+6. Press **SAMPLE** again for **PRESETS**, the first page of **B1**. Turn
+   the encoder to step through the plug-in's presets, or push it for the
+   whole list. **K1**–**K3** are **FILTER**, **ECHO** and **SPACE** on
+   every plug-in.
+
+   ![Stage PRESETS on a plug-in track](images/screens/stagepluginpresets.png)
+
+7. Press **B1** for **EDIT**, its next page: the plug-in's own parameters
+   come on **K1**–**K3**, in rows of three. Turn the encoder to move through
+   the rows, and press **−** / **+** for the plug-in's page before or after.
+
+   ![Stage EDIT: a plug-in's parameters](images/screens/stagepluginedit.png)
+
+Record the plug-in track the same way as the kit in
+[step 6](#6-record-a-beat).
+
+## 8. Save the project
+
+Rhythmer saves the project by itself, three seconds after you last used a
+control while nothing plays. A new project is saved as **Project 1**,
+**Project 2** and so on. To give it a name of its own:
+
+1. Press **SHIFT** + **Pad 16** to open **Project**.
+2. Press **B1** (**SAVE AS**).
+
+![Project: SAVE AS, OPEN, NEW](images/screens/project.png)
+
+Rhythmer asks for a name. The pads type like phone
+keys: each pad shows the letter it types next. Pad 14 types a space, pad 15
+switches to digits and pad 16 deletes. Turn the encoder to move the cursor.
+Press **B3** (**SAVE**) or push the encoder to save. Press **B1** to cancel.
+
+![Naming a project](images/screens/nameproject.png)
+
+Projects are saved in `Rhythmer/Projects` on the card. To open another
+project, press **B2** (**OPEN**) on the Project page.
+
+## 9. Exit Rhythmer
+
+Press **POWER** briefly. The Exit screen opens:
+
+- **B1** (**STAY**): go back to Rhythmer.
+- **B2** (**POWER OFF**): save the project and switch the MPC off.
+- **B3** (**MPC APP**): save the project and go back to the stock app until
+  the next time the MPC is switched on.
+
+![The Exit screen](images/screens/exitcard.png)
 
 The [full manual](guide/MANUAL_020_EN.md) explains instrument replacement, User Sound/Kit saving and the six Break pages. Use the [button reference](guide/QUICK_REFERENCE_020_EN.md) to distinguish selecting a track, opening its instrument and choosing its pattern.
 

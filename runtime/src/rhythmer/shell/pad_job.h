@@ -20,10 +20,9 @@ inline const char* pad_job(const Project& project, const UiState& ui) {
     if (ui.copying != UiState::Copying::Off || ui.scene_capture) return ""; // a copy, a move or a capture: its prompt says what to pick
     if (ui.pad_bank) return "TRACKS";                                           // Pad Bank held
     if (loop_grid_held(ui)) return "LOOPS";                                     // Loop held: the loop grid
-    if (ui.seq_held) return sequences_lit(ui) ? "SEQUENCES" : "PATTERNS";       // Seq held: the sequences; on Patterns, with Erase held or freezing, the track's patterns
+    if (ui.seq_held) return sequences_lit(ui) ? "SEQUENCES" : "PATTERNS";       // Seq held: the track's patterns; with Shift held, the sequences
     if (ui.mute_mode()) return "";
     switch (ui.page) {
-    case PageId::Tracks: return "TRACKS";
     case PageId::Patterns: return "PATTERNS";
     case PageId::Scenes: return "SEQUENCES";
     case PageId::StepEdit: if (ui.step_pads) return "STEPS"; break;

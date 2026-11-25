@@ -95,16 +95,13 @@ void punch_draw(Paint& p, const Snapshot& s) {
         for (const auto& e : heard_punches(spans.data(), live, written(s.ticks), uint32_t(pos), length))
             all.push_back({e.tick, e.length, e.kind, false});
     }
-    // Each one's part in this bar (a punch running past the pattern's end goes on from its start).
+    // Each one's part in this bar, as it sounds: up to the pattern's end at most (one held across the loop point is
+    // two, the second from the start).
     struct Piece { float from, to; uint8_t kind; bool kept; };
     std::vector<Piece> pieces;
     for (const auto& e : all) {
-        uint64_t a = e.tick, b = uint64_t(e.tick) + e.length;
-        for (int wrap = 0; wrap < 2; ++wrap, a = 0, b = b > length ? b - length : 0) {
-            uint64_t from = std::max<uint64_t>(a, b0), to = std::min<uint64_t>({b, uint64_t(length), uint64_t(b0) + bar});
-            if (to > from) pieces.push_back({float(from - b0) / bar, float(to - b0) / bar, e.kind, e.kept});
-            if (b <= length) break;
-        }
+        uint64_t from = std::max<uint64_t>(e.tick, b0), to = std::min<uint64_t>({uint64_t(e.tick) + e.length, uint64_t(length), uint64_t(b0) + bar});
+        if (to > from) pieces.push_back({float(from - b0) / bar, float(to - b0) / bar, e.kind, e.kept});
     }
     std::stable_sort(pieces.begin(), pieces.end(), [](const Piece& x, const Piece& y) { return x.from < y.from; });
     std::vector<uint8_t> rows; // a row per punch, as they come in the bar, four at most

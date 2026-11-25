@@ -4,6 +4,7 @@
 // 5 ms; the runtime sends only what changed). Colours come from the track
 // palette; button light values from surface/leds.h.
 #include "rhythmer/engine/engine_host.h"
+#include "rhythmer/shell/history_jobs.h"
 #include "rhythmer/shell/lesson_jobs.h"
 #include "rhythmer/shell/features.h"
 #include "rhythmer/engine/dsp.h"
@@ -12,6 +13,7 @@
 #include "rhythmer/pages/pages.h"
 #include "rhythmer/plugin/plugin_rack.h"
 #include "rhythmer/model/scales.h"
+#include "rhythmer/model/slice_hits.h"
 #include "rhythmer/shell/autosave.h"
 #include "rhythmer/shell/sampler_map.h"
 #include "rhythmer/shell/ask.h"
@@ -35,10 +37,25 @@
 #include "rhythmer/ui/tokens.h"
 #include "surface/led_colours.h"
 #include "rhythmer/shell/mpc_wav_slices.h"
+#include "rhythmer/model/slice_banks.h"
+#include "rhythmer/shell/zoom_view.h"
+#include "rhythmer/model/card_folders.h"
 #include <algorithm>
 #include <cstdio>
+#include <ctime>
 
 namespace rhythmer {
+
+namespace {
+// A sample saved in Samples at the card's top, where older builds wrote samples, and since moved into Rhythmer/Samples:
+// its slot names it there before it loads (model/card_folders.h), and the project is saved with that path.
+void follow_moved_sample(Project& project, unsigned slot, const SampleLibrary& library) {
+    const auto& ref = project.samples[slot % sample_slots];
+    if (!ref.used() || ref.path[0] != '/') return;
+    const std::string now = card_sample_path(library.card(), ref.path);
+    if (now != ref.path && now.size() < sizeof(SampleRef::path)) std::snprintf(project.samples.edit(slot).path, sizeof(SampleRef::path), "%s", now.c_str());
+}
+} // namespace
 
 // Updates from the card (shell/update.h). Opens the update question when the service thread found a newer
 // release, playback is stopped and no other sheet is open. After INSTALL (shell/ask.cpp), waits for the project
@@ -51,6 +68,7 @@ void Shell::autosave_tick(uint32_t now) {
     if (ui.held_pads || ui.shift || ui.seq_held || ui.pad_bank || ui.sample_held || ui.erase || tap.down) last_input_ = now;
     const auto& host = context_.host;
     AutosaveFacts f;
+    f.enabled = ui.settings.autosave;
     f.dirty = context_.dirty && !context_.save_pending;
     f.playing = host.playing() || host.song_playing() || host.looper().recording() || host.looper().armed();
     f.recording = ui.recording || ui.rec_armed || host.recorder().state() != TakeRecorder::State::Idle
@@ -58,7 +76,7 @@ void Shell::autosave_tick(uint32_t now) {
                || ui.auto_sheet.sampling || ui.auto_sheet.checking || (store_ && store_->exporting());
     f.sheet = ui.ask != UiState::Ask::None || ui.name.open() || ui.exit_open || card_owns_controls(ui) || ui.update.phase != 0;
     f.loading = ui.loading || context_.samples_to_load < sample_slots;
-    f.editing = ui.page == PageId::Chop || ui.page == PageId::Record || ui.project_save_picker || ui.lesson; // a lesson's project is never saved
+    f.editing = (ui.page == PageId::Chop && ui.chop_take_at) || ui.page == PageId::Record || context_.import_unsaved || ui.project_save_picker || ui.lesson; // a lesson's project is never saved; Chop saves between takes
     f.failed = autosave_failed_ || context_.last_save_failed;
     f.now = now; f.last_input = last_input_; f.last_try = autosave_try_;
     if (!autosave_due(f)) return;
@@ -137,7 +155,7 @@ bool Shell::light_show_pass(SurfaceLights& lights, uint32_t now) {
     clock.bar_beats = std::max(1u, unsigned(project_->time_signature().beats));
     if (clock.playing) clock.beats = double(host.ticks()) / std::max(1u, project_->beat_ticks());
     else clock.beats = double(now) * tempo_now.load(std::memory_order_relaxed) / 600000.0; // tenths of a BPM
-    for (unsigned side = 0; side < surface_meter_lights; ++side) clock.meters[side] = meter_lit(host.out_level(side), meter_mix_db);
+    clock.meters = meter_reads.at(now, false, [&](unsigned side) { return host.out_level(side); });
     clock.level = {host.out_level(0), host.out_level(1)};
     auto frame = show_lights.frame(clock, style);
     show_frame(lights, frame);
@@ -176,6 +194,8 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
     context_.gen_break_tick();
     update_tick();
     autosave_tick(now);
+    usage_tick(now);
+    context_.chop_tick(now); // Chop: a moved cut heard once, gone still
     // Power was pressed: the Exit sheet opens (the service thread only counts presses).
     // The library found files or finished a sample: the lengths go into the project.
     if (library_ && library_->generation() != library_seen) {
@@ -196,12 +216,21 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
                 ref.keys = keys;
                 ref.one_key_zones = one_key && zone_key_count(ref) >= 2;
                 ref.streamed = shown.streamed;
+                if (ref.root == root_unread) ref.root = ref.instrument() ? root_none : library_->root_of(n, ref.path); // once, then kept
             }
         ui_.files_count = uint16_t(std::min<size_t>(sample_browser_files(library_->files(), ui_.break_browse).size(), 0xffff));
         if (ui_.files_cursor >= ui_.files_count) ui_.files_cursor = uint16_t(ui_.files_count ? ui_.files_count - 1 : 0); // a row deleted: the last one left
         if (ui_.page == PageId::Chop && !ui_.slices.count) context_.rechop();
     }
+    // A KEYGROUP track of one sample plays from that sample's note once it is found, and again when its file changes.
+    for (unsigned t = 0; t < track_count; ++t) {
+        const auto root = int16_t(keyed_root(*project_, project_->tracks[t]));
+        if (root == keyed_roots_sent[t]) continue;
+        keyed_roots_sent[t] = root;
+        context_.send({Command::Type::KeyedRoot, uint8_t(t), 0, 0, root});
+    }
     context_.files_landed();  // Trim Sample, Extract, Save Sample, takes, Recall, Resample: done on the service thread
+    context_.sync_chops();    // the chops slice hits play, as Chop and the project hold them now (issue 24)
     context_.record_tick(now); // Input Config's route and monitor, settings kept, renders followed
     context_.browser_tick();  // the browser's listings and previews
     // The device's rate changed: the project again, worked out at the new rate.
@@ -238,6 +267,7 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
                 }
                 else {
                     context_.switch_to(*project, *bank, loaded->recovery&&!loaded->media.empty()?loaded->media:loaded->path, &plugin_states, &prints);
+                    read_jams(loaded->bytes, context_.jams); context_.publish_jams();
                     if (loaded->recovery) {
                         context_.recovered_project = true; context_.recovery_origin = loaded->origin;
                         context_.dirty = true; context_.notice("Recovered copy: use SAVE to keep it");
@@ -256,9 +286,11 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
     context_.reload_tick(); // a project parked for: built once the audio thread is still; the Loading sheet till it is in
     if (ui_.exit_saved && now - off_saved_at >= 1000) power_off.store(true); // a second to read that it is saved
     context_.song_tick();
+    context_.jam_tick();      // jam capture: the bar playing outside Song (shell/jam_jobs.cpp)
+    context_.free_tick();     // Free length: a take on a Free pattern grows it (shell/free_length.h)
     context_.plugins_tick(now); // the rack follows the project; the plug-in in view's cards
     context_.print_tick();      // prints made (freeze plan F2a) into the project's records
-    context_.mpc3_tick();       // an MPC 3 export's plug-in tracks printed, then the export
+    context_.export_tick();     // an MPC 3 or Live Set export's plug-in tracks printed, then the export
     context_.stems_tick();      // a sample's stems written: onto their pads (shell/stems_jobs.cpp)
     context_.stage_tick(now); // Stage's PRESET: the sound turned to, once the turning stops
     context_.live_erase_tick(); // Erase + pad while playing: the notes the playhead passed
@@ -266,6 +298,7 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
     context_.follow_tick();   // roadmap P5: chains told to the audio thread, follow actions that came followed
     context_.capture_tick();  // roadmap P5: the transport's runs, for what Capture keeps
     seq_follow(context_);     // Settings > SEQ > Follow: Step Edit and Roll with the playhead
+    context_.note_preview_tick(); // Settings > SEQ > Note preview: a note written or moved heard, and ended on time
     // Sounds of one's own, when the card's list changes.
     if (store_ && store_->generation() != sounds_seen) {
         sounds_seen = store_->generation();
@@ -281,7 +314,8 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
         ProjectStore::View v;
         store_->view(v);
         if (v.settings_read) {
-            ui_.settings.read(v.settings); settings_loaded = true; context_.send_click(); context_.send_repeat_velocity();
+            ui_.settings.read(v.settings); settings_loaded = true; context_.send_click(); context_.send_repeat_velocity(); context_.send_mute_kind();
+            if (ui_.settings.usage_log) context_.usage.start(now, (long long)std::time(nullptr), rhythmer_version(), ui_.settings.full_features);
             // A first install (no settings file, so no project to resume): the first project starts with the MPC's
             // factory kit on track 1, as NEW gives (shell/lesson.h), so the pads play at once.
             if (v.settings.empty() && v.recovery_offer.empty() && context_.project_path.empty() && !context_.dirty && std::filesystem::exists(factory_kit_path))
@@ -302,17 +336,19 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
     // Slots a Load Kit or Load Bank named past what the queue holds, as it drains.
     while (library_ && !context_.slots_waiting.empty()) {
         unsigned slot = context_.slots_waiting.front();
+        follow_moved_sample(*project_, slot, *library_);
         const auto& ref = project_->samples[slot % sample_slots];
-        if (ref.used() && !library_->load(slot, ref.path)) break;
+        if (ref.used() && !library_->load(slot, ref.path, ref.root == root_unread)) break;
         context_.slots_waiting.erase(context_.slots_waiting.begin());
     }
     // After a switch, every sample slot loads again (or empties), a few each pass. A slot the project leaves empty
     // and the library holds nothing in is passed over: nothing to ask for.
     while (library_ && context_.samples_to_load < sample_slots) {
         const unsigned slot = context_.samples_to_load;
+        follow_moved_sample(*project_, slot, *library_);
         const auto& ref = project_->samples[slot];
         bool real = ref.used() && ref.path[0] == '/';
-        if ((real || library_->held(slot)) && !library_->load(slot, real ? ref.path : "")) break;
+        if ((real || library_->held(slot)) && !library_->load(slot, real ? ref.path : "", real && ref.root == root_unread)) break;
         if (real && !project_->chops[slot].unwritten) project_->chops.edit(slot) = read_mpc_slices(ref.path); // the file's slices are its chop (an older project's waits to be written)
         ++context_.samples_to_load;
     }
@@ -324,8 +360,10 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
         const auto& t = project_->tracks[ui_.track % track_count];
         const FrameView view = zoomed_view(); // a close view's frames too, drawn from memory (SampleLibrary::detail())
         const unsigned view_sample = ui_.page == PageId::Chop ? ui_.chop_sample : t.pads[t.last_pad % sampler_pads].sample;
+        SlicedChops sliced; // slice hits' samples, their chops as they play them (issue 24)
+        for (uint16_t slot : sliced_samples(*project_, context_.patterns)) sliced.emplace_back(slot, &context_.live_chop(slot));
         auto holds = stream_holds(*project_, chop ? &ui_.slices : nullptr, chop ? ui_.chop_sample : no_sample,
-                                  view.width() ? view_sample : no_sample, HeldRange {view.from, view.to, false});
+                                  view.width() ? view_sample : no_sample, HeldRange {view.from, view.to, false}, sliced);
         auto find = [](const StreamHolds& in, unsigned slot) {
             auto at = std::lower_bound(in.begin(), in.end(), slot, [](const auto& e, unsigned s) { return e.first < s; });
             return at != in.end() && at->first == slot ? &at->second : nullptr;
@@ -339,6 +377,8 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
     }
     if(enc.down && (enc.track!=ui_.track || enc.page!=uint8_t(ui_.page))) enc.down=false;
     if (encoder_tick(enc, now)) menu_open(context_); // the encoder held: the MENU (shell/menu.h)
+    if (history_tick(history_hold, now)) history_open(context_); // Shift + Minus held: the undo list (shell/history_list.h)
+    mixer_view_tick(mixer_view, ui_, now); // the mixer's Plus / Minus held: the card or the strips (shell/mixer_channels.h)
     lesson_tick(context_, now); // a lesson: its kit loaded, or its last step done (shell/lesson_jobs.h)
     if (ui_.levels_sheet && ui_.track != ui_.levels_sheet_track) ui_.levels_sheet = 0; // 16 Levels' FILE or SET (shell/levels_keys.h): another track selected closes it
     // Tap Tempo held half a second with nothing turned: the Tempo page; held on it, back to the page under it.
@@ -469,16 +509,17 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
         }
         { // phase 5: Chop, the region and its file, the browser
             unsigned used = 0;
-            for (const auto& ref : project_->samples) used += ref.used();
-            bool taking = ui_.chop_take_at && now - ui_.chop_take_at < 60000;
-            chop_bits.store(uint32_t(ui_.chop_mode) | uint32_t(ui_.chop_armed) << 2 | uint32_t(taking) << 3 | uint32_t(ui_.slices.count & 0xff) << 8
+            for (size_t n = 0, span = project_->samples.span(); n < span; ++n) used += project_->samples[n].used();
+            bool taking = chop_take_playing(*project_, ui_, now); // Manual's take still playing (shell/zoom_view.h)
+            chop_bits.store((uint32_t(ui_.chop_mode) & 3) | (uint32_t(ui_.chop_mode) >> 2 & 1) << 4 | uint32_t(chop_armed(ui_)) << 2 | uint32_t(taking) << 3 | uint32_t(ui_.slices.count & 0xff) << 8
                             | uint32_t(ui_.chop_slice) << 16 | uint32_t(used) << 24, std::memory_order_relaxed);
             pad_start_now.store(pad.start, std::memory_order_relaxed); pad_end_now.store(pad.end, std::memory_order_relaxed);
             files_bits.store(uint32_t(ui_.files_count) | uint32_t(ui_.files_cursor & 0x3fff) << 16 | uint32_t(ui_.files_drive & 1) << 30
-                             | uint32_t(ui_.preview) << 31, std::memory_order_relaxed);
+                             | uint32_t(ui_.settings.preview) << 31, std::memory_order_relaxed);
             std::string folder = library_ ? library_->folder() : std::string();
             std::lock_guard<std::mutex> guard(text_lock);
             pad_name_text = pad.used() ? project_->samples[pad.sample % sample_slots].name : "";
+            pad_root_now.store(pad.used() ? project_->samples[pad.sample % sample_slots].root : root_none, std::memory_order_relaxed);
             folder_text = folder.empty() ? folder : folder.substr(folder.find_last_of('/') + 1);
             const auto* last = context_.edits.last();
             undo_text = last ? last->what : std::string();
@@ -488,6 +529,9 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
                            | uint32_t(ui_.map_open) << 10 | uint32_t(bool(context_.gesture.edit)) << 12
                            | uint32_t(project_->song.count & 0xfff) << 16 | uint32_t(project_->tracks[ui_.track].engine) << 28,
                            std::memory_order_relaxed);
+        jam_bits.store(uint32_t(ui_.jam_bars & 0x3ff) | uint32_t(ui_.jam_logging) << 10 | uint32_t(ui_.jam_count & 0xf) << 11
+                       | uint32_t(ui_.jam_sheet) << 15 | uint32_t(project_->song.marker_count & 0x1f) << 16
+                       | uint32_t(project_->song.tempo.count & 0x7f) << 21, std::memory_order_relaxed);
         if (context_.gesture.edit && now - context_.gesture.last >= gesture_quiet_ms) context_.close_gesture(); // a pot left still
     }
     const auto& project = *project_;
@@ -530,22 +574,25 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
         lights.fader(level <= 0 ? Rgb {} : master ? led_colour::white(level) : pad_light::track(ui.track, level).rgb);
     }
     // Bank lights A-H: with Seq held or on Patterns, the bank of patterns in view; else the sampler track's bank in view, or the Drums
-    // pads' (A-D), or the Prog pads' (A-C).
+    // pads' (A-D), or the Prog pads' (A-C); on Chop, the slices on the pads (A 1-16, B 17-32 ...): while Manual's take
+    // plays, the bank of the red pad's slice (model/slice_banks.h).
+    const unsigned chop_view = chop_bank_slice(project, ui, now); // shell/zoom_view.h
     for (unsigned bank = 0; bank < surface_bank_lights; ++bank)
         lights.bank(bank, ui.seq_held || ui.page == PageId::Patterns || ui.page == PageId::Scenes ? bank == ui.pattern_bank % pattern_banks
+                                      : ui.page == PageId::Chop ? bank == slice_bank(chop_view)
                                       : (track.engine == EngineKind::Sampler && bank == track.bank % sampler_banks) || (drum_pads(track) && bank == drum_bank(track))
                                         || (prog_pads(track) && bank == prog_bank(track)));
     { // The meters beside the screen, as on the MPC: the input source while Record or Input Config is in view or a
-      // take waits or runs (what is about to be sampled), else main out.
+      // take waits or runs (what is about to be sampled), else main out; read every 50 ms (meter_lights.h).
         using S = TakeRecorder::State;
         auto take = host.recorder().state();
         bool input = ui.page == PageId::Record || ui.page == PageId::InputConfig || take == S::Armed || take == S::Cued
                   || take == S::Recording;
+        const auto& lit = meter_reads.at(now, input, [&](unsigned side) { return input ? host.in_level(side) : host.out_level(side); });
         uint32_t bits = uint32_t(input) << 16;
         for (unsigned side = 0; side < surface_meter_lights; ++side) {
-            uint8_t lit = input ? meter_lit(host.in_level(side), meter_input_db) : meter_lit(host.out_level(side), meter_mix_db);
-            lights.meter(side, lit);
-            bits |= uint32_t(lit) << (8 * side);
+            lights.meter(side, lit[side]);
+            bits |= uint32_t(lit[side]) << (8 * side);
         }
         meter_bits.store(bits, std::memory_order_relaxed);
     }
@@ -556,7 +603,7 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
     bool erase_pots = false;
     {
         auto bindings = page_bindings(project, ui, context_.pattern());
-        for (const auto& b : bindings) erase_pots |= b.kind == Binding::Kind::Param;
+        for (const auto& b : bindings) erase_pots |= erase_resets(b);
     }
     bool kit = kit_pads();
     uint64_t levels = 0; // two bits a button, for `status`
@@ -644,7 +691,7 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
     unsigned beat = project.beat_ticks();
     on(B::TapTempo, ui.settings.tap_light && playing && ticks % beat < beat / 3); // Settings > LIGHTS > Tap Tempo light
     on(B::Mute, ui.mute_mode());           // bright while mute mode is on, latched or held
-    on(B::PadBank, tracks_on_pads(ui) || ui.page == PageId::Tracks); // held, a track copy under way, or the mixer's Tracks: the pads pick tracks
+    on(B::PadBank, tracks_on_pads(ui) || ui.page == PageId::Mixer); // held, a track copy under way, or the mixer: the pads pick tracks
     on(B::Erase, ui.erase || ui.copying != UiState::Copying::Off); // lit while copying
     button_levels.store(levels, std::memory_order_relaxed);
 }

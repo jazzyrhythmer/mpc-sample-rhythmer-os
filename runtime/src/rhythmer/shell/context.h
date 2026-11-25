@@ -9,13 +9,17 @@
 #include "rhythmer/model/project.h"
 #include "rhythmer/model/project_file.h"
 #include "rhythmer/model/generators.h"
+#include "rhythmer/model/jam_log.h"
+#include "rhythmer/plugin/plugin_screen.h"
 #include "rhythmer/shell/auto_sample.h"
 #include "rhythmer/shell/bindings.h"
 #include "rhythmer/shell/capture_ring.h"
 #include "rhythmer/shell/history.h"
+#include "rhythmer/shell/note_preview.h"
 #include "rhythmer/shell/page_stack.h"
 #include "rhythmer/shell/undo_scope.h"
 #include "rhythmer/shell/ui_state.h"
+#include "rhythmer/shell/usage_log.h"
 #include <array>
 #include <atomic>
 #include <bitset>
@@ -46,7 +50,7 @@ struct LoadedSample;
 class Context {
 public:
     Context(Project& project, PatternBank& patterns, UiState& ui, EngineHost& host)
-        : project(project), patterns(patterns), ui(ui), host(host) { edits.gate = &Context::edit_gate; edits.gate_owner = this; }
+        : project(project), patterns(patterns), ui(ui), host(host) { edits.gate = &Context::edit_gate; edits.gate_owner = this; edits.clock = &now; }
     Context(const Context&) = delete;
     Context& operator=(const Context&) = delete;
     Project& project;
@@ -59,7 +63,7 @@ public:
     int recording_punch = -1;                          // the punch being written, -1 none
     SongPunch punch_take {};
     void record_launch(unsigned track, unsigned pattern);
-    void finish_launches();
+    void finish_launches(uint16_t tracks = 0xffff);
     void begin_punch(unsigned kind, uint8_t target, uint8_t depth);
     void end_punch();
     unsigned song_sixteenth() const;                   // where the song is, in sixteenths
@@ -70,6 +74,15 @@ public:
     std::array<Held, 16> held_notes {};
     int take_track = -1, take_pattern = -1;
     bool in_take(unsigned t, unsigned p) const { return take_edit && take_track == int(t) && take_pattern == int(p); } // Seq Record on this pattern
+    // Free length (shell/free_length.h): the take growing its pattern a bar at a time (track -1: none); whether the
+    // audio thread counts it from its own bar yet, where it was last seen, and whether it reached 128 bars.
+    struct FreeTake { int track = -1, pattern = -1; bool rebased = false, full = false; uint32_t seen = 0; };
+    FreeTake free_take;
+    void start_free(unsigned t, unsigned p, bool song); // a take on an empty Free pattern begins
+    void end_free();                                    // and ends: the pattern's length, as played
+    void free_tick();                                   // often: it grows; K1's card
+    void set_free();                                    // K1 below 1 bar: Free again
+    void stop_growing(unsigned t, unsigned p);          // a length set by hand ends the growing
     bool played_song = false; // the last Play was the song's
     EngineHost& host;
     uint32_t now = 0; // ms, set for each control
@@ -127,6 +140,8 @@ public:
     void set_flex(unsigned what, int value);                // as Command::FlexBeat's index: 1 mode, 2 mix, 3 quantize
     void change_setting(unsigned row, int way);             // one step along a Settings row, kept on the card
     void set_look(unsigned row, unsigned value);            // Settings' Palette or Font row to one value, kept on the card
+    void set_setting(unsigned row, unsigned value);         // K1 on a Settings row: its value as a list (a row that reopens the audio
+                                                            // device or the camera waits for the knob to rest, record_tick)
     void toggle_favourite();                                // the sound under the Sounds cursor, else the loaded one
     // The Name sheet: what is named, its first text and how long it may be.
     void open_name(NameTarget target, const std::string& initial, unsigned limit, bool capitals);
@@ -147,6 +162,27 @@ public:
     // Seq Record while the song plays: pattern launches become clips from the
     // next bar, growing a bar at a time; punches land on the song's punch lane.
     void song_tick();                                       // MIDI thread, often: follows the song's bar
+    // Jam capture (model/jam_log.h, shell/jam_jobs.cpp): each run outside Song, a bar at a time, kept as a jam when
+    // it stops; JAMS (Song's Shift + B1) lists them: B2 plays the picked one's FROM-TO, B3 (or Push) lays it after
+    // the song's end, ERASE deletes it (one undo). The jams are saved with the project (a JAMS section).
+    JamLog jam;              // the run being logged
+    JamList jams;            // the runs kept
+    std::shared_ptr<const JamList> jam_view; // the screen's copy, new on each change
+    JamBar jam_now;          // the bar playing, logged when the next begins or the transport stops
+    bool jam_running = false;
+    uint32_t jam_bar_seen = 0;
+    int jam_scene = -1;      // a sequence launched: the bar it takes over on gets its marker
+    bool jam_auditioning = false; // B2 on JAMS: the engine plays the jam as its song until it stops
+    bool jam_audition_heard = false; // and the engine has started it
+    void jam_tick();
+    void open_jams(bool open);
+    void pick_jam(int delta);     // the wheel and -/+ on JAMS: older (+) or newer (-)
+    void take_jam();
+    void erase_jam();
+    void audition_jam();          // B2 on JAMS: the picked jam's FROM-TO played as a song; again, it stops
+    void end_audition();          // the engine's song back to the project's
+    void publish_jams();          // the screen's copy and the counts, after any change to `jams`
+    void send_song(const Song& song); // a song to the audio thread (sync_song sends the project's)
     // Shift's second jobs.
     void double_length();     // Shift + Pad 3 (Double Seq): the pattern twice as long, played twice
     void half_length();       // Shift + Pad 2 (Half Seq): the first half only
@@ -173,6 +209,14 @@ public:
     // Mix
     void set_mute(unsigned track, bool on);
     void set_solo(unsigned track, bool on);
+    // The mixer's channels by strip number (shell/mixer_channels.h): a track's, a submix's or (mute only) a bus's.
+    void set_channel_mute(unsigned strip, bool on);
+    void set_channel_solo(unsigned strip, bool on);
+    // The mixer's channel in hand's effect chain page (Shift + Knob FX there; Push on its FX block's plus with
+    // `picker`: the picker open on the chain's free slot). The input's: Input Config, it has no chain.
+    void open_mixer_chain(bool picker);
+    // The effect picker closed (an effect added, a plug-in picked or backed out of): from the mixer's plus, the mixer.
+    void picker_done();
     // Steps
     void set_step(unsigned track, unsigned step, const Step& value);
     // The pattern's notes changed in the model: the audio thread gets a copy to play.
@@ -215,6 +259,7 @@ public:
     Edit begin_edit(const char* what, unsigned t, int p, bool song); // what may change, as it is now
     void commit_edit(Edit&& edit);                                    // as it is after; kept if anything changed
     void apply_edit(const Edit& edit, bool after);
+    void swap_plugin(Edit& edit, bool after); // a plug-in replaced, undone or done again (shell/plugin_jobs.cpp)
     void restore_song(const Song& value);
     void restore_motion(const TrackMotion& value); // a track's patterns' motion as it was (an effect moved or removed)
     TrackMotion track_motion(unsigned track) const;
@@ -244,6 +289,7 @@ public:
     void restore_chop(const ChopState& value);
     void notice(const std::string& text);                    // a word over the header for a moment
     void delete_pad(unsigned kit);                           // Erase + pad on a kit, stopped: the pad empty
+    void close_pad_gap(unsigned kit);                        // Erase + an empty pad, stopped: the pads after it down one, through its bank and the next
     void erase_pad_notes(unsigned kit);                      // recording, stopped: its notes out of the pattern, one edit
     // Erase + pad on a kit while playing, as on the MPC: the pad's notes go as the playhead passes them, only while
     // both are held (shell/erase_copy.cpp). Every pad held at once, and the whole hold, is one undo (or part of a take).
@@ -267,6 +313,14 @@ public:
     }
     // Patterns (their cards: length, Q, swing; Shift: any bars, time signature, click)
     void launch(unsigned track, unsigned pattern);           // starts on the next bar while playing (a chain ends: one tapped)
+    // Sequence links (model/scene_links.h, shell/scene_jobs.cpp): a pattern picked by hand, launched and kept in the
+    // sequence in hand (not while the song plays); true when that sequence kept nothing before. pick_off(): the track
+    // off (on the next bar while playing), kept so; track_off(): off without keeping (a sequence launch).
+    bool pick(unsigned track, unsigned pattern);
+    bool pick_off(unsigned track);
+    void track_off(unsigned track);
+    bool keep(unsigned track, int target); // target: a pattern or scene_stops
+    uint32_t stopped_now() const;          // tracks a follow action's STOP stopped, while patterns play
     // seq-sheet2 B (round 2, shell/chain_jobs.cpp): the pattern chain. chain_start() makes the selected track's chain
     // that one pattern, chain_add() puts another after the last (Seq held, a pad tapped after the first); chain_tick(),
     // each frame, queues a chained track's next pattern in the last bar of the one playing, so it begins as that ends.
@@ -275,21 +329,28 @@ public:
     void chain_sequence(unsigned pattern, bool first); // a chain of sequences: the selected track's chain, every track following it
     int8_t chain_lead = -1;                            // the track whose chain launches sequences (-1: chains are one track's)
     void chain_tick();
+    void sequence_chain_tick(unsigned t, uint32_t bar);
     std::array<bool, track_count> chain_queued {}; // the next of the chain is queued for the bar line
+    // A chain of sequences: the tick the lead's sequence in the chain began (or begins, queued; UINT32_MAX: at Play).
+    std::array<uint32_t, track_count> chain_from {};
     bool chaining = false;                         // chain_tick() launching: the chain stays
-    // Roadmap P5 (shell/scene_jobs.cpp): scenes, a column of patterns with a name and tempo of its own (Seq held +
-    // Shift + pad, or a pad on SCENES), and patterns' follow actions (model/follow.h; the audio thread brings them).
-    void launch_scene(unsigned scene, bool quiet = false); // pattern `scene` on every used track: a sequence (shell/sequences.h); quiet: no notice (the chain)
+    // Roadmap P5 (shell/scene_jobs.cpp): scenes, a pattern or off kept for each track with a name and tempo of its own
+    // (Seq held + Shift + pad, or a pad on SEQUENCES), and patterns' follow actions (model/follow.h; the audio thread
+    // brings them).
+    void launch_scene(unsigned scene, bool quiet = false); // each track on its kept pattern: a sequence (shell/sequences.h); quiet: no notice (the chain)
     void set_scene_tempo(unsigned scene, int tenths); // below 30 BPM: none of its own
+    void set_scene_colour(unsigned scene, int colour); // 0 none, 1-16 a track colour (issue 19)
     void name_scene(unsigned scene);                  // the Name sheet
-    void clear_scene(unsigned scene);
+    void name_track(unsigned t);                      // the Name sheet: a name of its own, kept when its sound changes
+    void clear_scene(unsigned scene);                 // its kept patterns, name, tempo and colour; one undo
     void set_follow(Binding::Kind kind, int value);   // the selected track's pattern's
-    void follow_to_column();                          // and onto every track's pattern in its column, one undo
-    void capture_scene(unsigned column, bool asked = false); // CAPTURE: each track's playing pattern into the column, one undo
+    void follow_to_column();                          // and onto the pattern every other track is on, one undo
+    void capture_scene(unsigned scene);               // CAPTURE: what every track is on kept in the sequence, one undo
     void follow_tick();                               // MIDI thread, often: chains told, what came followed
     std::array<uint32_t, track_count> follows_seen {};
     std::array<bool, track_count> chained_sent {};
     uint8_t name_scene_at = 0;
+    uint8_t name_track_at = 0;
     // Roadmap P5 (shell/scene_jobs.cpp): the song's tempo lane, a point at `bar` (0 tenths: none there), its shape.
     void set_song_tempo(unsigned bar, int tenths);
     void set_song_tempo_shape(unsigned bar, bool ramp);
@@ -314,14 +375,18 @@ public:
     bool plugin_frozen_edit(unsigned entry); // an instrument or pad/track effect held by a frozen print
     void toggle_plugin_transport(unsigned entry); // TRANSPORT on or off for that plug-in (PluginRef::transport)
     void choose_plugin_program(int index);    // that program, by its place in the plug-in's list (Stage's wheel)
+    void pick_plugin_program(unsigned entry, int program); // a program by its number in the plug-in (a companion's pick)
+    void companion_requests(); // what companion screens asked for, made here (plugin/companion_screen.h)
     void push_plugin_preset();                // PRESETS' Push: into the folder under the cursor, or load the preset
     void back_plugin_presets();               // PRESETS' B1: out of the folder in view, else back where it came from
     void plugins_tick(uint32_t now);
     int plugin_in_focus() const; // the entry the page in view shows, -1 none
+    bool plugin_screen_input(ScreenKey key, int value); // an input handed to the plug-in screen in view (shell/screen_view.h); false: none
     void split_shared_plugins(); // a copy's second user of an entry gets one of its own
     uint32_t plugin_panel_at = 0;
     unsigned plugin_view_seen = ~0u;
-    bool plugin_came_back = true; // false after going up, until the cursor lands on the folder it came out of
+    unsigned plugin_card_seen = 0; // the web page's changes to the card the picker has listed again for
+    bool plugin_came_back = true; // false after going up (or a web page change), until the cursor lands on the row asked for
     // Prints (freeze plan F2a, shell/print_jobs.cpp): the engine (set by the app), the project's prints (PRNT, saved
     // and loaded with it), patterns of one track to print (a bit each; none: the one it plays), and their results
     // taken in, often, from the shell's tick.
@@ -454,6 +519,8 @@ public:
     std::vector<std::string> prog_paths; // the card's .progression files, as the Prog layout's wheel walks them (listed when first wanted)
     // Projects on the card
     ProjectStore* store = nullptr;
+    UsageLog usage;           // Settings' doors K2 (shell/usage_log.h): off until turned on
+    void flush_usage();       // its lines to the card now (the project store's thread writes them)
     CardLink* card = nullptr;          // SD card access (shell/card_access.h): set by the shell
     UpdateLink* updates = nullptr;     // updates from the card (shell/update.h), set by the shell
     void card_access();                // Project's SD card access row: lend the card, open its page
@@ -462,7 +529,15 @@ public:
     // The browsers keep their place: each drive's folder and row (Samples by Drive; Project 0 the card, 1 internal),
     // so B2 there and back, or leaving and coming back, lands where it was.
     struct BrowserPlace { std::string folder; uint16_t row = 0; bool set = false; };
-    std::array<BrowserPlace, 2> files_places {}, project_places {};
+    // The sample browser's places: where it was left for each kind of track it is opened for (a kit, a keygroup, an
+    // audio track, anything else) on each drive, and the drive; one never browsed for starts at the card's top.
+    static constexpr unsigned browse_kinds = 4;
+    std::array<std::array<BrowserPlace, 2>, browse_kinds> files_places {};
+    std::array<uint8_t, browse_kinds> files_drives {};
+    int files_kind = -1;             // whose place the browser shows; -1 none yet
+    unsigned browse_kind() const;    // the selected track's
+    void browse_for_track();         // Samples opened: the selected track's kind's place
+    std::array<BrowserPlace, 2> project_places {};
     int files_row_wanted = -1;        // Samples: the row to land on once the folder asked for lists
     std::string project_row_path;     // Project: the entry to land on once the folder lists (the open project, at first)
     std::string delete_path;          // Erase in a browser (shell/delete_jobs.h): what the question on screen would delete
@@ -491,20 +566,34 @@ public:
     uint64_t project_save_hash();
     bool queue_project_save(const std::string& path, bool recovery, bool new_identity = false);
     bool dirty = false;               // changed since it was saved or loaded
+    uint32_t sent = 0;                // commands sent to the audio thread so far (the usage log: did a press do anything)
+    // Moves whenever a kit (a track's pads, their chains, its zone trims) or a pattern may have changed: with every
+    // control and MIDI message that reaches the shell (Shell::surface() and its like), and where a change is told to
+    // the audio thread (send()'s edits, sync_pattern(), sync_motion(), a track sent whole, a project switched to),
+    // which is how changes that arrive asynchronously land (a sample loaded, an arp's notes recorded). The screen
+    // copies the kits and rebuilds the pattern sketches only when it has moved (Shell::snapshot()). MIDI thread,
+    // under the shell's lock.
+    uint64_t heavy_serial = 1;
     bool import_unsaved = false;      // an MPC project just opened, with no file of its own: saved by hand (SAVE AS), never in the background
     void save_project_to(const std::string& path);
     bool autosave(); // background save (shell/autosave.h): false with no card
     void save_project();              // to its file, or a new one
-    void new_project();
+    void new_project(bool kit = false); // every track empty (kit: track 1 an empty kit)
     // Parity phase 10 (shell/project_jobs.cpp): New project asks first (B3 / B1); Load Kit.
     void ask_new_project();                   // the question, with what happens to unsaved changes
-    void start_new_project(bool kit = true);  // its B3: saved first if it has a file, then a new one with the factory kit (B2 EMPTY: without), Stage
+    void start_new_project(bool kit = false); // its B3: saved first if it has a file, then a new one with no tracks and the track types on track 1 (B2 KIT: the factory kit on track 1, Stage)
     std::string lesson_return;                // a lesson runs (shell/lesson_jobs.h): the file of the project open before it, "" none
-    void load_kit_file(const std::string& path, const std::string& name); // a project's kit onto the selected track, once loaded
+    void load_kit_file(const std::string& path, const std::string& name, bool ask = false); // a project's kit onto the selected track, once loaded (ask: the LOAD KIT sheet first)
     void load_kit(const Project& from, const std::string& name);          // that kit onto the selected track, one undo
     int kit_target = -1, bank_target = -1;
     uint8_t bank_target_bank = 0;
     std::string kit_from;                     // the file Load Kit waits for
+    // Samples' LOAD KIT sheet: Push on a KIT over a kit track reads it, then asks which of its filled banks go into
+    // which of the track's banks (ui.kit_sheet); LOAD puts those in as one undo, WHOLE KIT loads it as Load Kit.
+    bool kit_ask = false;                     // the kit Load Kit waits for opens the sheet
+    std::unique_ptr<Project> kit_held;        // the kit read, while the sheet is open
+    void load_kit_banks();                    // LOAD: the banks picked
+    void kit_sheet_step(unsigned bank);       // a bank's card: the kit's next filled bank into it, then none
     // Kit bank files (shell/project_jobs.cpp, model/project_file.h): Push on one in the Samples browser
     // loads it into the selected kit's bank in view, once the service thread has read it.
     void load_bank_file(const std::string& path, const std::string& name);
@@ -550,17 +639,40 @@ public:
     void send_pad(unsigned track, unsigned pad);
     int sample_slot(const std::string& path, const std::string& name); // the project's slot for a file, asking for it to load
     void rechop();                                                     // Chop's slices from its type and amount
+    Slices type_chop(bool* capped = nullptr) const;                    // what the type and amount cut now (no hand cuts)
     void chop_tap(unsigned pad, uint8_t velocity);                     // Chop: a pad (audition, or Manual's taps)
+    // Issue 24, slice hits (model/slice_hits.h). Chop's pads while Seq Record runs: the slice played through its pad and
+    // written as the pad's note with the slice's number; let go, as long as it was held. False: not recording (or no
+    // pad of the track holds Chop's sample), the pad auditions as ever.
+    bool slice_hit(unsigned pad, unsigned slice, uint8_t velocity);
+    void slice_release(unsigned pad);
+    std::array<int32_t, 16> chop_held {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}; // each pad's slice hit, held
+    int chop_kit_pad() const;                                          // the kit pad slice hits on Chop's sample play (-1 none)
+    const Slices& live_chop(unsigned sample) const;                      // a sample's chop as slice hits play it: Chop's own while it holds it
+    SlotTable<Slices> chops_sent;                                      // each sample's chop as the audio thread holds it
+    void sync_chops();                                                 // the chops that changed since, to the audio thread
+    // 3b: a change of Chop's slices from slice `first` on (another type or amount, Split, Merge, Erase) that slice hits
+    // on those slices would hear asks first (Ask::Rechop), once a visit to Chop; else it is made at once.
+    void chop_change(unsigned first, std::function<void()> change);
+    std::function<void()> chop_pending;                                // the change the question waits to make
+    void chop_tick(uint32_t ms);                                       // Chop: a take played out ends; a moved cut heard once
+    void chop_jump(int delta);                                         // Chop: SHIFT + wheel, the cut onto the next hit
+    void chop_erase(unsigned slice);                                   // Chop: Erase + pad, Erase: the slice joins its neighbour
+    void chop_clear();                                                 // Chop: Erase + Chop, every cut out
+    void chop_clean_key();                                             // Chop on Auto: B2 CLEAN on or off (shell/stems_jobs.cpp)
+    unsigned chop_cut_slot() const;                                    // the slot Auto's cuts are found in: CLEAN's stem, else the sample
+    std::unique_ptr<Edit> chop_take_edit;                              // Chop's take in progress: one undo step
+    void open_take();                                                  // before a take begins (pad 1, the red after one)
+    void end_take(uint32_t ms = 0);                                    // the take kept as one step; stopped short, the red stays
     uint32_t zero_cut(uint32_t frame) const;                           // Chop: a cut on a zero crossing, with Zero Snap on
     void snap_slices();                                                // Chop: every cut of the slices onto one
-    void toggle_zero_snap();                                           // Chop, B2: Zero Snap on / off (a setting)
     // The wheel on a card (shell/fine_edit.cpp): a handle of Trim or Chop by a 1024th of the view on screen, a frame
     // zoomed all the way in, onto the next zero crossing that way with Zero Snap on; any other card a step.
     void fine_edit(const Binding& binding, int delta);
     void trim_moved(const FrameView& was); // a Trim or Chop handle moved: the view zoomed in keeps it in sight
     void chop_moved(const FrameView& was);
     bool exact_cut = false;                // the wheel's cut is where it goes (not pulled back by zero_cut)
-    void chop_to_pads();                                               // the slices onto pads, from the first free one
+    void chop_to_pads(SlicePlay play, bool pattern);                   // the slices onto pads, from the first free one, as `play` lays them; `pattern`: a pattern of them too
     void follow_tempos(); // Follow on: each pad's own tempo, from its length as whole bars
     bool host_recording() const;                                       // a take is armed, cued or running
     // Input Config and Sample Record (parity phase 6, shell/sample_record.cpp).
@@ -581,9 +693,12 @@ public:
     void record_button();                                 // Sample Record on Record: a take ends; back to the pad's page
     void audio_recall();                                  // Shift + Sample Record: the ring's last 25 s onto the next empty pad
     void record_tick(uint32_t at);                        // often (ms): monitor and route wishes, settings kept, renders followed
+    bool input_free(InputSource source);                  // false, with a notice, while a loop or MIDI track has its ADC side
     uint32_t settings_save_at = 0;                        // ms; 0 nothing waiting
+    uint32_t settings_wait_at = 0;                        // ms: K1 last moved ui.settings_wait_row's value
     uint32_t rec_armed_at = 0;                            // ms
     bool monitor_sent = false, monitor_known = false;
+    int taken_sent = -1;                                  // InputTaken as last sent; -1 not yet
     int loop_monitor_sent = -1;
     int gain_sent = 0;
     uint16_t record_key_pads = 0;                         // pads playing through record_key()
@@ -592,18 +707,29 @@ public:
     void resample_pad(unsigned kit);                      // the pad: the pattern rendered onto it
     void resample_song(unsigned kit);                     // roadmap P3: Resample on Song, the song rendered onto the pad
     void mixdown(const std::string& name);                // Song's export, Audio mixdown, after the Name sheet
-    void export_mpc3(const std::string& name);            // Song's export, MPC 3 project (shell/song_export.cpp)
-    // The MPC 3 export waits for its plug-in tracks' prints: `mpc3_pending` a bit a track still to print (one job a
-    // track, as the print engine takes them), `mpc3_printing` the track whose job runs (-1 none), then mpc3_tick()
-    // hands the project, its prints in, to the export once the last result is in.
-    std::string mpc3_name;
-    uint32_t mpc3_pending = 0;
-    int mpc3_printing = -1;
-    bool mpc3_waiting = false;
-    void mpc3_tick();
+    // Song's export, an MPC 3 project or an Ableton Live Set (`live`), after the Name sheet (shell/song_export.cpp).
+    void export_project(const std::string& name, bool live);
+    std::vector<uint8_t> export_bytes(unsigned& left);    // the project to export, slice hits laid on free pads (issue 24)
+    // Both wait for their plug-in tracks' prints: `export_pending` a bit a track still to print (one job a track, as
+    // the print engine takes them), `export_printing` the track whose job runs (-1 none), then export_tick() hands
+    // the project, its prints in, to the export once the last result is in.
+    std::string export_name;
+    uint32_t export_pending = 0;
+    int export_printing = -1;
+    bool export_waiting = false, export_live = false;
+    void export_tick();
     void render_tick(uint32_t at);                        // a render ended: transport back as it was
     bool render_started = false;
     uint32_t render_since = 0;
+    // Pad stems (shell/render.cpp): STEMS writes each kit pad the song plays apart too, in a folder of its kit's. The
+    // pads past what one pass of the song can write wait for later passes: `stem_pass` of `stem_passes` (0: no stems).
+    struct PadStem { uint8_t track = 0, pad = 0; std::array<char, 72> path {}; };
+    std::vector<PadStem> stem_pads;
+    unsigned stem_pads_taken = 0, stem_pass = 0, stem_passes = 0;
+    std::string stem_name;
+    void song_pad_stems();
+    unsigned stems_a_pass() const; // the stems one pass of the song writes, the mix counted
+    bool next_stem_pass(uint32_t now);
     // Song -> new pattern (parity phase 6, shell/song_export.cpp): the song's clips as one long pattern on every track, one undo.
     void song_to_pattern();
     void song_export_soft(int key);                       // the export sheet's B1 Cancel, B2 Audio mixdown, B3 New pattern
@@ -626,6 +752,13 @@ public:
     unsigned previews_seen = 0;
     bool preview_break_bus=false;
     int previewing = -1; // the track a preview plays on, -1 none
+    // Settings > SEQ > Note preview (shell/note_preview.h): `events` of the selected track's pattern heard once, the
+    // earliest of them (a chord), each as long as the sequencer holds it; `settle`: once the wheel has rested. What
+    // still sounds of the last preview ends first. Nothing while the setting is off.
+    void preview_notes(const std::vector<Event>& events, bool settle = false);
+    void note_preview_tick(); // each UI tick: a preview waiting for the wheel plays, a sounding one ends on time
+    void note_preview_end();  // what a preview still sounds ends now
+    NotePreview note_preview;
     // land: 0 Extract (the next empty pad after `pad`), or Trim (`trim`); 1 onto `pad` itself (Recall,
     // Resample; one undo); 2 the take of Sample Record onto `pad`, with the pads cut from it (ui.rec_chop_*).
     struct PendingFile { int16_t slot = -1; uint8_t track = 0; int16_t pad = -1; bool trim = false; PadSound sound {}; uint8_t land = 0; uint32_t epoch=0; };
@@ -634,11 +767,13 @@ public:
     int hold_file(const std::string& name, unsigned track, int pad, uint8_t land);
     void drop_file(int slot);                            // a held slot nothing came for: free again
     void take_landed(unsigned track, unsigned kit, unsigned slot, const LoadedSample& loaded); // Sample Record's take onto its pads
-    // Stems (shell/stems_jobs.cpp, shell/stems.h): the STEMS sheet for the kit pad in hand, B3 SEPARATE, B1 (which
-    // calls a running job off), the job's result each pass, and its four files, once read, onto the next empty
-    // pads after the pad they came from (pending_files' land 3 to 6: DRUMS, BASS, MUSIC, VOCALS; one undo).
+    // Stems (shell/stems_jobs.cpp, shell/stems.h): the STEMS sheet for the kit pad in hand, B3 SEPARATE, B2 BEST
+    // (a setting), B1 (which calls a running job off), the job's result each pass, and its four files, once read,
+    // onto the next empty pads after the pad they came from (pending_files' land 3 to 6: DRUMS, BASS, MUSIC, VOCALS;
+    // one undo).
     void open_stems_sheet();
     void stems_sheet_go();
+    void stems_sheet_best();
     void stems_sheet_cancel();
     void stems_tick();
     void stems_landed();
@@ -686,6 +821,7 @@ public:
     void set_click(unsigned mode); // the metronome: 0 off, 1 on, 2 only while Seq Record
     void send_click();
     void send_repeat_velocity();
+    void send_mute_kind(); // Settings > SEQ > Mute (issue 27): Audio or Notes, to the audio thread
     // Capture (Shift + Seq Record; round 2, capture C; roadmap P5): the last bars every track played (the phrase, or as
     // many bars as Settings keeps), each track's into its next empty pattern, which then plays; one undo. Nothing
     // played, or no pattern empty: a notice, and nothing changes.
@@ -732,6 +868,7 @@ public:
     bool from_midi = false;                                 // note() is playing what came in: not echoed out
     uint16_t midi_echo = 0;                                 // roadmap P4 (M3): but echoed on these MIDI tracks' own ports
     void change_midi(unsigned row, int way);                // one step along a MIDI Config row (shell/midi_config_rows.h)
+    void set_midi(unsigned row, unsigned value);            // K1 on a MIDI Config row: its value as a list
     void reset_settings();                                  // MIDI Config's Reset Factory Settings, after B3
     // MIDI Panic (MIDI Config's row, `rhythmer-midi panic`): every note here ends, and MIDI out sends All Sound Off,
     // All Notes Off and pitch bend centre on every channel of every port (shell/midi_io.cpp, counting these).

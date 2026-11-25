@@ -82,6 +82,7 @@ bool roll_selection_wheel(Context& c, int way) {
         if (!moved) { c.notice(ui.shift ? "No room to move the notes" : "The notes are at the pattern's edge"); return true; }
         c.sync_pattern(ui.track, c.track().pattern);
         roll_select(c.pattern(), ui, lane);
+        if (ui.shift) roll_hear_marks(c, true); // at their new pitch, once the wheel rests
         return true;
     }
     if (!ui.shift) return false;
@@ -100,6 +101,18 @@ void roll_shift_up(Context& c) {
         return;
     }
     if (!ui.shift_used && selected(c)) { roll_unmark(ui); c.notice("Selection off"); } // a Shift tap
+}
+
+void roll_hear_marks(Context& c, bool settle) {
+    const auto& p = c.pattern();
+    const uint32_t q = p.q(), from = roll_cursor(p, c.ui) * q;
+    std::vector<Event> here, all;
+    for (auto n : roll_marked_events(p, c.ui)) {
+        const auto& e = p.events[n];
+        all.push_back(e);
+        if (e.tick >= from && e.tick < from + q) here.push_back(e);
+    }
+    c.preview_notes(here.empty() ? all : here, settle);
 }
 
 bool roll_selection_mute(Context& c) {

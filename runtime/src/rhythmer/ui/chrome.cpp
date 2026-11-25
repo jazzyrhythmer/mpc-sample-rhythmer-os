@@ -80,6 +80,11 @@ float item(Paint& p, const HeaderItem& it, float x, bool measure_only) {
 } // namespace
 
 void soft_keys(Paint& p, const SoftKeys& keys) {
+    if (auto* seen = controls_sink()) { // the preview's controls audit
+        seen->keys_drawn = true;
+        seen->keys = keys.labels;
+        for (size_t k = 0; k < 3; ++k) seen->back[k] = keys.icons[k] == KeyIcon::Back;
+    }
     float column = zone::width / 3.0f;
     // One baseline for the row: when any key has page dots, every label sits up to leave them room.
     bool dotted = false;

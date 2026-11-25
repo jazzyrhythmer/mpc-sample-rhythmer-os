@@ -205,6 +205,7 @@ Reply WebApp::upload_plugin(const Request& request, const Body& body) {
         fs::remove(zip, error);
         return fail(why == "Card full" ? 507 : 400, why == "Card full" ? "The SD card is full" : "This zip will not unzip");
     }
+    files_changed.store(true); // an open picker on the MPC lists it at once
     {
         std::lock_guard<std::mutex> held(lock);
         note = "Plug-in installed";

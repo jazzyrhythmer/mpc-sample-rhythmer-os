@@ -36,7 +36,8 @@ void draw(Paint& p, const Snapshot& s) {
     if (taking) { pad_label(unsigned(s.ui.rec_pad), label); h.left.push_back(pill(Icon::Pads, juce::String(label), c)); }
     h.left.push_back(pill(source_icon(in.source), juce::String(in.source == InputSource::Track ? "T" + juce::String(in.track % track_count + 1)
                                                                                              : juce::String(input_source_name(in.source))).toUpperCase()));
-    if (s.speaker_quieted) h.left.push_back(pill(Icon::SpeakerOff, "", colour::amber));
+    if (source_in_use(s, in.source)) h.left.push_back(pill("IN USE", colour::amber)); // the ADC is on the other input
+    else if (s.speaker_quieted) h.left.push_back(pill(Icon::SpeakerOff, "", colour::amber));
     h.right.push_back(tag_of(s, s.ui.track));
     bool kit = s.track().engine == EngineKind::Sampler;
     SoftKeys keys {{"MONITOR", "INPUT", kit ? "PRINT" : ""}, -1, c}; // B3 PRINT (freeze plan F2c): the kit's PRINT sheet

@@ -3,7 +3,7 @@
 // SETTINGS (Shift + Pad 8): Rhythmer's own settings, kept on the card next
 //   to the projects, as eight doors (four by two): PADS (response, pressure,
 //   Repeat velocity, the pad lights, their fade, the Tap Tempo light), SEQ
-//   (Follow: Step Edit and Roll with the playhead; what Double Seq puts in the
+//   (Rec quantize, as Shift + Pad 10; Follow: Step Edit and Roll with the playhead; what Double Seq puts in the
 //   new half, how many bars Capture keeps and how it puts them on the grid),
 //   KNOBS (how the knobs,
 //   Knob FX and the fader take over a value: Pickup, Scaled, Instant),
@@ -12,12 +12,14 @@
 //   under the rows, while it is on, how it goes: ready, live, paused while
 //   the card is shared), AUDIO (the
 //   sample rate and the buffer: longer rides out a slow moment without a
-//   crackle, shorter is heard sooner), SAMPLING (how Audio Recall cuts the
+//   crackle, shorter is heard sooner; USB volume: what a computer records
+//   over USB-C at full main volume, or following the knob; USB-C in Direct,
+//   straight to the jacks, or through Tracks; its direct level), SAMPLING (how Audio Recall cuts the
 //   ring and when a Free take ends on its own), MIDI (MIDI Config's page)
 //   and ABOUT. The wheel picks a door, Push or B3 opens it, B1 goes back.
-//   Behind a door its rows, scrolling past six (a bar and arrows at the right edge): the wheel moves, Push opens a
-//   value and the wheel changes it, Push keeps it; Minus / Plus change the
-//   one under the cursor straight away; B1 back to the doors. The header of
+//   Behind a door its rows, scrolling past six (a bar and arrows at the right edge): the wheel moves the cursor,
+//   K1 sets the row under it (its card), Minus / Plus step it; Sample rate, Audio buffer and Screen Mirror's
+//   rows wait for K1 to rest before they reopen the device; B1 back to the doors. The header of
 //   the doors and of AUDIO says what the audio device runs at, and its
 //   dropouts (amber) if any.
 // ABOUT (the seventh door; round 2, about C "how the machine is doing"): the
@@ -49,11 +51,12 @@ constexpr int8_t none = -1;
 const std::array<Door, 8> doors {{
     {Icon::Pads, "PADS", ROWS(Settings::PadResponse, Settings::PadPressure, Settings::RepeatVelocity, Settings::PadLights, Settings::PadFade,
                               Settings::TapLight)},
-    {Icon::Pattern, "SEQ", ROWS(Settings::SeqFollow, Settings::DoubleSeq, Settings::CaptureBars, Settings::CaptureQuantize)},
+    {Icon::Pattern, "SEQ", ROWS(Settings::RecQuantize, Settings::SeqFollow, Settings::NotePreview, Settings::MuteKind, Settings::DoubleSeq,
+                            Settings::CaptureBars, Settings::CaptureQuantize, Settings::Autosave)},
     {Icon::Knob, "KNOBS", ROWS(Settings::KnobTakeover, Settings::KnobFxTakeover, Settings::FaderTakeover)},
-    {Icon::Screen, "SCREEN", ROWS(Settings::Palette, Settings::Font, Settings::Screen, Settings::PlaceBarRow, Settings::Mirror, Settings::MirrorSize,
-                                  Settings::MirrorRate)},
-    {Icon::Speaker, "AUDIO", ROWS(Settings::SampleRate, Settings::AudioBuffer)},
+    {Icon::Screen, "SCREEN", ROWS(Settings::Palette, Settings::Font, Settings::Screen, Settings::PlaceBarRow, Settings::PluginSkins, Settings::Mirror,
+                                  Settings::MirrorSize, Settings::MirrorRate)},
+    {Icon::Speaker, "AUDIO", ROWS(Settings::SampleRate, Settings::AudioBuffer, Settings::UsbVolume, Settings::UsbOut, Settings::UsbDirect, Settings::DirectLevel)},
     {Icon::Mic, "SAMPLING", ROWS(Settings::RecallGrabRow, Settings::RecallGap, Settings::RecallTrimEnd, Settings::TakeAutoEnd, Settings::AutoEndAfter,
                                  Settings::SilenceBelow)},
     {Icon::Din, "MIDI", {none}},  // MIDI Config's own page
@@ -95,8 +98,7 @@ void mirror_line(Paint& p, const Snapshot& s, float x, float y, float w) {
 
 unsigned door_rows(const Door& d) { unsigned n = 0; while (n < d.rows.size() && d.rows[n] >= 0) ++n; return n; }
 // The first row in view: the cursor kept on the third row once the rows scroll, as on the Sounds list.
-unsigned first_row(unsigned place, unsigned count) {
-    constexpr unsigned visible = list_rows;
+unsigned first_row(unsigned place, unsigned count, unsigned visible) {
     return place < 2 ? 0 : std::min(place - 2, count > visible ? count - visible : 0u);
 }
 const Door& door_of(const UiState& ui) { return doors[ui.settings_door % doors.size()]; }
@@ -138,20 +140,24 @@ void rows_draw(Paint& p, const Snapshot& s) {
     frame(p, s, {{"BACK", "", ""}, -1, colour::text, {KeyIcon::Back, KeyIcon::None, KeyIcon::None}}, h);
     const auto& set = s.ui.settings;
     float x = zone::pad, w = zone::width - 2 * zone::pad;
-    unsigned count = door_rows(d), first = first_row(place_of(s.ui), count), shown = std::min(count - first, unsigned(list_rows));
+    // Everything stays above K1's card: SCREEN gives its sixth row to Screen Mirror's line while that shows, and
+    // AUDIO keeps a row for its DSP line under the list, and one more for PDC's while that shows; the rest scroll.
+    bool mirror = s.ui.settings_door % doors.size() == screen_door && (MirrorState(s.mirror_state) != MirrorState::Off || s.mirror_held);
+    unsigned below = audio ? 1u + (s.machine.pdc_frames ? 1u : 0u) : 0u;
+    unsigned visible = list_rows - (mirror ? 1u : 0u) - below;
+    unsigned count = door_rows(d), first = first_row(place_of(s.ui), count, visible), shown = std::min(count - first, visible);
     for (unsigned k = 0; k < shown; ++k) {
         unsigned row = unsigned(d.rows[first + k]);
         float y = zone::picture_y + 1 + k * (list_row_h + list_row_gap);
-        bool cursor = row == s.ui.settings_cursor, editing = cursor && s.ui.settings_editing;
+        bool cursor = row == s.ui.settings_cursor;
         if (cursor) { p.fill(x, y, w, list_row_h, colour::raised, 3); p.fill(x, y, 2.5f, list_row_h, colour::text, 1); }
         p.text(Settings::row_name(row), x + 10, y, w / 2, list_row_h, plain(cursor ? colour::text : colour::sec, type::list, cursor ? Weight::Medium : Weight::Regular));
-        juce::String value = set.value_text(row);
-        auto style = plain(cursor ? colour::text : colour::mid, type::body, Weight::Medium);
+        bool waits = s.ui.settings_wait_row == int(row); // K1 turned a row that waits for it to rest: that value, amber
+        Settings shown = set;
+        if (waits) shown.set_choice(row, s.ui.settings_wait_value);
+        juce::String value = shown.value_text(row);
+        auto style = plain(waits ? colour::amber : cursor ? colour::text : colour::mid, type::body, Weight::Medium);
         float vw = p.width(value, style), vx = x + w - 9 - vw;
-        if (editing) { // the open value: framed
-            p.fill(vx - 6, y + 3, vw + 12, list_row_h - 6, colour::surf, 3);
-            p.ring(vx - 6, y + 3, vw + 12, list_row_h - 6, colour::text, 3, 1);
-        }
         p.text(value, vx, y, vw + 1, list_row_h, style);
         if (row == Settings::Palette) // the palette's first track colours
             for (unsigned t = 0; t < 4; ++t) p.fill(vx - 10 - (4 - t) * 9.5f, y + 8, 7, 7, track_colour(t), 2);
@@ -169,25 +175,16 @@ void rows_draw(Paint& p, const Snapshot& s) {
             p.g.fillPath(a);
         };
         if (first > 0) arrow(top, false);
-        if (first + shown < count) { // and the next row, dim, under the list
-            arrow(top + height - 5, true);
-            unsigned next = unsigned(d.rows[first + shown]);
-            float y = top + shown * (list_row_h + list_row_gap);
-            p.text(Settings::row_name(next), x + 10, y, w / 2, list_row_h, plain(colour::dim, type::list, Weight::Regular));
-            juce::String value = set.value_text(next);
-            auto style = plain(colour::dim, type::body, Weight::Medium);
-            float vw = p.width(value, style);
-            p.text(value, x + w - 9 - vw, y, vw + 1, list_row_h, style);
-        }
+        if (first + shown < count) arrow(top + height - 5, true);
     }
-    if (s.ui.settings_door % doors.size() == screen_door) { // Screen Mirror, while it is on or a change waits
-        if (MirrorState(s.mirror_state) != MirrorState::Off || s.mirror_held)
-            mirror_line(p, s, x, zone::picture_y + 1 + shown * (list_row_h + list_row_gap) + 6, w);
+    if (s.ui.settings_door % doors.size() == screen_door) { // Screen Mirror, while it is on or a change waits: the sixth row
+        if (mirror) mirror_line(p, s, x, zone::picture_y + 1 + visible * (list_row_h + list_row_gap), w);
         return;
     }
     if (s.ui.settings_door % doors.size() != audio_door) return;
     // AUDIO (roadmap P2): what the blocks take of their time, beside the dropouts (a check while there are none).
-    float y = zone::picture_y + 1 + shown * (list_row_h + list_row_gap) + 6, cy = y + list_row_h / 2, right = x + w - 9;
+    // A short list leaves a gap above the lines; four rows or more close it up, so PDC's still ends above K1's card.
+    float y = zone::picture_y + 1 + shown * (list_row_h + list_row_gap) + (shown > 3 ? 0 : 6), cy = y + list_row_h / 2, right = x + w - 9;
     float load = s.machine.render_load;
     icon(p, Icon::Chip, x + 10, cy - 7, 14, colour::sec, 1.4f);
     p.text("DSP", x + 30, y, 40, list_row_h, caps_text(colour::mid));
@@ -240,8 +237,7 @@ void settings_draw(Paint& p, const Snapshot& s) {
 void open_door(Context& c) {
     auto& ui = c.ui;
     unsigned n = ui.settings_door % doors.size();
-    ui.settings_editing = false;
-    if (n == midi_door) { ui.midi_editing = false; c.open(PageId::MidiConfig); return; }
+    if (n == midi_door) { c.open(PageId::MidiConfig); return; }
     if (n == about_door) { ui.about_view = 0; c.open(PageId::About); return; }
     ui.settings_in = true;
     ui.settings_cursor = uint8_t(doors[n].rows[0]);
@@ -257,7 +253,6 @@ void settings_wheel(Context& c, int delta) {
     auto& ui = c.ui;
     if (ui.settings_in && ui.settings_look) { look_turn(c, delta); return; }
     if (!ui.settings_in) { ui.settings_door = uint8_t(std::clamp(int(ui.settings_door % doors.size()) + delta, 0, int(doors.size()) - 1)); return; }
-    if (ui.settings_editing) { c.change_setting(ui.settings_cursor, delta > 0 ? 1 : -1); return; }
     const auto& d = door_of(ui);
     unsigned at = unsigned(std::clamp(int(place_of(ui)) + delta, 0, int(door_rows(d)) - 1));
     ui.settings_cursor = uint8_t(d.rows[at]);
@@ -266,12 +261,10 @@ void settings_push(Context& c) {
     auto& ui = c.ui;
     if (!ui.settings_in) { open_door(c); return; }
     if (ui.settings_look) { ui.settings_look = false; return; } // kept: it was saved as it turned
-    if (look_row(ui.settings_cursor)) {
+    if (look_row(ui.settings_cursor)) { // the look's cards, the screen drawn in each as the wheel turns
         ui.settings_look = true;
         ui.settings_look_before = ui.settings_cursor == Settings::Palette ? ui.settings.palette : ui.settings.font;
-        return;
-    }
-    ui.settings_editing = !ui.settings_editing;
+    } // other rows: K1 or Minus / Plus
 }
 void settings_nudge(Context& c, int way) {
     if (!c.ui.settings_in) { settings_wheel(c, way); return; }
@@ -285,7 +278,7 @@ void settings_soft(Context& c, int key) {
         if (key == 0 || key == 2) ui.settings_look = false;
         return;
     }
-    if (ui.settings_in) { if (key == 0) { ui.settings_in = false; ui.settings_editing = false; } return; }
+    if (ui.settings_in) { if (key == 0) ui.settings_in = false; return; }
     if (key == 0) c.back();
     if (key == 2) open_door(c);
 }

@@ -5,9 +5,8 @@
 // K1 source (Mic, Rear, Rear L / R, Resample, USB, USB L / R, then each
 // track with a sound: shell/input_choices.h; Shift + K1 its tap), K2 rec length
 // (Free, Seq, Rhythmer's 1-16 bars), K3 threshold (-96 dB: at once; Shift +
-// K3 Rhythmer's gain); B1 back, as on every sheet, B2 monitor (Off, Auto while
-// Record is in view, On; its LED amber on Auto, green on On), B3 Rec Input FX
-// (LED). Record's cards are the same ones, so the two pages always agree. The
+// K3 Rhythmer's gain); B1 monitor (Off, Auto while Record is in view, On; its
+// LED amber on Auto, green on On), B2 Rec Input FX (LED). Record's cards are the same ones, so the two pages always agree. The
 // picture is the back panel: the sources as the sockets they are (the mic,
 // the rear jacks, USB-C, then Rhythmer's own sound: Resample and a track),
 // the one chosen glowing with its lead running into the stereo meter and
@@ -68,10 +67,12 @@ void draw(Paint& p, const Snapshot& s) {
         }
     }
     float cx = zone::pad + step * (chosen + 0.5f), my = zone::picture_y + 97;
-    juce::String sides = in.source == InputSource::RearL || in.source == InputSource::UsbL ? "L"
+    const bool in_use = source_in_use(s, in.source); // a loop or MIDI track has the ADC on the other input: silent
+    juce::String sides = in_use ? "IN USE"
+                       : in.source == InputSource::RearL || in.source == InputSource::UsbL ? "L"
                        : in.source == InputSource::RearR || in.source == InputSource::UsbR ? "R"
                        : in.source == InputSource::Mic ? "MONO" : "L + R";
-    p.text(sides, cx - 30, gy + 50, 60, 14, plain(colour::sec, type::small, Weight::SemiBold), juce::Justification::centred);
+    p.text(sides, cx - 30, gy + 50, 60, 14, plain(in_use ? colour::amber : colour::sec, type::small, Weight::SemiBold), juce::Justification::centred);
     juce::Path lead; // from the socket down into the meter's middle
     float mx = zone::width / 2.0f;
     lead.startNewSubPath(cx, gy + 66);

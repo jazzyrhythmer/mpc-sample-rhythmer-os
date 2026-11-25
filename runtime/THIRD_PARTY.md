@@ -28,6 +28,14 @@ The runtime, drivers, build and install scripts come from sample-base
 (https://github.com/keremimo/sample-base), the `base/` submodule, under
 AGPL-3.0-only. Its own `THIRD_PARTY.md` lists its sources.
 
+## ellic-core
+
+Melodee's engine, model and shared files come from ellic-core
+(https://github.com/keremimo/ellic-core), the `core/` submodule: Copyright
+(c) 2026 Kerem Kilic (Ellic Studio), MIT. Its licence is in release zips as
+`licenses/ellic-core-LICENSE.txt`; its own `THIRD_PARTY.md` lists its
+sources.
+
 ## JUCE
 
 JUCE 9.0.5, Raw Material Software Limited, pinned commit
@@ -125,8 +133,19 @@ Manrope Project Authors), VT323 (The VT323 Project Authors).
 each `OFL.txt`. Melodee Pixel is Melodee's own (`src/melodee/ui/fonts/`,
 `tools/gen_pixel_font.py`).
 
-## Engines
+## Native core and Rhythmer additions
 
-Melodee's sound engines, sequencer and effects are written for this
-project. They follow what Melodee's engines do, but no Melodee firmware or
-DSP source is compiled into the app, and its factory sounds are new.
+The native sampler, sequencer and effects originate in Melodee by Kerem Kiliç (Ellic Studio). Rhythmer also contains separately licensed ported instruments and FM-1-derived musical generators and Break performance code; the native-core description does not describe those additions.
+
+- FM-1 Rhythmer GEN: FM1 Open/M-VAVE contributors, JIANT and jazzy rhythmer; GPL-3.0-only with retained notices in `fm1-gen/`.
+- Break performance: Amenity, a port of Presethead's Jungle Choppa, via FM-1 Rhythmer; GPL-3.0-only with the upstream linking permission. See `fm1-break/NOTICE.md` and `LICENSE.md`. No third-party break recording is bundled.
+- The Rhythmer port collection retains each source author, licence, selected source revision and local changes in its `SOURCE.json`, `VENDORED.md` and corresponding source. These instruments are additions by Rhythmer, not bundled instruments supplied by Melodee.
+
+## Additional source-pinned instruments
+
+- Amino: klaine/amino, MIT; Adventure Kid waveforms CC0 and dependent credits retained in the original THIRD_PARTY_NOTICES.md. Original 324 presets.
+- Fizzik: filliformes/fizzik-move, MIT. Original 31 presets.
+- Weird Dreams: filliformes/weird-dreams-move; MIT grant in its README, retaining the Daniele Filaretti / WeirdDrums attribution. Its original 64 eight-voice banks are paired into 32 sixteen-pad kits.
+- KrautDrums: filliformes/krautdrums-move, MIT; all 16 original voices form one sixteen-pad kit. External rhythm launcher notes are not exposed as sounds.
+
+Exact revisions, complete grants and adaptation sources accompany the ports. No trademark endorsement by the original authors or hardware manufacturers is implied.

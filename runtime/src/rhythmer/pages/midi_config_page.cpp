@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
-// MIDI CONFIG (Shift + Pad 8, parity phase 9), as on the MPC: the wheel runs
-// down the settings, Push opens one and the wheel changes it, Push keeps it;
-// Minus / Plus change the one under the cursor straight away. MIDI Port
+// MIDI CONFIG (Shift + Pad 8, parity phase 9), the MPC's rows: the wheel runs
+// down them, K1 sets the one under the cursor (its card), Minus / Plus step
+// it. MIDI Port
 // (External jacks or USB), In channel (All or 1-16: what plays the selected
 // track), Out channel, Rhythmer's Track Channel (the selected track's own:
 // notes on it play that track wherever you are, and its notes go out on it),
-// Track MIDI In (where that channel is heard: Any port, External, USB), Pad MIDI In, Pad MIDI Out (Never, Always,
+// Track MIDI In (where that channel is heard: Any port, External, USB), Pad MIDI In, Scale on white keys (on the
+// Scale and Chords layouts a keyboard's white keys play the scale, shell/scale_keys.h), Pad MIDI Out (Never, Always,
 // Empty), Sync In and Out (Off, MIDI Clock, MTC), Thru, Receive Program Change (patterns), the Remote rows (a
 // channel, and the CCs that select a track, launch a pattern or a scene by their value), CV/Sync Out with
 // its Base and Division (pulses a quarter: base x division), the three
@@ -41,7 +42,7 @@ void draw(Paint& p, const Snapshot& s) {
     float x = zone::pad, w = zone::width - 2 * zone::pad - 6, y = zone::picture_y + 0.5f;
     const auto& track = s.track();
     for (unsigned row = first; row < first + shown_rows && row < MidiRows; ++row, y += rh) {
-        bool here = row == cursor, editing = here && s.ui.midi_editing;
+        bool here = row == cursor;
         if (here) { p.fill(x, y, w, rh - 1, colour::raised, 4); p.fill(x, y, 3, rh - 1, row == ResetRow ? colour::rec : c); }
         auto ink = here ? colour::text : colour::sec;
         p.text(midi_row_name(row), x + 9, y, w * 0.62f, rh - 1, plain(row == ResetRow && here ? colour::rec : ink, type::body, Weight::Medium));
@@ -51,10 +52,6 @@ void draw(Paint& p, const Snapshot& s) {
         if (row == ResetRow || row == PanicRow) value = here ? "PUSH" : "";
         auto style = plain(here ? colour::text : colour::mid, type::small, Weight::Medium);
         float vw = p.width(value, style), vx = x + w - 7 - vw;
-        if (editing) { // the open value: framed
-            p.fill(vx - 6, y + 2, vw + 12, rh - 5, colour::surf, 3);
-            p.ring(vx - 6, y + 2, vw + 12, rh - 5, colour::text, 3, 1);
-        }
         p.text(value, vx, y, vw, rh - 1, style);
     }
     // Where the eight rows sit in the eighteen.
@@ -64,17 +61,14 @@ void draw(Paint& p, const Snapshot& s) {
 }
 
 void wheel(Context& c, int delta) {
-    if (c.ui.midi_editing) { c.change_midi(c.ui.midi_cursor, delta > 0 ? 1 : -1); return; }
     c.ui.midi_cursor = uint8_t(std::clamp(int(c.ui.midi_cursor) + delta, 0, int(MidiRows) - 1));
 }
-void push(Context& c) {
-    if (c.ui.midi_cursor == ResetRow) { c.ui.midi_editing = false; ask(c, UiState::Ask::ResetSettings, 0); return; }
-    if (c.ui.midi_cursor == PanicRow) { c.ui.midi_editing = false; c.midi_panic(); return; }
-    c.ui.midi_editing = !c.ui.midi_editing;
+void push(Context& c) { // the two rows that do something; the others are K1's
+    if (c.ui.midi_cursor == ResetRow) ask(c, UiState::Ask::ResetSettings, 0);
+    else if (c.ui.midi_cursor == PanicRow) c.midi_panic();
 }
 void nudge(Context& c, int way) { if (c.ui.midi_cursor < PanicRow) c.change_midi(c.ui.midi_cursor, way); }
 void soft(Context& c, int key) {
-    c.ui.midi_editing = false;
     if (key == 0) c.back();
 }
 } // namespace

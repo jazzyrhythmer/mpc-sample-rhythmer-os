@@ -7,7 +7,9 @@ DIR=${1:?SD sample-base folder required}
 [ -f "$DIR/sd-worker.sh" ] || exit 0
 # The stock app runs the card's autorun again each time it starts; after
 # leaving the app (or a failed start) it stays stock until the next boot.
-[ ! -e /run/sample-base-sd-started ] || exit 0
+# On firmware 1.4 it asks first (install/top-autorun.sh sets
+# SAMPLE_BASE_ASKED), so a yes starts the app again.
+[ -n "${SAMPLE_BASE_ASKED:-}" ] || [ ! -e /run/sample-base-sd-started ] || exit 0
 : > /run/sample-base-sd-started
 exec systemd-run --unit=sample-base-sd-boot --collect --no-block \
     --property=Type=oneshot --property=After=ac50.service --property=TimeoutStartSec=90 \

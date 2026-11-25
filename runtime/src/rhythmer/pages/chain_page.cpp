@@ -10,7 +10,10 @@
 // the three pots hold three of its parameters and Minus / Plus the other row
 // (two dots by its name). Push on a device opens its sheet: change, presets,
 // bypass, move, remove as cards, Bypass lit; the wheel moves, Push does it,
-// B1 back. Push on the plus opens the
+// B1 back. A plug-in that draws its own screen (shell/screen_view.h) draws
+// everything under the slots instead, K1-K3 its three; Push opens its full
+// page (the wheel, Push and Minus / Plus its own, a B key or Shift + Push
+// back), and Shift + B3 opens its sheet (on any device). Push on the plus opens the
 // picker: 41 effects in six families, each with its glyph; Push enters a
 // family, B3 adds, B1 backs out. A bus or the master has no track, so it is
 // drawn in neutral.
@@ -18,6 +21,8 @@
 #include "rhythmer/pages/common.h"
 #include "rhythmer/pages/pages.h"
 #include "rhythmer/shell/bindings.h"
+#include "rhythmer/shell/mixer_channels.h"
+#include "rhythmer/shell/screen_view.h"
 #include "rhythmer/ui/widgets.h"
 #include <algorithm>
 
@@ -120,6 +125,14 @@ void draw(Paint& p, const Snapshot& s) {
         keys.accent = c;
         ends("LOOPER", "L" + juce::String(l + 1), "");
         h.right.push_back(chip("L" + juce::String(l + 1), c));
+    } else if (track && s.ui.fx_sub >= 0) { // a mixer submix's chain (Shift + Knob FX on the mixer): B1 back to the mixer
+        unsigned sub = unsigned(s.ui.fx_sub) % sub_count;
+        c = sub_colour(sub);
+        keys.accent = c;
+        ends("MIXER", "S" + juce::String(sub + 1), "");
+        h.left.push_back(pill("SUBMIX FX", c));
+        const auto& name = s.project.subs[sub].name;
+        h.right.push_back(label(name[0] ? name_case(name) : "S" + juce::String(sub + 1), colour::mid));
     } else if (track) { keys = mix_keys(s); h.left.push_back(pill("TRACK FX", c)); h.right.push_back(tag_of(s, s.ui.track)); }
     else if (s.ui.page == PageId::Bus) {
         keys = mix_keys(s); keys.accent = c; // a bus belongs to no track: neutral
@@ -138,6 +151,11 @@ void draw(Paint& p, const Snapshot& s) {
         h.left.push_back(pill(juce::String(effect_count()) + " EFFECTS"));
         h.left.push_back(pill("SLOT " + juce::String(cursor + 1), c));
         keys.glyphs = {}; keys.after = {};
+    }
+    if (s.ui.fx_panel && plugin_screen_shown(s)) { // the plug-in's full page under the hub's keys
+        frame_keys(p, s, keys);
+        draw_screen_picture(p, *s.plugin_picture, 0, float(zone::header_y));
+        return;
     }
     frame(p, s, keys, h);
     if (s.ui.picker_open) { picker(p, s, c); return; }
@@ -194,10 +212,12 @@ void add_from_picker(Context& c) {
     c.set_effect(n, cursor, list[c.ui.picker_item]);
     c.ui.fx_row[at] = 0;
     c.ui.picker_open = false;
+    c.picker_done();
 }
 
 void wheel(Context& c, int delta) {
     auto& ui = c.ui;
+    if (ui.fx_panel) { c.plugin_screen_input(ScreenKey::Wheel, delta); return; } // its full page's
     if (ui.picker_open) {
         if (!ui.picker_items) { ui.picker_family = uint8_t(std::clamp<int>(ui.picker_family + delta, 0, int(families(ui.page)) - 1)); return; }
         if (Family(ui.picker_family) == Family::Plugins) return; // one entry
@@ -225,6 +245,8 @@ void push(Context& c) {
     auto& ui = c.ui;
     unsigned n = chain_here(c), at = UiState::cursor_of(n);
     if (ui.page == PageId::PadFx && c.track().engine != EngineKind::Sampler) return;
+    if (ui.fx_panel) { c.plugin_screen_input(ScreenKey::Push, 1); return; } // its full page's
+    if (!ui.picker_open && !ui.sheet_open && plugin_screen_place(c.project, ui).area == 1) { ui.fx_panel = true; return; } // its full page
     const auto& chain = c.project.chain(n);
     unsigned cursor = std::min<unsigned>(ui.fx_cursor[at], chain.count());
     if (ui.picker_open) {
@@ -260,7 +282,7 @@ void push(Context& c) {
 void soft(Context& c, int key) {
     auto& ui = c.ui;
     if (ui.picker_open) {
-        if (key == 0) { if (ui.picker_items) ui.picker_items = false; else ui.picker_open = false; }
+        if (key == 0) { if (ui.picker_items) ui.picker_items = false; else { ui.picker_open = false; c.picker_done(); } }
         if (key == 2) { if (ui.picker_items) add_from_picker(c); else { ui.picker_items = true; ui.picker_item = 0; } }
         return;
     }
@@ -268,12 +290,33 @@ void soft(Context& c, int key) {
         if (key == 0) ui.sheet_open = false;
         return;
     }
+    if (key == 2 && ui.shift && ui.page != PageId::PadFx) { // Shift + B3: the device's cards, Bypass lit (a plug-in's own page: Push opens that)
+        unsigned n = chain_here(c), cursor = ui.fx_cursor[UiState::cursor_of(n)];
+        const auto& chain = c.project.chain(n);
+        if (cursor < chain.count()) {
+            Actions actions {};
+            unsigned rows = device_actions(ui, chain.slots[cursor], actions);
+            ui.fx_panel = false;
+            ui.sheet_open = true; ui.sheet_row = 0;
+            for (unsigned r = 0; r < rows; ++r) if (actions[r] == Action::Bypass) ui.sheet_row = uint8_t(r);
+        }
+        return;
+    }
+    if (ui.fx_panel) { // its full page: the lit key back to the chain, the others where they go
+        ui.fx_panel = false;
+        if (key == 2) return;
+    }
     if (ui.page == PageId::Rack && ui.fx_loop >= 0) { if (key == 0) c.open(PageId::Looper); return; } // a loop track's chain
+    if (ui.page == PageId::Rack && ui.fx_sub >= 0) { // a submix's: B1 the mixer, on it
+        if (key == 0) { pick_other(ui, strip_sub(unsigned(ui.fx_sub))); c.open(PageId::Mixer); }
+        return;
+    }
     mix_soft(c, key); // the MIX hub's row
 }
 
 // Minus / Plus: the device's other row of parameters; a plug-in's rows, one at a time.
 void nudge(Context& c, int way) {
+    if (c.ui.fx_panel) { c.plugin_screen_input(ScreenKey::Step, way); return; } // its full page's
     unsigned n = chain_here(c), at = UiState::cursor_of(n);
     const auto& chain = c.project.chain(n);
     unsigned cursor = c.ui.fx_cursor[at];
@@ -305,6 +348,7 @@ bool chain_erase(Context& c) {
     c.set_effect(n, cursor, EffectKind::None);
     if (cursor && cursor >= chain.count()) ui.fx_cursor[at] = uint8_t(cursor - 1); // the last one gone: onto the one before
     ui.sheet_open = false;
+    ui.fx_panel = false;
     ui.fx_row[at] = 0;
     c.notice(name + " removed");
     return true;

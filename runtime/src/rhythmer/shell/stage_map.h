@@ -118,6 +118,11 @@ inline bool stage_go(UiState& ui, EngineKind engine, StageKind kind) {
     return f.found;
 }
 
+// A PLUGIN track's B1 pages (PRESETS, PANEL, EDIT): Shift + B1-B3 there are PLUG-INS, PRESETS and TRANSPORT.
+constexpr bool stage_plugin_page(StageKind kind) {
+    return kind == StageKind::PluginSound || kind == StageKind::PluginScreen || kind == StageKind::PluginEdit;
+}
+
 // The card the wheel fine-edits on Stage, and Push moves on (the MPC's encoder press): the pot touched last.
 // On an empty track it is also the door Push makes (K1 a synth, K2 a kit, K3 a MIDI track); there the wheel moves it.
 inline int stage_focus(const UiState& ui, const Track&) { return ui.last_pot >= 0 ? ui.last_pot % 3 : 0; }

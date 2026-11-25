@@ -4,7 +4,7 @@
 
 ## 꼭 알아야 할 버튼 조합
 
-![필수 조작](../assets/manual/essential-controls.png)
+![필수 조작](../images/rhythmer/essential-controls.png)
 
 | 목적 | 조작 | 확인할 결과 |
 | --- | --- | --- |
@@ -27,7 +27,7 @@ PAD BANK 한 번 탭은 뱅크를 바꿉니다. 누른 채 트랙을 선택한 �
 
 ## 무엇을 선택했는지 확인하기
 
-![프로젝트·트랙·패턴 구조](../assets/manual/os-structure.png)
+![프로젝트·트랙·패턴 구조](../images/rhythmer/os-structure.png)
 
 | 대상 | 뜻 | 진입 |
 | --- | --- | --- |

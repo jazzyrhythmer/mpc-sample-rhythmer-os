@@ -1,0 +1,59 @@
+{
+  "melodee-pages": 1,
+  "plugin": { "name": "Melodee Poly" },
+  "pages": [
+    { "name": "FILTER",
+      "params": ["Cutoff", "Resonance", { "name": "Filter Env Amount", "label": "Env Amt" }, "Key Track", "Vel > Filter"],
+      "picture": { "kind": "filter", "cutoff": "Cutoff", "resonance": "Resonance" } },
+    { "name": "AMP ENV",
+      "params": ["Amp Attack", "Amp Decay", "Amp Sustain", "Amp Release", "Vel > Amp"],
+      "picture": { "kind": "envelope", "attack": "Amp Attack", "decay": "Amp Decay", "sustain": "Amp Sustain", "release": "Amp Release" } },
+    { "name": "MORE", "rest": true }
+  ],
+  "skin": {
+    "font": "fonts/SpaceGrotesk.ttf",
+    "pages": {
+      "FILTER": {
+        "background": "art/filter.png",
+        "controls": [
+          { "kind": "curve", "of": "filter", "x": 18, "y": 46, "w": 96, "h": 92, "colour": "FFB347" },
+          { "param": "Cutoff", "kind": "knob", "strip": "art/knob-34.png", "frames": 64, "x": 139, "y": 51,
+            "label": { "text": "CUTOFF", "x": 126, "y": 92, "w": 60, "colour": "ECE3CF" } },
+          { "param": "Cutoff", "kind": "value", "x": 126, "y": 106, "w": 60, "colour": "FFB347" },
+          { "param": "Resonance", "kind": "knob", "strip": "art/knob-34.png", "frames": 64, "x": 197, "y": 51,
+            "label": { "text": "RES", "x": 184, "y": 92, "w": 60, "colour": "ECE3CF" } },
+          { "param": "Resonance", "kind": "value", "x": 184, "y": 106, "w": 60, "colour": "FFB347" },
+          { "param": "Filter Env Amount", "kind": "knob", "strip": "art/knob-34.png", "frames": 64, "x": 255, "y": 51,
+            "label": { "text": "ENV AMT", "x": 242, "y": 92, "w": 60, "colour": "ECE3CF" } },
+          { "param": "Filter Env Amount", "kind": "value", "x": 242, "y": 106, "w": 60, "colour": "FFB347" },
+          { "param": "Key Track", "kind": "switch", "strip": "art/switch-3.png", "frames": 3, "x": 150, "y": 150,
+            "label": { "text": "KEY TRACK", "x": 133, "y": 166, "w": 70, "colour": "ECE3CF" } },
+          { "param": "Key Track", "kind": "value", "x": 133, "y": 180, "w": 70, "colour": "FFB347" },
+          { "param": "Vel > Filter", "kind": "knob", "strip": "art/knob-26.png", "frames": 64, "x": 230, "y": 142,
+            "label": { "text": "VELOCITY", "x": 213, "y": 166, "w": 60, "colour": "ECE3CF" } },
+          { "param": "Vel > Filter", "kind": "value", "x": 213, "y": 180, "w": 60, "colour": "FFB347" }
+        ]
+      },
+      "AMP ENV": {
+        "background": "art/amp-env.png",
+        "controls": [
+          { "kind": "curve", "of": "envelope", "x": 18, "y": 46, "w": 132, "h": 112, "colour": "FFB347" },
+          { "param": "Amp Attack", "kind": "slider", "image": "art/slider-track.png", "cap": "art/slider-cap.png", "x": 172, "y": 46,
+            "label": { "text": "A", "x": 165, "y": 150, "w": 30, "colour": "ECE3CF" } },
+          { "param": "Amp Decay", "kind": "slider", "image": "art/slider-track.png", "cap": "art/slider-cap.png", "x": 206, "y": 46,
+            "label": { "text": "D", "x": 199, "y": 150, "w": 30, "colour": "ECE3CF" } },
+          { "param": "Amp Sustain", "kind": "slider", "image": "art/slider-track.png", "cap": "art/slider-cap.png", "x": 240, "y": 46,
+            "label": { "text": "S", "x": 233, "y": 150, "w": 30, "colour": "ECE3CF" } },
+          { "param": "Amp Release", "kind": "slider", "image": "art/slider-track.png", "cap": "art/slider-cap.png", "x": 274, "y": 46,
+            "label": { "text": "R", "x": 267, "y": 150, "w": 30, "colour": "ECE3CF" } },
+          { "param": "Amp Attack", "kind": "value", "x": 160, "y": 166, "w": 40, "colour": "FFB347" },
+          { "param": "Amp Decay", "kind": "value", "x": 194, "y": 166, "w": 40, "colour": "FFB347" },
+          { "param": "Amp Sustain", "kind": "value", "x": 228, "y": 166, "w": 40, "colour": "FFB347" },
+          { "param": "Amp Release", "kind": "value", "x": 262, "y": 166, "w": 40, "colour": "FFB347" },
+          { "param": "Vel > Amp", "kind": "knob", "strip": "art/knob-26.png", "frames": 64, "x": 30, "y": 176,
+            "label": { "text": "VELOCITY", "x": 62, "y": 182, "w": 70, "colour": "ECE3CF", "align": "left" } }
+        ]
+      }
+    }
+  }
+}

@@ -26,8 +26,9 @@
 // Out: the engine host decides on the audio thread what goes out at which of
 // its frames (pads, patterns, the clocks); here each becomes a
 // juce::MidiMessage and is sent when its frame is heard, the runtime waking
-// this thread for it (MidiOutput::wake_at). The CV clock is the sync line's
-// level, set the same way.
+// this thread for it (MidiOutput::wake_at). What is played by hand goes out
+// at once instead: the audio thread wakes this one as it takes it
+// (Session::wake_midi()). The CV clock is the sync line's level, set the same way.
 namespace rhythmer {
 
 class Context;
@@ -63,9 +64,8 @@ private:
     struct SysexSending { bool active = false; uint8_t track = 0; std::vector<uint8_t> bytes; size_t at = 0; int64_t next_ns = 0; } sysex;
     std::atomic<unsigned> sysex_sent {0}, sysex_bytes {0};
     void panic(Context& c, MidiOutput& out); // All Sound Off, All Notes Off, pitch bend centre: every channel, every port
-    struct Pending { int64_t due = 0; MidiOutEvent event; };
-    std::array<Pending, 512> pending {}; // sorted by when it is heard
-    unsigned pending_count = 0;
+    MidiOutQueue pending;                 // sorted by when it goes out (when it is heard, or at once played by hand)
+    std::atomic<unsigned> superseded {0}; // sequenced Note Ons and Offs a hand's note dropped or sent first
     std::array<MidiPacket, 32> thru {};  // Thru: what came in, sent on in the next pump
     unsigned thru_count = 0;
     ClockFollower follower;
@@ -80,6 +80,10 @@ private:
     std::atomic<bool> cv_ok {true};
     int64_t late_sum = 0, late_max = 0;      // ns behind the due time, over the messages since the last report
     unsigned late_count = 0;
+    int64_t hand_sum = 0, hand_max = 0;      // ns from being played by hand to sent, over the messages since the last report
+    int64_t hand_made_sum = 0, hand_woke_sum = 0; // of which: played to emitted by the audio thread, emitted to sent
+    unsigned hand_count = 0;
+    std::atomic<unsigned> hand_avg_us {0}, hand_max_us {0}, hand_made_us {0}, hand_woke_us {0};
     std::atomic<unsigned> late_avg_us {0}, late_max_us {0}, jitter_in {0}, bunched {0}; // bunched: clock pulses in under 2 ms
     // MIDI tracks (docs/MIDI_TRACKS.md): messages sent on a track's own port, the last one (its bytes and MidiDest), panics.
     std::atomic<unsigned> track_outs {0}, last_out {0}, last_dest {0}, panics {0};

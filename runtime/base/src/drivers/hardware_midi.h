@@ -32,9 +32,13 @@ public:
     HardwareMidi& operator=(const HardwareMidi&) = delete;
     bool rescan(); // true if an open input disappeared; caller must panic
     void read(const Receive& receive);
-    // Sleeps until an open input has bytes or `timeout_ns` passes, so input
-    // is read as it arrives rather than on the next fixed tick.
+    // Sleeps until an open input has bytes, wake_handle() is written or
+    // `timeout_ns` passes, so input is read as it arrives rather than on the
+    // next fixed tick.
     void wait(long long timeout_ns);
+    // An eventfd any thread may write (Session::wake_midi(), the audio thread
+    // too): the wait() running now, or the next, returns at once.
+    int wake_handle() const { return wake_fd; }
     bool send(const std::string& address, const MidiPacket& packet);
     bool send_surface(const MidiPacket& packet); // false without a surface output
     void flush();
@@ -53,4 +57,5 @@ private:
     struct Port;
     std::vector<std::unique_ptr<Port>> ports;
     unsigned send_drops = 0, input_errors = 0;
+    int wake_fd = -1; // an eventfd: wait() watches it, wake_handle() lends it
 };

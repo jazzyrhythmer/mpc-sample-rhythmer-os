@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "rhythmer/shell/lesson_jobs.h"
 #include "rhythmer/engine/engine_host.h"
+#include "rhythmer/engine/engine_info.h"
 #include "rhythmer/shell/context.h"
 #include "rhythmer/shell/menu.h"
 #include "rhythmer/shell/project_kits.h"
@@ -46,8 +47,10 @@ void lesson_start(Context& c, unsigned lesson) {
     auto fresh = std::make_unique<Project>();
     auto bank = std::make_unique<PatternBank>();
     starting_project(*fresh, *bank);
+    load_sound(fresh->tracks[0], EngineKind::Sampler, 0); // an empty kit until the factory kit lands on it
     std::snprintf(fresh->name, sizeof(fresh->name), "Lesson");
     lesson_patterns(lesson % lesson_count, *bank);
+    if (lesson % lesson_count == 1) { fresh->tracks[0].in_scene[0] = 1; fresh->tracks[0].in_scene[1] = 2; } // SEQ 1 keeps P1, SEQ 2 P2
     c.switch_to(*fresh, *bank, {});
     c.lesson_return = back;
     c.ui.lesson = uint8_t(lesson % lesson_count + 1);

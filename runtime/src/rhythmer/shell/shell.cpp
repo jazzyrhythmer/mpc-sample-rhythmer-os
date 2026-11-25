@@ -18,9 +18,11 @@
 #include "rhythmer/pages/page.h"
 #include "rhythmer/pages/pages.h"
 #include "rhythmer/shell/ask.h"
+#include "rhythmer/shell/history_jobs.h"
 #include "rhythmer/shell/new_track.h"
 #include "rhythmer/shell/card_access.h"
 #include "rhythmer/shell/fader.h"
+#include <type_traits>
 #include <chrono>
 #include "rhythmer/shell/takeover.h"
 #include "rhythmer/shell/mute_mode.h"
@@ -31,6 +33,7 @@
 #include "rhythmer/shell/note_jobs.h"
 #include "rhythmer/shell/roll.h"
 #include "rhythmer/shell/mix_hub.h"
+#include "rhythmer/shell/mixer_channels.h"
 #include "rhythmer/shell/stage_map.h"
 #include "rhythmer/shell/zoom_view.h"
 #include "rhythmer/shell/sample_mode.h"
@@ -42,6 +45,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace rhythmer {
 namespace {
@@ -74,6 +78,10 @@ Shell::Shell(EngineHost& host)
     context_.updates = &update_link;
 }
 
+void Shell::load_engine() {
+    host.load(*project_, *patterns_);
+}
+
 void Shell::start_settings(const std::string& text) {
     ui_.settings.read(text);
     want_audio_format();
@@ -92,6 +100,7 @@ struct HitStamp {
 
 void Shell::midi(const MidiPortInfo& port, const MidiPacket& packet, uint32_t now) {
     std::lock_guard<std::mutex> guard(lock);
+    ++context_.heavy_serial;
     context_.now = now;
     if (packet.size && packet.bytes[0] < 0xF8) last_input_ = now; // notes and controllers, not the clock: the background save waits
     HitStamp stamp(context_, packet.timestamp_ns);
@@ -100,18 +109,21 @@ void Shell::midi(const MidiPortInfo& port, const MidiPacket& packet, uint32_t no
 
 void Shell::looper_ask(const LooperAsk& ask, uint32_t now) {
     std::lock_guard<std::mutex> guard(lock);
+    ++context_.heavy_serial;
     context_.now = now;
     looper_remote(context_, ask);
 }
 
 void Shell::midi_panic(uint32_t now) {
     std::lock_guard<std::mutex> guard(lock);
+    ++context_.heavy_serial;
     context_.now = now;
     context_.midi_panic();
 }
 
 void Shell::midi_lost() {
     std::lock_guard<std::mutex> guard(lock);
+    ++context_.heavy_serial;
     midi_io.lost(context_);
 }
 
@@ -126,6 +138,7 @@ void Shell::midi_output(MidiOutput& out, MidiIo::Clock::time_point at, uint32_t 
 
 void Shell::surface(const SurfaceEvent& event, uint32_t now) {
     std::lock_guard<std::mutex> guard(lock);
+    ++context_.heavy_serial;
     context_.now = now;
     last_input_ = now; // a hand on the controls: the background save waits (shell/autosave.h)
     HitStamp stamp(context_, event.timestamp_ns);
@@ -184,7 +197,16 @@ void Shell::surface(const SurfaceEvent& event, uint32_t now) {
         // A lesson: only the step's button, the one held with it and the encoder act (held, the MENU: the way out).
         if (ui_.lesson && input.pressed && !lesson_takes_button(ui_, Button(input.index))) { eaten = true; return; }
         const bool in_lesson = ui_.lesson && !ui_.menu;
+        auto& mark = usage_marks[input.index % usage_marks.size()]; // the usage log: did this press do anything?
+        if (input.pressed && context_.usage.on() && Button(input.index) != Button::Shift) {
+            if (!mark) mark = std::make_unique<UsageMark>();
+            usage_mark(*mark);
+        }
         button(Button(input.index), input.pressed);
+        if (!input.pressed && mark && context_.usage.on()) {
+            if (!usage_changed(*mark) && input.index < surface_buttons.size()) context_.usage.nojob(now, surface_buttons[input.index].name, ui_.page);
+            mark.reset();
+        }
         if (in_lesson && ui_.lesson) lesson_button(ui_, Button(input.index), input.pressed, now);
         return;
     }
@@ -225,9 +247,37 @@ void Shell::surface(const SurfaceEvent& event, uint32_t now) {
     case SurfaceControl::K2: pot(1, input.value, event.syncing); break;
     case SurfaceControl::K3: pot(2, input.value, event.syncing); break;
     case SurfaceControl::Fader: fader_move(context_, input.value, event.syncing); break; // shell/fader.cpp: mod wheel, or the page's own job
-    case SurfaceControl::Wheel: if (input.delta) wheel(input.delta); break;
+    case SurfaceControl::Wheel:
+        if (!input.delta) break;
+        if (context_.usage.on()) { // the usage log: a turn that changed nothing
+            if (!wheel_mark) wheel_mark = std::make_unique<UsageMark>();
+            usage_mark(*wheel_mark);
+            wheel(input.delta);
+            if (!usage_changed(*wheel_mark)) context_.usage.nojob(now, "Wheel", ui_.page);
+            break;
+        }
+        wheel(input.delta);
+        break;
     default: break;
     }
+}
+
+void Shell::usage_mark(UsageMark& mark) const {
+    std::memcpy(static_cast<void*>(&mark.ui), &ui_, sizeof(UiState)); // every byte, so an unchanged state compares equal
+    mark.pushes = context_.edits.pushes; mark.sent = context_.sent; mark.dirty = context_.dirty;
+}
+bool Shell::usage_changed(const UsageMark& mark) const {
+    return context_.edits.pushes != mark.pushes || context_.sent != mark.sent || context_.dirty != mark.dirty
+        || std::memcmp(&mark.ui, &ui_, sizeof(UiState)) != 0;
+}
+
+void Shell::usage_tick(uint32_t now) {
+    auto& log = context_.usage;
+    if (!log.on()) { usage_pushes_ = context_.edits.pushes; return; }
+    if (context_.edits.pushes != usage_pushes_) { usage_pushes_ = context_.edits.pushes; log.edited(now); }
+    log.page(now, ui_.page);
+    log.lesson(now, ui_.lesson, ui_.lesson_step);
+    if (log.due(now)) context_.flush_usage();
 }
 
 // Each press on a page is one undo step of what the page edits, unless it kept
@@ -258,8 +308,12 @@ void Shell::button(Button b, bool pressed) {
     }
     if (pressed && b != Button::Erase && b != Button::Shift && ui_.erase) ui_.erase_used = true; // Erase + a button: its release erases nothing
     // Erase's release is a press of its own (a tap erases the thing in focus): one undo step, as any page press.
-    // The encoder's too: its tap acts when it is let go (held, it opens the MENU: shell/menu.h).
-    if ((!pressed && b != Button::Erase && b != Button::WheelPush) || b == Button::Shift || ((b == Button::Minus || b == Button::Plus) && ui_.shift)) { press(b, pressed); return; }
+    // The encoder's too: its tap acts when it is let go (held, it opens the MENU: shell/menu.h). And Mute's on the
+    // mixer's FX block (a tap switches the lit effect: shell/mute_mode.h), and the mixer's Minus / Plus (held, the
+    // strips or the card: shell/mixer_channels.h).
+    const bool release_acts = b == Button::Erase || b == Button::WheelPush || (b == Button::Mute && mixer_fx_lit(ui_))
+                           || ((b == Button::Minus || b == Button::Plus) && mixer_view.down);
+    if ((!pressed && !release_acts) || b == Button::Shift || ((b == Button::Minus || b == Button::Plus) && ui_.shift)) { press(b, pressed); return; }
     PageEdit step(context_, b, false);
     press(b, pressed);
     step.finish();
@@ -273,11 +327,20 @@ void Shell::press(Button b, bool pressed) {
         else if (ui.page == PageId::Roll) roll_shift_up(context_); // Roll: marking ends, or a tap clears the marks
         return;
     }
+    if (b == Button::Minus && !pressed && history_hold.down) { // Shift + Minus let go: a tap undoes one step
+        if (history_release(history_hold)) context_.undo();
+        return;
+    }
+    if ((b == Button::Minus || b == Button::Plus) && !pressed && mixer_view.down && (b == Button::Plus) == (mixer_view.way > 0)) {
+        if (const int way = mixer_view_release(mixer_view); way && ui.page == PageId::Mixer) page_spec(ui.page).nudge(context_, way); // a tap
+        return;
+    }
     if (b == Button::Play && !pressed && ui.fill) context_.fill(false); // Fill lasts while Play is held
     if (b == Button::Sample && !pressed) { sample_button(context_, false); return; } // always heard, so Sample is never left held
     if (b == Button::WheelPush && !pressed) { // the encoder let go: a tap is the page's Push; held, it opened the MENU
         bool tap = encoder_release(enc) && enc.track==ui.track && enc.page==uint8_t(ui.page);
         if (ui.lesson && !lesson_takes_push(ui)) return; // a lesson: Push acts only as its step
+        if (tap && ui.history) { history_go(context_); return; } // the undo list: to the state under the cursor
         if (tap && !ui.menu && ui.ask == UiState::Ask::None && !ui.name.open() && !ui.exit_open && !card_owns_controls(ui)) {
             page_spec(ui.page).push(context_);
             if (ui.lesson) lesson_push(ui, context_.now);
@@ -305,8 +368,11 @@ void Shell::press(Button b, bool pressed) {
     // The MENU over the page (shell/menu.h): B1 back, B2 HERE, B3 GO, Push the lit card or tile; any other
     // button closes it and does its own job.
     if (pressed && ui.menu && !ui.exit_open && menu_button(context_, b)) return;
+    // The undo list (shell/history_list.h): B1 back, B3 goes there, Minus / Plus move; any other button closes it
+    // and does its own job.
+    if (pressed && ui.history && !ui.exit_open && history_button(context_, b)) return;
     if (b == Button::Seq && (!ui.exit_open || !pressed)) { seq_press(context_, pressed); return; } // tap, hold or Shift (shell/seq_layer.cpp)
-    if (pressed && !ui.exit_open && seq_button(context_, b)) return; // Seq held: B1-B3, Minus / Plus, Seq Record, Push
+    if (pressed && !ui.exit_open && seq_button(context_, b)) return; // Seq held: B1-B3, Minus / Plus, Stop, Seq Record, Push
     if (pressed && !ui.exit_open && (b == Button::TopLeft || b == Button::TopMiddle || b == Button::TopRight) &&
         sample_key(context_, b == Button::TopLeft ? 0 : b == Button::TopMiddle ? 1 : 2)) return; // Sample held: Stage's sections
     if (b == Button::PadBank) { pad_bank_button(context_, pressed); return; } // shell/pad_bank.cpp
@@ -326,7 +392,7 @@ void Shell::press(Button b, bool pressed) {
         // Pad FX and Knob FX together, in either order: the MIX hub on Tracks (shell/mix_hub.h); alone, their own job
         // when let go. Shift + either acts as it goes down (the cases below).
         switch (fx_chord(ui, b, pressed)) {
-        case FxChord::Mix: context_.open(PageId::Tracks); end_copy_away(); return;
+        case FxChord::Mix: context_.open(PageId::Mixer); end_copy_away(); return;
         case FxChord::Wait: return;
         case FxChord::Own:
             if (new_track_locked(context_)) return; // empty: only the MIX chord, no solo Punch/Knob FX action
@@ -402,7 +468,8 @@ void Shell::press(Button b, bool pressed) {
             off_after_save = ui.exit_off = b == Button::TopMiddle;
             context_.send({Command::Type::Stop});
             context_.send({Command::Type::AllNotesOff, 255});
-            // The project goes to the card first (a new file if it has none); then away.
+            // The project goes to the card first (a new file if it has none); then away. Autosave Off (issue 18):
+            // never saved here, it stays as it was last saved.
             ProjectStore::View v;
             if (store_) store_->view(v);
             if (!v.root.empty()) {
@@ -426,11 +493,12 @@ void Shell::press(Button b, bool pressed) {
         // Shift + Knob FX (FX SELECT): the effect chains, the same cycle as MIX's B3 FX (track, bus, master,
         // a kit's pad); on the Looper the selected loop track's chain
         if (ui.page == PageId::Looper && context_.project.looper.on) { int8_t l = int8_t(ui.loop % loop_tracks); context_.open(PageId::Rack); ui.fx_loop = l; break; }
+        if (ui.page == PageId::Mixer) { context_.open_mixer_chain(false); break; } // the channel in hand's chain; B1 MIXER back
         {
             bool kit = context_.track().engine == EngineKind::Sampler;
             bool own_chain = mix_section(ui.page) == MixSection::Fx && !(ui.page == PageId::Rack && ui.fx_loop >= 0);
             PageId next = own_chain ? mix_next(ui.page, 2, kit) : PageId::Rack;
-            if (next == PageId::Rack) ui.fx_loop = -1; // the track's own chain, not a loop's
+            if (next == PageId::Rack) { ui.fx_loop = -1; ui.fx_sub = -1; } // the track's own chain, not a loop's
             context_.open(next);
         }
         break;
@@ -493,21 +561,25 @@ void Shell::press(Button b, bool pressed) {
         context_.tap_tempo();
         tap_press(tap, context_.now); // held: the tempo on the encoder, or the Tempo page (shell/tap_hold.h)
         break;
-    // Shift + Minus / Plus: undo and redo, as printed, on every page.
+    // Shift + Minus / Plus: undo and redo, as printed, on every page. Shift + Minus held: the undo list (shell/history_list.h).
     // Pad Bank held: Minus / Plus jump banks.
     case Button::Minus:
         if (ui.sample_held && ui.light_show && !ui.shift) { light_style_step(-1); break; } // the light show's style
-        if (ui.shift) context_.undo();
+        if (ui.shift) history_press(history_hold, context_.now); // a tap undoes as it is let go; held, the undo list
         else if (levels_held_cards(*project_, ui)) { ui.levels_used = true; levels_nudge(context_, -1); } // 16 Levels held
         else if (record_track_keys()) context_.record_octave(-1); // the source track's pads, while they play
-        else if (!pad_bank_move(context_, -1)) page.nudge(context_, -1);
+        else if (pad_bank_move(context_, -1)) {}
+        else if (ui.page == PageId::Mixer) mixer_view_press(mixer_view, -1, context_.now); // a tap nudges as it is let go; held, the strips
+        else page.nudge(context_, -1);
         break;
     case Button::Plus:
         if (ui.sample_held && ui.light_show && !ui.shift) { light_style_step(1); break; }
         if (ui.shift) context_.redo();
         else if (levels_held_cards(*project_, ui)) { ui.levels_used = true; levels_nudge(context_, 1); }
         else if (record_track_keys()) context_.record_octave(1);
-        else if (!pad_bank_move(context_, 1)) page.nudge(context_, 1);
+        else if (pad_bank_move(context_, 1)) {}
+        else if (ui.page == PageId::Mixer) mixer_view_press(mixer_view, 1, context_.now); // held, the card
+        else page.nudge(context_, 1);
         break;
     // The pads the tracks (Pad Bank held, a track move or copy): B2 MOVE, B3 COPY, B1 back (shell/pad_bank.h).
     // Note Repeat on: B1-B3 are its rate (Shift: triplets), except on Arp and Chord.
@@ -527,6 +599,7 @@ void Shell::press(Button b, bool pressed) {
         else if (ui.shift && ui.page == PageId::Project && ui.project_list && !ui.sheet_open && !ui.move_open && project_folder_up(context_)) {
             // up a folder, done
         }
+        else if (ui.shift && ui.page == PageId::Mixer && ui.mixer_bank == 0 && context_.track().used()) page.push(context_); // the Name sheet (pages/mixer_page.cpp)
         else if (ui.shift) context_.back();
         else { encoder_press(enc, context_.now);enc.track=ui.track;enc.page=uint8_t(ui.page); } // its job waits for the release: held, it opens the MENU (shell/menu.h)
         break;
@@ -552,7 +625,7 @@ void Shell::check_pickup(unsigned n, const Binding& binding) {
 }
 
 void Shell::pot(unsigned n, int position, bool syncing) {
-    if (ui_.menu && !syncing) return; // the MENU is up: the cards under it wait
+    if ((ui_.menu || ui_.history) && !syncing) return; // the MENU is up: the cards under it wait
     const auto& selected=project_->tracks[ui_.track];
     const bool break_gen=selected.engine==EngineKind::Sampler&&selected.break_bars;
     const bool acid_gen=selected.engine==EngineKind::Plugin&&selected.plugin<max_plugins&&std::string(project_->plugins[selected.plugin].name)=="Acid Engine";
@@ -560,6 +633,10 @@ void Shell::pot(unsigned n, int position, bool syncing) {
     auto bindings = page_bindings(*project_, ui_, context_.pattern());
     // A Trim or Chop handle's pot: that handle in focus, the view zoomed in round it (shell/zoom_view.h).
     if (!syncing && focus_handle(ui_, bindings[n])) bindings = page_bindings(*project_, ui_, context_.pattern());
+    if (!syncing && (bindings[n].kind == Binding::Kind::ChopStart || bindings[n].kind == Binding::Kind::ChopEnd) && ui_.chop_zoom_auto) {
+        chop_unfollow(ui_); // K1 / K2 cover the whole region again; the wheel closes in once more
+        bindings = page_bindings(*project_, ui_, context_.pattern());
+    }
     const auto& b = bindings[n];
     auto& pot = ui_.pots[n];
     int before = pot.position;
@@ -569,7 +646,11 @@ void Shell::pot(unsigned n, int position, bool syncing) {
     if (ui_.erase) ui_.erase_used = true; // Erase + pot: its release deletes nothing
     if (ui_.levels_held) ui_.levels_used = true; // 16 Levels + pot: its setting; the release toggles nothing
     if (ui_.sheet_open && ui_.page == PageId::Roll) ui_.sheet_open = false; // a pot leaves Roll's sheet and does its job
-    if (!b.bound()) return;
+    if (!b.bound()) { // the usage log: a knob with no card here
+        static const char* const knobs[] {"K1", "K2", "K3"};
+        context_.usage.nojob(context_.now, knobs[n % 3], ui_.page);
+        return;
+    }
     check_pickup(n, b);
     ui_.turning = int8_t(n); ui_.turned_at = context_.now; ui_.last_pot = int8_t(n); ui_.last_pot_shift = ui_.shift;
     if (ui_.shift) ui_.shift_used = true;
@@ -595,6 +676,11 @@ void Shell::pot(unsigned n, int position, bool syncing) {
         pot.engaged = false; pot.bound = 0;
         return;
     }
+    if (int initial = 0; ui_.erase && pad_reset_value(b, initial)) { // a kit pad's own value: back to a new pad's
+        context_.apply(b, initial);
+        pot.engaged = false; pot.bound = 0;
+        return;
+    }
     learn_fader(context_, b, n); // fader C: the fader follows the pot turned last, unless PIN holds it
     int value = 0;
     if (takeover_move(pot_takeover(b), pot, before, position, b, value)) context_.apply(b, value);
@@ -609,6 +695,7 @@ void Shell::wheel(int delta) {
         return;
     }
     if (ui_.menu) { menu_wheel(context_, delta); return; } // the MENU: the wheel walks its cards or tiles
+    if (ui_.history) { history_wheel(context_, delta); return; } // the undo list: its rows
     if (ui_.levels_sheet) { levels_sheet_wheel(context_, delta); return; } // 16 Levels' FILE: its rows (SET: nothing)
     if (levels_held_cards(*project_, ui_) && LevelsKind(context_.track().levels_kind % unsigned(LevelsKind::Count)) == LevelsKind::Chords) {
         ui_.levels_used = true; // 16 Levels held, of type Chords: the encoder picks the progression from the card, as on Keys' Prog layout
@@ -628,7 +715,7 @@ void Shell::wheel(int delta) {
         if (!ui_.prog_storing) prog_wheel(context_, delta);
         return;
     }
-    if (ui_.shift && ui_.last_pot >= 0 && ui_.page != PageId::Patterns && ui_.page != PageId::Roll) { // Patterns: locates by Q; Roll: marks notes
+    if (ui_.shift && ui_.last_pot >= 0 && ui_.page != PageId::Patterns && ui_.page != PageId::Roll && ui_.page != PageId::Chop) { // Patterns: locates by Q; Roll: marks notes; Chop: hit to hit
         // Shift + wheel: fine edit of the last pot touched, one step a detent.
         ui_.shift_used = true;
         auto bindings = page_bindings(*project_, ui_, context_.pattern(), ui_.last_pot_shift);
@@ -775,6 +862,70 @@ FrameView Shell::zoomed_view() const {
     return {};
 }
 
+namespace {
+// A project's copy for the screen without what a frame with no control used cannot have changed: each track's kit
+// (its pads, their chains, its zone trims: nine tenths of a project's bytes), which `to` keeps from the last whole
+// copy, and the chops, which no page draws. The names stand for Project's members in their order; a member added
+// there stops this compiling until it has a line here.
+template <class T> void put(T& to, const T& from) { to = from; }
+template <class T, size_t N> void put(T (&to)[N], const T (&from)[N]) { std::copy(from, from + N, to); }
+void copy_track_light(Track& to, const Track& from) {
+    static_assert(std::is_trivially_copyable_v<Track>, "copied here in pieces, byte for byte");
+    const char* source = reinterpret_cast<const char*>(&from);
+    char* target = reinterpret_cast<char*>(&to);
+    auto place = [&](const void* member) { return size_t(reinterpret_cast<const char*>(member) - source); };
+    std::array<std::pair<size_t, size_t>, 3> kit {{{place(&from.pad_fx), sizeof from.pad_fx}, {place(&from.pads), sizeof from.pads},
+                                                   {place(&from.zone_trims), sizeof from.zone_trims}}};
+    std::sort(kit.begin(), kit.end());
+    size_t done = 0;
+    for (const auto& [at, size] : kit) { std::memcpy(target + done, source + done, at - done); done = at + size; }
+    std::memcpy(target + done, source + done, sizeof(Track) - done);
+}
+void copy_light(Project& to, const Project& from) {
+    auto& [gen8, name, recovery_id, tempo, seq_tempo, pattern_tempo, signature, swing, root, scale, punch_target, punch_bank, punch_depth, punch_snap, punch_tail,
+           punch_quantize, pad_fx_params, flex, tracks, knob_fx, compressor, song, buses, samples, chops, plugins, master, looper, loop_mix, loop_fx,
+           modulators, macros, scenes, scene, subs, master_strip, input_strip, input_wet] = to;
+    const auto& [gen8_, name_, recovery_id_, tempo_, seq_tempo_, pattern_tempo_, signature_, swing_, root_, scale_, punch_target_, punch_bank_, punch_depth_, punch_snap_,
+                 punch_tail_, punch_quantize_, pad_fx_params_, flex_, tracks_, knob_fx_, compressor_, song_, buses_, samples_, chops_, plugins_, master_,
+                 looper_, loop_mix_, loop_fx_, modulators_, macros_, scenes_, scene_, subs_, master_strip_, input_strip_, input_wet_] = from;
+    put(gen8, gen8_); put(recovery_id, recovery_id_);
+    put(name, name_); put(tempo, tempo_); put(seq_tempo, seq_tempo_); put(pattern_tempo, pattern_tempo_); put(signature, signature_);
+    put(swing, swing_); put(root, root_); put(scale, scale_); put(punch_target, punch_target_); put(punch_bank, punch_bank_);
+    put(punch_depth, punch_depth_); put(punch_snap, punch_snap_); put(punch_tail, punch_tail_); put(punch_quantize, punch_quantize_);
+    put(pad_fx_params, pad_fx_params_); put(flex, flex_);
+    for (unsigned t = 0; t < track_count; ++t) copy_track_light(tracks[t], tracks_[t]);
+    put(knob_fx, knob_fx_); put(compressor, compressor_); put(song, song_); put(buses, buses_); put(samples, samples_);
+    (void)chops; (void)chops_; // not copied: as the whole copy leaves them
+    put(plugins, plugins_); put(master, master_); put(looper, looper_); put(loop_mix, loop_mix_); put(loop_fx, loop_fx_);
+    put(modulators, modulators_); put(macros, macros_); put(scenes, scenes_); put(scene, scene_);
+    put(subs, subs_); put(master_strip, master_strip_); put(input_strip, input_strip_); put(input_wet, input_wet_);
+}
+bool same_kits(const Project& a, const Project& b) {
+    for (unsigned t = 0; t < track_count; ++t) {
+        const auto& x = a.tracks[t];
+        const auto& y = b.tracks[t];
+        if (std::memcmp(&x.pads, &y.pads, sizeof x.pads) || std::memcmp(&x.pad_fx, &y.pad_fx, sizeof x.pad_fx)
+            || std::memcmp(&x.zone_trims, &y.zone_trims, sizeof x.zone_trims)) return false;
+    }
+    return true;
+}
+// A pattern as the lists draw it: its length, whether and what it holds, the first note of each of its first 64 sixteenths.
+void sketch_of(const Pattern& pattern, PatternSketch& sketch) {
+    sketch.length = pattern.length; sketch.keys.fill(0);
+    sketch.notes = !pattern.empty();
+    sketch.count = uint16_t(std::min<size_t>(pattern.events.size(), 0xffff));
+    sketch.moves = uint16_t(std::min<size_t>(pattern.motion.size(), 0xffff));
+    sketch.follows = pattern.follow.on(); // roadmap P5
+    sketch.program = pattern.program;
+    sketch.audio = pattern.audio; // freeze plan F3: an audio track's take
+    for (const auto& e : pattern.events) { // the first note of each of the first 64 sixteenths
+        unsigned k = e.tick / sixteenth_ticks;
+        if (k >= sketch.keys.size() || e.tick >= pattern.length) break;
+        if (!sketch.keys[k]) sketch.keys[k] = e.key;
+    }
+}
+} // namespace
+
 void Shell::snapshot(Snapshot& out, uint32_t now) {
     std::lock_guard<std::mutex> guard(lock);
     out.break_activity=uint8_t(host.break_activity_of(ui_.track));
@@ -787,12 +938,22 @@ void Shell::snapshot(Snapshot& out, uint32_t now) {
     fader_check(context_);
     edit_loop_check(context_); // an editor's loop ends with the editor (shell/note_jobs.h)
     out.ui = ui_;
-    { // The project, without each sample's chop: no page draws one (Chop draws the slices in hand, UiState's).
+    // The kits and pattern sketches are most of what a frame copied (nine tenths of 0.8 MB) and change only with
+    // a control, a MIDI message or something told to the audio thread: Context::heavy_serial moves with each of
+    // those, and `sent` with every command to the audio thread. While neither has moved the frame is a light one,
+    // which leaves both as the last whole frame made them. Whole again at least every half second as a safety net.
+    const uint64_t serial = context_.heavy_serial;
+    const bool whole = !snapshot_light || preview_editable_.load(std::memory_order_relaxed)
+                    || out.heavy_serial != serial || out.sent_seen != context_.sent || now - out.whole_at >= 500;
+    if (whole) { // The project, without each sample's chop: no page draws one (Chop draws the slices in hand, UiState's).
         SlotTable<SampleChop> chops = std::move(project_->chops);
         out.project = *project_;
         project_->chops = std::move(chops);
+    } else {
+        copy_light(out.project, *project_);
     }
     out.audio_peaks = context_.audio_peaks; // freeze plan F3
+    out.jams = context_.jam_view;           // jam capture: JAMS on Song
     out.pattern = context_.pattern();
     for (unsigned t = 0; t < track_count; ++t)
         out.has_notes[t] = !patterns_->at[t][project_->tracks[t].pattern].empty();
@@ -829,6 +990,8 @@ void Shell::snapshot(Snapshot& out, uint32_t now) {
     if (store_ && (ui_.page == PageId::Project || ui_.exit_open)) store_->view(out.projects);
     if (context_.plugins && ui_.page == PageId::Plugins) out.plugins = context_.plugins->view();
     if (context_.plugins && ui_.page == PageId::PluginPresets) out.presets = context_.plugins->programs(ui_.presets_entry);
+    out.plugin_skin = context_.plugins && ui_.plugin_panel.skin_page != -1 ? context_.plugins->skin(ui_.plugin_panel.entry) : nullptr;
+    out.plugin_picture = context_.plugins && ui_.plugin_panel.screen ? context_.plugins->screen_picture() : nullptr;
     if (context_.plugins && ui_.page == PageId::Stage) { // Stage PRESETS: the track's plug-in's
         const auto& t = project_->tracks[ui_.track % track_count];
         if (t.engine == EngineKind::Plugin && t.plugin < max_plugins && stage_page_now(ui_, t, false).kind == StageKind::PluginSound)
@@ -836,7 +999,7 @@ void Shell::snapshot(Snapshot& out, uint32_t now) {
     }
     if (library_) {
         const auto& t = project_->tracks[ui_.track];
-        unsigned slot = ui_.page == PageId::Chop ? ui_.chop_sample : t.pads[t.last_pad % sampler_pads].sample;
+        unsigned slot = ui_.page == PageId::Chop ? context_.chop_cut_slot() : t.pads[t.last_pad % sampler_pads].sample; // Chop: CLEAN shows the drums stem
         out.sample = slot < sample_slots ? library_->slot(slot) : LoadedSample {};
         out.zone_file = out.sample.instrument && ui_.page != PageId::Chop ? library_->zone_file(slot, ui_.zone) : std::string();
         // Trim and Chop zoomed in: the view's own peaks, from the audio (the overview's 512 are too few that close).
@@ -858,23 +1021,42 @@ void Shell::snapshot(Snapshot& out, uint32_t now) {
             out.files = sample_browser_files(library_->files(), ui_.break_browse); out.sample_root = library_->root(); out.files_folder = library_->folder(); out.files_top = library_->top();
         }
     }
-    for (unsigned t = 0; t < track_count; ++t)
-        for (unsigned n = 0; n < pattern_count; ++n) {
-            const auto& pattern = patterns_->at[t][n];
-            auto& sketch = out.sketches[t][n];
-            sketch.length = pattern.length; sketch.keys.fill(0);
-            sketch.notes = !pattern.empty();
-            sketch.count = uint16_t(std::min<size_t>(pattern.events.size(), 0xffff));
-            sketch.moves = uint16_t(std::min<size_t>(pattern.motion.size(), 0xffff));
-            sketch.follows = pattern.follow.on(); // roadmap P5
-            sketch.program = pattern.program;
-            sketch.audio = pattern.audio; // freeze plan F3: an audio track's take
-            for (const auto& e : pattern.events) { // the first note of each of the first 64 sixteenths
-                unsigned k = e.tick / sixteenth_ticks;
-                if (k >= sketch.keys.size() || e.tick >= pattern.length) break;
-                if (!sketch.keys[k]) sketch.keys[k] = e.key;
+    out.history.clear();
+    out.history_redos = 0;
+    if (ui_.history) { // the undo list's rows, top down: the steps undone, then the steps done (shell/history_list.h)
+        const auto& edits = context_.edits;
+        const unsigned redos = unsigned(edits.redos()), kept = unsigned(edits.size());
+        out.history_redos = uint8_t(redos);
+        for (unsigned row = 0; row + 1 < history_rows(redos, kept); ++row) {
+            bool redo = false;
+            unsigned index = 0;
+            if (!history_edit_at(row, redos, kept, redo, index)) break;
+            const Edit& e = redo ? edits.undone(index) : edits.kept(index);
+            out.history.push_back({e.what, e.track, e.at, history_kind(e)});
+        }
+    }
+    if (whole)
+        for (unsigned t = 0; t < track_count; ++t)
+            for (unsigned n = 0; n < pattern_count; ++n) sketch_of(patterns_->at[t][n], out.sketches[t][n]);
+    else if (snapshot_verify) { // the light frame against a whole one: a kit or a sketch that differs was changed with no word of it
+        bool same = same_kits(out.project, *project_);
+        for (unsigned t = 0; t < track_count && same; ++t)
+            for (unsigned n = 0; n < pattern_count && same; ++n) {
+                PatternSketch fresh = out.sketches[t][n];
+                sketch_of(patterns_->at[t][n], fresh);
+                same = std::memcmp(&fresh, &out.sketches[t][n], sizeof fresh) == 0;
+            }
+        if (!same) {
+            stale_.fetch_add(1, std::memory_order_relaxed);
+            for (unsigned t = 0; t < track_count; ++t) {
+                out.project.tracks[t] = project_->tracks[t];
+                for (unsigned n = 0; n < pattern_count; ++n) sketch_of(patterns_->at[t][n], out.sketches[t][n]);
             }
         }
+    }
+    out.whole = whole;
+    out.sent_seen = context_.sent;
+    if (whole) { out.heavy_serial = serial; out.whole_at = now; }
     out.freeze = context_.prints.freeze; // freeze plan F2c
     out.prints_kept = {};
     for (const auto& r : context_.prints.records) ++out.prints_kept[r.track % track_count];
@@ -933,6 +1115,16 @@ void Shell::snapshot(Snapshot& out, uint32_t now) {
         host.compressor_activity(level, reduce);
         comp_trail.update(level, reduce, now);
         out.comp_trail = comp_trail.trail();
+        for (unsigned n = 0; n < strip_channels; ++n) { const auto m = host.strip_meter(n); out.strips[n] = {m.left, m.right, m.reduction}; }
+        const auto& own = out.strips[mixer_strip(ui_)]; // the mixer's channel in hand (its COMP block)
+        const float peak = std::max(own.left, own.right);
+        strip_trail.update(peak > 1e-5f ? 20 * std::log10(peak) : -90.0f, own.reduction, now);
+        out.strip_trail = strip_trail.trail();
+        // The mixer's EQ picture: the engine taps the channel in hand only while its EQ is in view.
+        const int tap = ui_.page == PageId::Mixer && mixer_block_of(ui_, channel_kind(mixer_strip(ui_))) == block_eq ? int(mixer_strip(ui_)) : -1;
+        if (tap != spectrum_tapped) { host.set_spectrum_tap(tap); spectrum_tapped = tap; spectrum_view.clear(); }
+        if (tap >= 0) spectrum_view.update(host.spectrum(), dsp::sample_rate(), now);
+        out.spectrum = spectrum_view.bands();
         comp_bar.update(level, reduce, out.ticks, project_->bar_ticks(), out.playing);
         out.comp_bar = comp_bar.bar(); out.comp_ghost = comp_bar.ghost(); out.comp_bar_at = comp_bar.at();
     }
@@ -980,7 +1172,8 @@ std::string Shell::summary() const {
            " rhythmer_card=" + std::to_string(card_link.state.load()) + " rhythmer_card_note=" + std::to_string(card_link.note.load()) +
            " rhythmer_card_ejected=" + std::to_string(int(card_link.ejected.load())) + " rhythmer_card_locked=" + std::to_string(int(card_link.locked.load())) +
            " " + looper_status(host.looper()) +
-           " rhythmer_plugins=" + (context_.plugins ? context_.plugins->summary() : std::string("none")) + p4_summary(host);
+           " rhythmer_plugins=" + (context_.plugins ? context_.plugins->summary() : std::string("none")) +
+           " rhythmer_screens=" + (context_.plugins ? context_.plugins->screens() : std::string("none")) + p4_summary(host);
 }
 
 // Phase 10: undo (depth, redo waiting, the last step's name), Seq held, the sampler map, a pot gesture open.
@@ -993,7 +1186,16 @@ std::string Shell::phase10_summary() const {
            " rhythmer_undo_last=" + (what.empty() ? std::string("none") : what) + " rhythmer_seq_held=" + std::to_string((b >> 9) & 1) +
            " rhythmer_map=" + std::to_string((b >> 10) & 1) +
            " rhythmer_gesture=" + std::to_string((b >> 12) & 1) + " rhythmer_song_clips=" + std::to_string((b >> 16) & 0xfff) +
-           " rhythmer_engine=" + std::to_string(b >> 28);
+           " rhythmer_engine=" + std::to_string(b >> 28) + jam_summary();
+}
+
+// Jam capture: the run's bars and whether it logs now, the jams kept, JAMS open, and the song's markers and tempo
+// points (what TAKE adds).
+std::string Shell::jam_summary() const {
+    uint32_t j = jam_bits.load(std::memory_order_relaxed);
+    return " rhythmer_jam=" + std::to_string(j & 0x3ff) + "," + std::to_string((j >> 10) & 1) + " rhythmer_jams=" + std::to_string((j >> 11) & 0xf) +
+           " rhythmer_jam_sheet=" + std::to_string((j >> 15) & 1) + " rhythmer_song_markers=" + std::to_string((j >> 16) & 0x1f) +
+           " rhythmer_song_tempo_points=" + std::to_string((j >> 21) & 0x7f);
 }
 
 // Phase 9: MIDI Config as set (the settings are the MIDI thread's; these are copies taken in lights()).
@@ -1111,11 +1313,12 @@ std::string Shell::sample_summary() const {
     { std::lock_guard<std::mutex> guard(text_lock); name = pad_name_text; folder = folder_text; }
     for (auto& ch : name) if (ch == ' ') ch = '_';
     for (auto& ch : folder) if (ch == ' ') ch = '_';
-    return " rhythmer_chop_type=" + std::string(chop_mode_name(ChopMode(c & 3))) + " rhythmer_chop_slices=" + std::to_string((c >> 8) & 0xff) +
+    return " rhythmer_chop_type=" + std::string(chop_mode_name(ChopMode((c & 3) | (c >> 4 & 1) << 2))) + " rhythmer_chop_slices=" + std::to_string((c >> 8) & 0xff) +
            " rhythmer_chop_slice=" + std::to_string(((c >> 16) & 0xff) + 1) + " rhythmer_chop_armed=" + std::to_string((c >> 2) & 1) +
            " rhythmer_chop_taking=" + std::to_string((c >> 3) & 1) + " rhythmer_pad_slots=" + std::to_string(c >> 24) +
            " rhythmer_pad_start=" + std::to_string(pad_start_now.load()) + " rhythmer_pad_end=" + std::to_string(pad_end_now.load()) +
-           " rhythmer_pad_name=" + (name.empty() ? "-" : name) + " rhythmer_files=" + std::to_string(f & 0xffff) +
+           " rhythmer_pad_name=" + (name.empty() ? "-" : name) + " rhythmer_pad_root=" + std::to_string(pad_root_now.load()) +
+           " rhythmer_files=" + std::to_string(f & 0xffff) +
            " rhythmer_file_cursor=" + std::to_string(((f >> 16) & 0x3fff) + 1) + " rhythmer_drive=" + ((f >> 30) & 1 ? "internal" : "card") +
            " rhythmer_preview=" + std::to_string(f >> 31) + " rhythmer_folder=" + (folder.empty() ? "-" : folder);
 }

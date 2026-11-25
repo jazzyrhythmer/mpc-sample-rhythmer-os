@@ -6,9 +6,12 @@
 #include <cstring>
 #include <string>
 
-// Weak: a build without the module (base.mk) has neither, and keeps the stock driver.
+// Weak: a build without the module (base.mk) has neither, and keeps the stock driver. One
+// build of it for each firmware's kernel: 1.3.0.12 (6.12) and 1.4 (6.18).
 extern "C" const unsigned char sample_base_panel_module[] __attribute__((weak));
 extern "C" const unsigned char sample_base_panel_module_end[] __attribute__((weak));
+extern "C" const unsigned char sample_base_panel_6_18_module[] __attribute__((weak));
+extern "C" const unsigned char sample_base_panel_6_18_module_end[] __attribute__((weak));
 
 namespace {
 const std::string device = "/sys/bus/spi/devices/spi3.0";
@@ -35,7 +38,10 @@ std::string bound() {
 }
 
 // The embedded module into the kernel, from memory (no file on any disk).
-bool load() { return kernel_module::load("sample_base_panel", sample_base_panel_module, sample_base_panel_module_end); }
+bool load() {
+    return kernel_module::load("sample_base_panel", {{sample_base_panel_module, sample_base_panel_module_end},
+                                                     {sample_base_panel_6_18_module, sample_base_panel_6_18_module_end}});
+}
 
 void bind(const char* driver) { put(drivers + driver + "/bind", "spi3.0"); }
 void unbind(const char* driver) { put(drivers + driver + "/unbind", "spi3.0"); }

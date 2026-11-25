@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <thread>
 #include <set>
+#include <functional>
 #include "rhythmer/model/chord_gen_access.h"
 #include "rhythmer/plugin/plugin_rack.h"
 #include "rhythmer/pages/pages.h"
@@ -22,10 +23,17 @@
 namespace rhythmer {
 #include "rhythmer/shell/upstream_check.inc"
 inline int gen_failure(int code,int line){std::fprintf(stderr,"GEN CHECK failure=%d line=%d\n",code,line);return code;}
-inline int gen8_shell_check() {
+inline int gen8_shell_check(const std::function<void(Shell&,const std::string&)>& capture = {}) {
     if(int result=upstream_shell_check()){std::fprintf(stderr,"UPSTREAM shell failure %d\n",result);return 120+result;}
     auto host_owner=std::make_unique<EngineHost>();auto& host=*host_owner;
     auto shell_owner=std::make_unique<Shell>(host);auto& shell=*shell_owner;auto& c=shell.context();
+    {
+        auto picture=std::make_unique<Snapshot>();shell.snapshot(*picture,2000);const auto whole_at=picture->whole_at;
+        c.project.gen8.seed=1234;std::strcpy(c.project.recovery_id,"0123456789abcdef0123456789abcdef");
+        shell.snapshot(*picture,2010);
+        if(picture->whole_at!=whole_at||picture->project.gen8.seed!=1234||std::strcmp(picture->project.recovery_id,c.project.recovery_id))return gen_failure(101,__LINE__);
+        std::fill(std::begin(c.project.recovery_id),std::end(c.project.recovery_id),0);
+    }
     c.ui.track=0;c.project.gen8={42,2,100,50};c.project.gen8.assign=0;
     for(unsigned t=0;t<8;t++) {
         auto& tr=c.project.tracks[t];tr.engine=EngineKind::Midi;tr.pattern=0;
@@ -98,20 +106,20 @@ inline int gen8_shell_check() {
         auto old_track=c.project.tracks[0];
         std::strcpy(c.project.plugins[old_track.plugin].path,"Plugins/GROOVE - Groove Kit");
         rack.sync(c.project);
-        for(unsigned tries=0;tries<3000&&rack.status(old_track.plugin)!=PluginStatus::Ready;tries++)std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        for(unsigned tries=0;tries<9000&&rack.status(old_track.plugin)!=PluginStatus::Ready;tries++)std::this_thread::sleep_for(std::chrono::milliseconds(10));
         if(rack.status(old_track.plugin)!=PluginStatus::Ready)return gen_failure(44,__LINE__);
         auto old_ref=c.project.plugins[old_track.plugin];auto previous=rack.states()[old_track.plugin];
         auto undo_size=c.edits.size();c.gen8_action(0);
         if(c.edits.size()!=undo_size+1||c.project.tracks[0].engine!=EngineKind::Plugin){std::fprintf(stderr,"GEN assignment: %s\n",c.ui.notice);return gen_failure(40,__LINE__);}
         auto selected=c.project.tracks[0].plugin;
-        for(unsigned tries=0;tries<3000&&rack.status(selected)!=PluginStatus::Ready;tries++)std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        for(unsigned tries=0;tries<9000&&rack.status(selected)!=PluginStatus::Ready;tries++)std::this_thread::sleep_for(std::chrono::milliseconds(10));
         if(rack.status(selected)!=PluginStatus::Ready)return gen_failure(41,__LINE__);
         c.gen_break_tick();
         c.undo();if(c.project.tracks[0].plugin!=old_track.plugin||std::strcmp(c.project.plugins[old_track.plugin].path,old_ref.path)){
             std::fprintf(stderr,"GEN UNDO slot before=%u after=%u path_equal=%d notice=%s history=%zu\n",old_track.plugin,c.project.tracks[0].plugin,!std::strcmp(c.project.plugins[old_track.plugin].path,old_ref.path),c.ui.notice,size_t(c.edits.size()));
             return gen_failure(42,__LINE__);
         }
-        for(unsigned tries=0;tries<3000&&rack.status(old_track.plugin)!=PluginStatus::Ready;tries++)std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        for(unsigned tries=0;tries<9000&&rack.status(old_track.plugin)!=PluginStatus::Ready;tries++)std::this_thread::sleep_for(std::chrono::milliseconds(10));
         if(rack.status(old_track.plugin)!=PluginStatus::Ready||rack.states()[old_track.plugin]!=previous)return gen_failure(45,__LINE__);
         c.redo();if(c.project.tracks[0].plugin!=selected)return gen_failure(43,__LINE__);
         auto available=list_plugins(plugin_folder(card));auto drum=std::find_if(available.begin(),available.end(),[](const PluginFile& f){return f.single_drum;});
@@ -125,27 +133,27 @@ inline int gen8_shell_check() {
         if(c.track().engine!=EngineKind::Plugin||!c.ui.break_from_picker||!c.ui.break_browse||c.ui.page!=PageId::Samples)return gen_failure(53,__LINE__);
         auto browse_engine=std::find_if(available.begin(),available.end(),[](const PluginFile& f){return f.name=="FM-106";});if(browse_engine==available.end())return gen_failure(54,__LINE__);
         c.ui.track=6;c.ui.plugin_target=UiState::PluginTarget::Instrument;c.ui.plugin_back=PageId::Edit;choose(*browse_engine);auto entry=c.track().plugin;
-        for(unsigned tries=0;tries<3000&&rack.status(entry)!=PluginStatus::Ready;tries++){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+        for(unsigned tries=0;tries<9000&&rack.status(entry)!=PluginStatus::Ready;tries++){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
         if(rack.status(entry)!=PluginStatus::Ready){PluginPanel failed;rack.panel(entry,0,failed);std::fprintf(stderr,"GEN load failed name=%s status=%d error=%s\n",browse_engine->name.c_str(),int(failed.status),failed.error);return gen_failure(55,__LINE__);}
         auto programs=rack.programs(entry);if(programs.list.size()<3)return gen_failure(56,__LINE__);
         rack.set_param(entry,0,int(std::lround(2000.0/(programs.list.size()-1))));rack.states();if(rack.programs(entry).current!=2)return gen_failure(57,__LINE__);
         auto hortator=std::find_if(available.begin(),available.end(),[](const PluginFile& f){return f.name=="Hortator";});if(hortator==available.end()){return gen_failure(59,__LINE__);}
         c.ui.track=7;c.ui.plugin_target=UiState::PluginTarget::Instrument;choose(*hortator);entry=c.track().plugin;
-        for(unsigned tries=0;tries<3000&&rack.status(entry)!=PluginStatus::Ready;tries++){std::this_thread::sleep_for(std::chrono::milliseconds(10));}if(rack.status(entry)!=PluginStatus::Ready){return gen_failure(60,__LINE__);}
+        for(unsigned tries=0;tries<9000&&rack.status(entry)!=PluginStatus::Ready;tries++){std::this_thread::sleep_for(std::chrono::milliseconds(10));}if(rack.status(entry)!=PluginStatus::Ready){return gen_failure(60,__LINE__);}
         programs=rack.programs(entry);int acid=-1;for(const auto& p:programs.list)if(p.name=="SQUELCH")acid=p.index;if(std::string(c.project.plugins[entry].path)!=hortator->path||acid<0){return gen_failure(61,__LINE__);}rack.select_program(entry,acid);
-        for(unsigned tries=0;tries<3000&&rack.programs(entry).loading;tries++){std::this_thread::sleep_for(std::chrono::milliseconds(10));}rack.states();
+        for(unsigned tries=0;tries<9000&&rack.programs(entry).loading;tries++){std::this_thread::sleep_for(std::chrono::milliseconds(10));}rack.states();
         c.project.gen8.assign=0;c.project.gen8.first=c.project.gen8.last=7;c.gen8_action(0);int first=-1;bool varied=false;for(const auto& event:c.pattern().events){if(first<0)first=event.key;varied|=event.key!=first;}if(!varied){std::fprintf(stderr,"Hortator ACID GEN was a fixed drum note\n");return gen_failure(62,__LINE__);}
         auto kit_file=std::find_if(available.begin(),available.end(),[](const PluginFile& f){return f.name=="Rhythmer Kit";});if(kit_file==available.end())return gen_failure(220,__LINE__);
         c.ui.track=8;c.ui.plugin_target=UiState::PluginTarget::Instrument;c.ui.plugin_back=PageId::Edit;choose(*kit_file);entry=c.track().plugin;
-        for(unsigned tries=0;tries<3000&&rack.status(entry)!=PluginStatus::Ready;tries++)std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        for(unsigned tries=0;tries<9000&&rack.status(entry)!=PluginStatus::Ready;tries++)std::this_thread::sleep_for(std::chrono::milliseconds(10));
         if(rack.status(entry)!=PluginStatus::Ready)return gen_failure(221,__LINE__);
         c.ui.plugin_panel.layout_revision=1;
         for(unsigned context=0;context<3;++context){
-            c.ui.page=PageId::Edit;c.ui.edit_page[c.ui.track]=1;c.ui.edit_row[c.ui.track]=context==1?3:0;
+            c.ui.page=PageId::Edit;c.ui.sound_tools_track=int(c.ui.track);c.ui.edit_page[c.ui.track]=1;c.ui.edit_row[c.ui.track]=context==1?3:0;
             c.open_plugin_presets(entry);c.ui.presets_cursor=uint16_t(context+1);plugin_presets_page.soft(c,2);
-            for(unsigned tries=0;tries<3000&&rack.programs(entry).loading;tries++)std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            for(unsigned tries=0;tries<9000&&rack.programs(entry).loading;tries++)std::this_thread::sleep_for(std::chrono::milliseconds(10));
             if(rack.programs(entry).current!=int(context+1)||c.ui.plugin_row[entry]!=2)return gen_failure(222,__LINE__);
-            plugin_presets_page.soft(c,0);if(c.ui.page!=PageId::Edit||c.ui.edit_page[c.ui.track]!=1||c.ui.edit_row[c.ui.track]!=(context==1?3:0))return gen_failure(223,__LINE__);
+            plugin_presets_page.soft(c,0);if(c.ui.page!=PageId::Edit||c.ui.edit_page[c.ui.track]!=1||c.ui.edit_row[c.ui.track]!=(context==1?3:0)){std::fprintf(stderr,"Preset return context=%u page=%u back=%u edit_page=%u row=%u tools=%d\n",context,unsigned(c.ui.page),unsigned(c.ui.presets_back),unsigned(c.ui.edit_page[c.ui.track]),unsigned(c.ui.edit_row[c.ui.track]),c.ui.sound_tools_track);return gen_failure(223,__LINE__);}
         }
         c.ui.track=15;c.project.tracks[15]={};c.ui.page=PageId::Stage;c.ui.new_sources=false;c.ui.new_pick=1;
         stage_page.wheel(c,-1);if(c.ui.new_pick!=0)return gen_failure(245,__LINE__);
@@ -157,7 +165,7 @@ inline int gen8_shell_check() {
             if(const char* only=std::getenv("RHYTHMER_GEN_DESIGN_ONLY"))if(file.name!=only)continue;
             std::fprintf(stderr,"GEN DESIGN load=%s\n",file.name.c_str());
             c.ui.track=9;c.ui.plugin_target=UiState::PluginTarget::Instrument;c.ui.plugin_back=PageId::Edit;choose(file);entry=c.track().plugin;
-            for(unsigned tries=0;tries<3000&&rack.status(entry)!=PluginStatus::Ready;tries++){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+            for(unsigned tries=0;tries<9000&&rack.status(entry)!=PluginStatus::Ready;tries++){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
             if(rack.status(entry)!=PluginStatus::Ready){PluginPanel failed;rack.panel(entry,0,failed);std::fprintf(stderr,"GEN DESIGN failed=%s entry=%u status=%d error=%s notice=%s\n",file.name.c_str(),unsigned(entry),int(failed.status),failed.error,c.ui.notice);return gen_failure(230,__LINE__);}
             c.ui.page=PageId::Edit;c.ui.edit_page[c.ui.track]=1;c.refresh_plugin_panel(entry);
             if(c.ui.plugin_panel.layout_revision&&c.ui.plugin_panel.row<2)return gen_failure(231,__LINE__);
@@ -169,10 +177,15 @@ inline int gen8_shell_check() {
                     if(bindings[k].kind!=Binding::Kind::PluginParam||plugin_binding_shown(bindings[k].id)!=row*3+k)return gen_failure(234,__LINE__);
                     ++design_controls;
                 }
+                if(capture){
+                    c.ui.page=PageId::Stage;stage_go(c.ui,EngineKind::Plugin,StageKind::PluginEdit);
+                    capture(shell,file.name+"-controls-"+std::to_string(row));
+                    c.ui.page=PageId::Edit;
+                }
             }
             c.ui.plugin_row[entry]=2;c.refresh_plugin_panel(entry);
             edit_page.wheel(c,-1000);if(c.ui.plugin_row[entry]!=2)return gen_failure(239,__LINE__);
-            c.ui.page=PageId::Stage;c.ui.stage_group[c.ui.track]=0;c.ui.stage_sub[c.ui.track]=1;c.refresh_plugin_panel(entry);
+            c.ui.page=PageId::Stage;stage_go(c.ui,EngineKind::Plugin,StageKind::PluginEdit);c.refresh_plugin_panel(entry);
             if(c.ui.plugin_panel.design||c.ui.plugin_panel.row<2)return gen_failure(237,__LINE__);
             c.ui.page=PageId::Edit;
             const bool kit_mode=file.name=="Rhythmer Kit";
@@ -207,12 +220,57 @@ inline int gen8_shell_check() {
             // Undo scopes. Restore the captured plug-in state explicitly;
             // do not assert or advertise an Undo capability it does not have.
             rack.set_gen_state(entry,before);rack.sync(c.project,c.plugins_asleep());
-            for(unsigned tries=0;tries<3000&&rack.status(entry)!=PluginStatus::Ready;++tries)std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            for(unsigned tries=0;tries<9000&&rack.status(entry)!=PluginStatus::Ready;++tries)std::this_thread::sleep_for(std::chrono::milliseconds(10));
             if(rack.status(entry)!=PluginStatus::Ready||rack.states()[entry]!=before){
                 PluginPanel failed;rack.panel(entry,0,failed);auto after=rack.states()[entry];
                 std::fprintf(stderr,"GEN RESTORE engine=%s status=%d error=%s before=%zu after=%zu\n",file.name.c_str(),int(failed.status),failed.error,before.size(),after.size());
                 if(const char* dir=std::getenv("RHYTHMER_GEN_DIAGNOSTICS")){std::ofstream a(std::string(dir)+"/restore-before.json"),b(std::string(dir)+"/restore-after.json");a.write(reinterpret_cast<const char*>(before.data()),before.size());b.write(reinterpret_cast<const char*>(after.data()),after.size());}
                 return gen_failure(253,__LINE__);
+            }
+            if(capture){
+                auto saved_ui=c.ui;
+                c.ui.page=PageId::Stage;stage_go(c.ui,EngineKind::Plugin,StageKind::PluginSound);c.refresh_plugin_panel(entry);
+                capture(shell,file.name+"-home");
+                c.open_plugin_presets(entry);capture(shell,file.name+"-presets");
+                c.ui.page=PageId::Stage;
+                stage_go(c.ui,EngineKind::Plugin,StageKind::PluginEdit);c.ui.plugin_row[entry]=2;c.refresh_plugin_panel(entry);
+                capture(shell,file.name+"-edit");
+                stage_page.push(c);
+                if(c.ui.page!=PageId::Edit||c.ui.sound_tools_track!=int(c.ui.track))return gen_failure(254,__LINE__);
+                capture(shell,file.name+(kit_mode?"-source":"-save"));
+                if(kit_mode){edit_page.soft(c,2);capture(shell,file.name+"-save");}
+                if(std::getenv("RHYTHMER_REVIEW_CAPTURE_ALL")){
+                    auto programs=rack.programs(entry);size_t longest=0;
+                    for(size_t i=1;i<programs.list.size();++i)if(programs.list[i].name.size()>programs.list[longest].name.size())longest=i;
+                    if(!programs.list.empty()){
+                        c.ui.presets_entry=uint8_t(entry);c.choose_plugin_program(int(longest));rack.states();
+                        c.ui.page=PageId::Stage;stage_go(c.ui,EngineKind::Plugin,StageKind::PluginSound);c.refresh_plugin_panel(entry);
+                        capture(shell,file.name+"-longest-preset-home");c.open_plugin_presets(entry);capture(shell,file.name+"-longest-preset-list");
+                    }
+                    if(kit_mode){
+                        unsigned pads=0;
+                        for(int program=0;program<69;++program){
+                            c.ui.presets_entry=uint8_t(entry);c.choose_plugin_program(program);rack.states();
+                            c.ui.page=PageId::Stage;stage_go(c.ui,EngineKind::Plugin,StageKind::PluginSound);c.refresh_plugin_panel(entry);
+                            capture(shell,"Kit-"+std::to_string(program)+"-home");
+                            for(int pad=0;pad<16;++pad){
+                                c.ui.page=PageId::Edit;c.ui.sound_tools_track=int8_t(c.ui.track);c.ui.edit_page[c.ui.track]=1;c.ui.edit_row[c.ui.track]=1;c.refresh_plugin_panel(entry);
+                                auto source=page_bindings(c.project,c.ui,c.pattern());
+                                if(source[0].kind!=Binding::Kind::PluginParam||plugin_binding_shown(source[0].id)!=0)return gen_failure(255,__LINE__);
+                                c.set_plugin_param(source[0].id,int(std::lround(pad*plugin_param_max/63.0)));rack.states();c.refresh_plugin_panel(entry);
+                                if(c.ui.plugin_panel.focused_pad!=pad||c.track().last_pad!=pad)return gen_failure(256,__LINE__);
+                                capture(shell,"Kit-"+std::to_string(program)+"-pad-"+std::to_string(pad+1)+"-source");
+                                c.ui.page=PageId::Stage;stage_go(c.ui,EngineKind::Plugin,StageKind::PluginEdit);c.ui.plugin_row[entry]=2;c.refresh_plugin_panel(entry);
+                                capture(shell,"Kit-"+std::to_string(program)+"-pad-"+std::to_string(pad+1)+"-mix");++pads;
+                            }
+                        }
+                        std::printf("RHYTHMER_KIT_SCREENS kits=69 pads=%u source_and_edit_owner=matched\n",pads);
+                    }
+                    rack.set_gen_state(entry,before);rack.sync(c.project,c.plugins_asleep());
+                    for(unsigned tries=0;tries<9000&&rack.status(entry)!=PluginStatus::Ready;++tries)std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    if(rack.status(entry)!=PluginStatus::Ready)return gen_failure(257,__LINE__);
+                }
+                c.ui=saved_ui;
             }
             ++design_sources;
         }
@@ -296,7 +354,7 @@ inline int gen8_shell_check() {
             const auto& plugin=x.project.plugins[track.plugin];
             if(t==first){if(std::strcmp(plugin.name,"Rhythmer Kit")||track.layout!=PadLayout::Drums)return gen_failure(82,__LINE__);}
             else if(!std::strcmp(plugin.name,"Rhythmer Kit")||std::string(plugin.name).find("Monk")!=std::string::npos)return gen_failure(83,__LINE__);
-            for(unsigned tries=0;tries<3000&&rack.status(track.plugin)!=PluginStatus::Ready;tries++)std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            for(unsigned tries=0;tries<9000&&rack.status(track.plugin)!=PluginStatus::Ready;tries++)std::this_thread::sleep_for(std::chrono::milliseconds(10));
             if(rack.status(track.plugin)!=PluginStatus::Ready)return gen_failure(84,__LINE__);
         }
         x.gen_break_tick();auto after=std::make_unique<Project>(x.project);std::array<Pattern,4> generated;

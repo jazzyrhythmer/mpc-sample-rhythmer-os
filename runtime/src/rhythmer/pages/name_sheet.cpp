@@ -13,6 +13,7 @@
 #include "rhythmer/engine/engine_info.h"
 #include "rhythmer/pages/common.h"
 #include "rhythmer/pages/page.h"
+#include <iterator>
 
 namespace rhythmer {
 using namespace ui;
@@ -34,11 +35,13 @@ void draw_name_sheet(Paint& p, const Snapshot& s) {
     case NameTarget::Sample: what = "SAVE SAMPLE"; break;
     case NameTarget::Bank: what = "SAVE BANK " + juce::String::fromUTF8("\xc2\xb7 ") + juce::String::charToString(juce::juce_wchar('A' + s.track().bank % sampler_banks)); break;
     case NameTarget::Mixdown: { // what Song's Export makes (the wheel's choice)
-        static const char* const made[] {"AUDIO MIXDOWN", "AUDIO MIXDOWN", "AUDIO MIXDOWN", "STEMS", "MIDI FILE", "MPC 3 PROJECT"};
-        what = made[s.ui.export_kind % 6];
+        static const char* const made[] {"AUDIO MIXDOWN", "AUDIO MIXDOWN", "AUDIO MIXDOWN", "STEMS", "MIDI FILE", "MPC 3 PROJECT", "ABLETON LIVE SET"};
+        static_assert(std::size(made) == export_kinds::count);
+        what = made[s.ui.export_kind % export_kinds::count];
         break;
     }
-    case NameTarget::Scene: what = "SEQUENCE " + juce::String(s.ui.scene % pattern_count + 1); break; // roadmap P5
+    case NameTarget::Scene: what = "SEQUENCE " + juce::String(s.project.scene % pattern_count + 1); break; // roadmap P5
+    case NameTarget::Track: what = "TRACK " + juce::String(s.ui.track % track_count + 1); break;
     case NameTarget::None: break;
     }
     Header h = header_of(s);

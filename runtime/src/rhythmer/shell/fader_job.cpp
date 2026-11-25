@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "rhythmer/shell/fader_job.h"
+#include "rhythmer/shell/mixer_channels.h"
+#include "rhythmer/engine/command.h"
 #include "rhythmer/engine/effect_info.h"
 #include "rhythmer/engine/engine_info.h"
 #include "rhythmer/engine/midi_engine.h"
@@ -114,8 +116,17 @@ FaderJob fader_job(const Project& project, const UiState& ui) {
     FaderJob job;
     auto page = [&](Binding b) { job.source = FaderJob::Source::Page; job.binding = b; };
     switch (ui.page) {
-    case PageId::Tracks: page({Kind::Level, 0, 0, 127, track.mix.level}); return job;
-    case PageId::Sends: page({Kind::Send, int(ui.sends_bus % bus_count), 0, 100, track.mix.sends[ui.sends_bus % bus_count]}); return job;
+    case PageId::Mixer: { // the mixer: always the level of the channel in hand (shell/mixer_channels.h)
+        const unsigned n = mixer_strip(ui);
+        switch (channel_kind(n)) {
+        case ChannelKind::Submix: { const unsigned sub = channel_sub(n); page({Kind::SubMix, int(sub << 8 | Command::SubLevel), 0, 127, project.subs[sub].mix.level}); break; }
+        case ChannelKind::Bus: { const unsigned b = channel_bus(n); page({Kind::BusReturn, int(b), 0, 100, project.buses[b].level}); break; }
+        case ChannelKind::Input: page({Kind::RecGain, 0, -12, 24, ui.settings.input.gain}); break; // Input Config's gain
+        case ChannelKind::Master: page(strip_card(n, StripPart::Trim, project.master_strip)); break; // no level of its own: its trim
+        default: page({Kind::Level, 0, 0, 127, track.mix.level}); break;
+        }
+        return job;
+    }
     case PageId::Compressor: page({Kind::CompAmount, 0, 0, 100, project.compressor.amount}); return job;
     case PageId::FlexBeat: page({Kind::FlexMix, 0, 0, 100, project.flex.mix}); return job;
     case PageId::KnobFx: // Knob FX C: A to B (no effect loaded: the track's target)

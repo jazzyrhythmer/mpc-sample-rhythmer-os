@@ -86,16 +86,25 @@ void loop_button(Context& c) {
 void chop_button(Context& c) {
     auto& ui = c.ui;
     if (ui.shift) { c.toggle_note_on(); return; } // Note On, as printed
-    if (ui.page == PageId::Chop) { c.open(PageId::Trim); return; }
+    if (ui.page == PageId::Chop) { // Erase + Chop: every cut out (one undo step); else back to Trim
+        if (ui.erase && ui.slices.count > 1) c.chop_change(0, [&c] { c.chop_clear(); }); // slice hits on any slice: asked first (issue 24)
+        else c.open(PageId::Trim);
+        return;
+    }
     if (c.track().engine != EngineKind::Sampler || !c.pad().used()) return;
     if (c.refuse_instrument("Chop")) return;
     const auto& pad = c.pad();
     if (ui.chop_sample != pad.sample || ui.chop_from != pad.start || ui.chop_to != pad.end) {
         c.keep_chop(); // the slices left into their sample's WAV file, if they changed
         ui.chop_sample = pad.sample; ui.chop_from = pad.start; ui.chop_to = pad.end;
-        ui.chop_slice = 0; ui.chop_zoom = 0; ui.chop_fine = false; ui.chop_view = {};
-        if (!c.restore_chop()) c.rechop(); // as it was left, else cut afresh
+        ui.chop_slice = 0; ui.chop_zoom = 0; ui.chop_zoom_auto = false; ui.chop_focus = 0; ui.chop_fine = false; ui.chop_view = {}; ui.chop_heard_at = 0;
+        ui.chop_hand.clear(); // another region: none of the last one's hand cuts
+        if (!c.restore_chop()) { // as it was left, else cut afresh by the type picked last
+            ui.chop_mode = ChopMode(ui.settings.chop_mode % unsigned(ChopMode::Count));
+            c.rechop();
+        }
     }
+    ui.chop_rechop_ok = false; // a new visit: a change under slice hits asks again (issue 24)
     c.open(PageId::Chop);
 }
 

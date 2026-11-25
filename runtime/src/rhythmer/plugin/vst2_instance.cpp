@@ -3,6 +3,8 @@
 #include "rhythmer/plugin/vst2_instance.h"
 #include "rhythmer/plugin/host_time.h"
 
+#include <rhythmer_screen.h>
+
 #include <cstring>
 #include <dlfcn.h>
 
@@ -31,8 +33,6 @@ AudioChannelSet channelSet (int channels)
                          : AudioChannelSet::discreteChannels (channels);
 }
 
-constexpr char stateTag[4] = { 'M', 'V', 'S', '2' };
-constexpr uint8 stateChunk = 1, stateParameters = 2;
 } // namespace
 
 class Vst2Instance::Parameter final : public AudioPluginInstance::HostedParameter
@@ -145,6 +145,14 @@ Vst2Instance::Vst2Instance (void* libraryToOwn, vst2::Effect* effectToOwn, const
     for (int i = 0; i < effect->numParams; ++i)
         addHostedParameter (std::make_unique<Parameter> (*this, i));
 
+    // Its own screen: only from a plug-in that says it has one, so a vendor call's answer is never taken on trust.
+    if (dispatch (vst2::op::canDo, 0, 0, (void*) RHYTHMER_SCREEN_VST2_CANDO) == 1)
+    {
+        auto* table = reinterpret_cast<const rhythmer_screen*> (dispatch (vst2::op::vendorSpecific, RHYTHMER_SCREEN_VST2));
+        if (table != nullptr && table->draw != nullptr && table->input != nullptr && table->controls != nullptr)
+            screen = table;
+    }
+
     vst2::setTime (timeInfo, false, 0.0, 0.0, 0.0, 120.0, 4, 4); // stopped at the top until the first block says
     midiEvents.resize (std::size (events.events));
     for (size_t i = 0; i < midiEvents.size(); ++i)
@@ -161,7 +169,37 @@ Vst2Instance::~Vst2Instance()
 
 intptr_t Vst2Instance::dispatch (int32_t opcode, int32_t index, intptr_t value, void* ptr, float opt) const
 {
+    if (opcode == vst2::op::processEvents) // the audio thread's: never behind the lock
+        return effect->dispatcher (effect, opcode, index, value, ptr, opt);
+    std::lock_guard<std::recursive_mutex> held (mainLock);
     return effect->dispatcher (effect, opcode, index, value, ptr, opt);
+}
+
+bool Vst2Instance::screenDraw (const rhythmer_screen_frame& frame, bool& changed)
+{
+    std::unique_lock<std::recursive_mutex> held (mainLock, std::try_to_lock);
+    if (! held.owns_lock() || screen == nullptr) return false;
+    changed = screen->draw (effect, &frame);
+    return true;
+}
+
+bool Vst2Instance::screenInput (const rhythmer_screen_input& input, bool& used)
+{
+    std::unique_lock<std::recursive_mutex> held (mainLock, std::try_to_lock);
+    if (! held.owns_lock() || screen == nullptr) return false;
+    used = screen->input (effect, &input);
+    return true;
+}
+
+bool Vst2Instance::screenControls (std::array<int, 3>& indices)
+{
+    std::unique_lock<std::recursive_mutex> held (mainLock, std::try_to_lock);
+    if (! held.owns_lock() || screen == nullptr) return false;
+    uint32_t ids[3] { RHYTHMER_SCREEN_NO_CONTROL, RHYTHMER_SCREEN_NO_CONTROL, RHYTHMER_SCREEN_NO_CONTROL };
+    screen->controls (effect, ids);
+    for (size_t k = 0; k < 3; ++k) // a VST2 parameter's ID is its index, as getParameters() has them
+        indices[k] = ids[k] != RHYTHMER_SCREEN_NO_CONTROL && ids[k] < (uint32_t) effect->numParams ? (int) ids[k] : -1;
+    return true;
 }
 
 String Vst2Instance::dispatchString (int32_t opcode, int32_t index) const
@@ -172,7 +210,7 @@ String Vst2Instance::dispatchString (int32_t opcode, int32_t index) const
     return String::fromUTF8 (text).trim();
 }
 
-intptr_t Vst2Instance::hostCallback (vst2::Effect* effect, int32_t opcode, int32_t, intptr_t, void* ptr, float)
+intptr_t Vst2Instance::hostCallback (vst2::Effect* effect, int32_t opcode, int32_t index, intptr_t value, void* ptr, float)
 {
     auto* self = effect != nullptr && effect->reserved2 != 0 ? reinterpret_cast<Vst2Instance*> (effect->reserved2) : opening;
     const auto copy = [ptr] (const char* text) { if (ptr != nullptr) std::strcpy ((char*) ptr, text); return (intptr_t) 1; };
@@ -192,11 +230,17 @@ intptr_t Vst2Instance::hostCallback (vst2::Effect* effect, int32_t opcode, int32
         case vst2::host::canDo:
         {
             const char* asked = (const char*) ptr;
-            for (const char* yes : { "sendVstEvents", "sendVstMidiEvent", "sendVstTimeInfo", "receiveVstEvents", "receiveVstMidiEvent" })
+            for (const char* yes : { "sendVstEvents", "sendVstMidiEvent", "sendVstTimeInfo", "receiveVstEvents", "receiveVstMidiEvent",
+                                     RHYTHMER_SCREEN_VST2_CANDO })
                 if (asked != nullptr && std::strcmp (asked, yes) == 0)
                     return 1;
             return 0;
         }
+        case vst2::host::vendorSpecific: // its own screen: a draw asked for, and maybe a block run (any thread)
+            if (index != RHYTHMER_SCREEN_VST2 || self == nullptr) return 0;
+            self->redraw.store (true, std::memory_order_release);
+            if ((value & RHYTHMER_SCREEN_RUN) != 0) self->runAsked.store (true, std::memory_order_release);
+            return 1;
         case vst2::host::automate:
         case vst2::host::idle:
         case vst2::host::ioChanged:
@@ -277,6 +321,7 @@ void Vst2Instance::releaseResources()
 void Vst2Instance::processBlock (AudioBuffer<float>& buffer, MidiBuffer& midi)
 {
     const int frames = std::min (buffer.getNumSamples(), block);
+    runAsked.store (false, std::memory_order_relaxed); // this block is the one it asked for
 
     int count = 0;
     for (const auto metadata : midi)
@@ -341,22 +386,22 @@ const String Vst2Instance::getProgramName (int index)
     return String::fromUTF8 (text).trim();
 }
 
-// Saved as "MVS2", a kind byte, then the plug-in's own chunk or every
-// parameter's value as floats.
+// Saved as vst2::state (plugin/vst2_abi.h): "MVS2", a kind byte, then the
+// plug-in's own chunk or every parameter's value as floats.
 void Vst2Instance::getStateInformation (MemoryBlock& state)
 {
     state.reset();
-    state.append (stateTag, sizeof (stateTag));
+    state.append (vst2::state::tag, sizeof (vst2::state::tag));
     if ((effect->flags & vst2::flag::programChunks) != 0)
     {
         void* data = nullptr;
         const auto size = dispatch (vst2::op::getChunk, 0, 0, &data);
-        state.append (&stateChunk, 1);
+        state.append (&vst2::state::chunk, 1);
         if (data != nullptr && size > 0)
             state.append (data, (size_t) size);
         return;
     }
-    state.append (&stateParameters, 1);
+    state.append (&vst2::state::parameters, 1);
     for (int i = 0; i < effect->numParams; ++i)
     {
         const float value = effect->getParameter (effect, i);
@@ -366,17 +411,19 @@ void Vst2Instance::getStateInformation (MemoryBlock& state)
 
 void Vst2Instance::setStateInformation (const void* data, int size)
 {
-    if (size < 5 || std::memcmp (data, stateTag, sizeof (stateTag)) != 0)
+    if (size < 5 || std::memcmp (data, vst2::state::tag, sizeof (vst2::state::tag)) != 0)
         return;
     const auto* bytes = static_cast<const uint8*> (data);
     const auto kind = bytes[4];
     const auto* body = bytes + 5;
     const auto bodySize = size - 5;
-    if (kind == stateChunk)
+    if (kind == vst2::state::chunk || kind == vst2::state::programChunk) // a bank's chunk, or one program's (an MPC preset's)
     {
-        dispatch (vst2::op::setChunk, 0, bodySize, const_cast<uint8*> (body));
+        dispatch (vst2::op::setChunk, kind == vst2::state::programChunk ? 1 : 0, bodySize, const_cast<uint8*> (body));
         return;
     }
+    if (kind != vst2::state::parameters)
+        return;
     for (int i = 0; i < std::min (effect->numParams, bodySize / (int) sizeof (float)); ++i)
     {
         float value;

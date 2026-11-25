@@ -121,6 +121,7 @@ void Controller::run_midi(Session& session) {
         auto send_surface = [&](const MidiPacket& packet) { return midi.send_surface(packet); };
         request_positions();
         auto lights_due = Clock::now(); // the app's lights, every 5 ms
+        session.midi_wake.store(midi.wake_handle());
         while (session.running.load()) {
             midi.read([&](const MidiPortInfo& port, const MidiPacket& packet) {
                 midi_packet(session, port, packet, Clock::now() < syncing_until);
@@ -156,10 +157,12 @@ void Controller::run_midi(Session& session) {
             }
             midi.flush();
             // Sleep until input arrives, the lights are due, the app's next
-            // message, the audition's release or the next port scan.
+            // message, the audition's release, the next port scan or
+            // Session::wake_midi().
             auto until = std::min({lights_due, output.wake, release, scan});
             midi.wait(std::chrono::duration_cast<std::chrono::nanoseconds>(until - Clock::now()).count());
         }
+        session.midi_wake.store(-1);
         // Leave the surface dark for the next app rather than frozen mid-frame.
         lights.release();
         lights.update(send_surface, 64);

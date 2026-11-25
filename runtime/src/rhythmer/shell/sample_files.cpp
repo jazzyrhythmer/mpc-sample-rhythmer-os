@@ -286,6 +286,7 @@ void Context::files_landed() {
         std::snprintf(ref.path, sizeof(ref.path), "%s", loaded.path.empty() ? ("(memory) " + loaded.name).c_str() : loaded.path.c_str());
         std::snprintf(ref.name, sizeof(ref.name), "%s", loaded.name.c_str());
         ref.frames = loaded.frames;
+        ref.root = loaded.root;
         dirty = true;
         auto& t = project.tracks[was.track % track_count];
         if (was.land == 2) { take_landed(was.track, unsigned(was.pad) % sampler_pads, unsigned(was.slot), loaded); continue; }
@@ -383,7 +384,7 @@ void Context::preview_cursor() {
     if (!library) return;
     auto files = sample_browser_files(library->files(), ui.break_browse);
     const SampleFile* file = ui.files_cursor < files.size() ? &files[ui.files_cursor] : nullptr;
-    std::string path = ui.preview && file && !file->folder && !file->bank && !file->midi ? file->path : std::string(); // a MIDI file has no sound to preview
+    std::string path = ui.settings.preview && file &&!file->folder && !file->bank && !file->midi ? file->path : std::string(); // a MIDI file has no sound to preview
     stop_preview(); // what played stops as the cursor moves on
     library->preview(path);
 }
@@ -398,7 +399,7 @@ void Context::stop_preview() {
 
 void Context::browser_tick() {
     if (!library) return;
-    bool here = ui.page == PageId::Samples && (track().engine == EngineKind::Sampler || ui.break_browse);
+    bool here = ui.page == PageId::Samples && (track().sampled() || ui.break_browse);
     const auto visible_files=here ? sample_browser_files(library->files(), ui.break_browse) : std::vector<SampleFile>{};
     if(here){
         ui.files_count=uint16_t(std::min<size_t>(visible_files.size(),0xffff));
@@ -416,7 +417,7 @@ void Context::browser_tick() {
         ui.files_cursor=uint16_t(std::min<unsigned>(ui.files_cursor,ui.files_count?ui.files_count-1:0));
         files_row_wanted = -1;
         ui.files_drive = uint8_t(library->drive());
-        if (here && ui.preview) preview_cursor();
+        if (here && ui.settings.preview) preview_cursor();
     }
     if (!here && previewing >= 0) { // away from the browser: what it played stops (B3 stays as it was)
         stop_preview();
@@ -429,7 +430,7 @@ void Context::browser_tick() {
     previews_seen = arrived;
     if(info.complete && info.seconds<=0){notice("PREVIEW unavailable / choose another file");return;}
     auto files = sample_browser_files(library->files(), ui.break_browse);
-    if (!here || !ui.preview || ui.files_cursor >= files.size() || files[ui.files_cursor].path != library->previewed()) return;
+    if (!here || !ui.settings.preview || ui.files_cursor >= files.size() || files[ui.files_cursor].path != library->previewed()) return;
     Command a {Command::Type::Audition, ui.track, 0, 0, int16_t(ui.audition_velocity)};
     a.pad.sample = uint16_t(preview_slot); a.pad.start = 0; a.pad.end = 0;
     if(ui.break_browse || track().break_bars){

@@ -9,6 +9,7 @@
 #include "rhythmer/shell/sample_library.h"
 #include "rhythmer/shell/track_copy.h"
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 
@@ -36,6 +37,12 @@ bool midi_input(const Track& tr, InputSource& out) {
     case midi_track::AudioUsb: out = InputSource::Usb; return true;
     default: return false;
     }
+}
+
+// An error's first words, before any ":" (what follows says what to do): kept on the sheet.
+void keep_error(UiState::AutoSheet& sheet, const std::string& error, int key) {
+    std::snprintf(sheet.error, sizeof(sheet.error), "%s", error.substr(0, error.find(':')).c_str());
+    sheet.error_key = int16_t(key);
 }
 
 // The plug-in of track `t` on the live rack. Ready where there is none to wait for (a track with no plug-in, no rack:
@@ -107,7 +114,7 @@ void Context::autosample(unsigned track, const AutoSampleSettings& settings, boo
     job.project = std::make_unique<Project>(project);
     job.bank = std::make_unique<PatternBank>(patterns);
     if (plugins) job.states = plugins->states();
-    job.card_top = fs::path(root).parent_path().string();
+    job.card_top = library->card();
     if (outside) { // in real time: nothing else may play the instrument, and the input's ring hears the track's input
         if (host.playing()) stop();
         job.external = true;
@@ -136,7 +143,7 @@ bool Context::autosample_check(unsigned track, const AutoSampleSettings& setting
     job.project = std::make_unique<Project>(project);
     job.bank = std::make_unique<PatternBank>(patterns);
     if (plugins) job.states = plugins->states();
-    if (library && !library->root().empty()) job.card_top = fs::path(library->root()).parent_path().string();
+    if (library && !library->root().empty()) job.card_top = library->card();
     if(!printer->start(std::move(job)))return false;
     auto_probe_track=int8_t(t);auto_probe_epoch=track_epoch[t];return true;
 }
@@ -170,7 +177,7 @@ void Context::autosample_tick() {
         if (!sheet.checking || sheet.check_wanted || sheet.track != heard.track) continue; // called off, an earlier one's, or another's
         sheet.checking = false;
         if (heard.error.empty()) sheet.settings.found = heard.found;
-        else if (heard.error != "stopped") notice("Check: " + heard.error);
+        else if (heard.error != "stopped") keep_error(sheet, heard.error, heard.key); // on the sheet, which is in view
     }
     // The sheet's check, once the track's plug-in is open and the print engine is free. A plug-in such as Surge XT
     // reads thousands of files from the card as it opens: the print host's own copy opened beside the live one would
@@ -186,6 +193,7 @@ void Context::autosample_tick() {
                 notice("Check: the plug-in is not open");
             } else if (status == PluginStatus::Ready && !printer->busy()) {
                 sheet.check_wanted = false;
+                sheet.error[0] = 0; sheet.error_key = -1;
                 sheet.checking = autosample_check(t, sheet.settings);
             }
         }
@@ -199,7 +207,9 @@ void Context::autosample_tick() {
         const bool shown = sheet.sampling && sheet.track == r.track;
         if (shown) sheet.sampling = false;
         if (!r.error.empty()) {
-            notice(r.error == "stopped" ? std::string("Auto sample called off") : "Auto sample: " + r.error);
+            if (r.error == "stopped") notice("Auto sample called off");
+            else if (shown) keep_error(sheet, r.error, r.key); // the whole run for nothing: kept on the sheet, not a moment's notice
+            else notice("Auto sample: " + r.error.substr(0, r.error.find(':')));
             continue; // the sheet stays, to try again
         }
         if (!current || r.project_path != project_path) { notice("Saved Keygroups/" + r.name); continue; } // another project's
@@ -313,6 +323,7 @@ void Context::auto_sheet_go() {
     const EngineKind engine = project.tracks[sheet.track % track_count].engine;
     if (engine != EngineKind::Plugin && engine != EngineKind::Midi) { notice("Auto sample: plug-in and MIDI tracks"); return; }
     if (first_empty_track() < 0) notice("No empty track: the program is only saved");
+    sheet.error[0] = 0; sheet.error_key = -1;
     autosample(sheet.track, sheet.settings);
     sheet.sampling = autosample_track == int8_t(sheet.track);
 }
@@ -344,9 +355,9 @@ void Context::auto_sheet_set(Binding::Kind kind, int value) {
     switch (kind) {
     case Kind::AutoLow: a.low = uint8_t(std::clamp(value, 0, 127)); if (a.high < a.low) a.high = a.low; break; // HIGH moves along
     case Kind::AutoHigh: a.high = uint8_t(std::clamp(value, 0, 127)); if (a.low > a.high) a.low = a.high; break;
-    case Kind::AutoStep: a.step = uint8_t(std::clamp(value, 1, 12)); break;
-    case Kind::AutoLayers: a.layers = uint8_t(std::clamp(value, 1, 4)); break;
-    case Kind::AutoHold: a.hold_auto = value <= 0; if (value > 0) a.hold = std::clamp(value, 1, 100) / 10.0f; break; // 0: Auto
+    case Kind::AutoStep: a.step = uint8_t(std::clamp(value, 1, 24)); break;
+    case Kind::AutoLayers: a.layers = uint8_t(std::clamp(value, 0, 8)); break; // 0: Auto
+    case Kind::AutoHold: a.hold_auto = value <= 0; if (value > 0) a.hold = std::clamp(value, 1, 200) / 10.0f; break; // 0: Auto
     case Kind::AutoTail: a.tail = std::clamp(value, 0, 200) / 10.0f; break;
     case Kind::AutoTap: a.post_fx = value != 0; break;
     case Kind::AutoLoop: a.loop_auto = value == 0; a.loop = value == 1; break; // Auto, On, Off

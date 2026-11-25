@@ -11,6 +11,7 @@
 // envelope and filter, and the sample's slices in Chop. It leaves the pad's
 // layers, mute group and Pad Link behind, so the stems can play together.
 #include "rhythmer/shell/context.h"
+#include "rhythmer/shell/project_store.h"
 #include "rhythmer/shell/sample_library.h"
 #include "rhythmer/shell/stems_room.h"
 #include <cstdio>
@@ -63,9 +64,17 @@ void Context::stems_sheet_go() {
     SampleLibrary::StemsRequest request;
     request.source = uint16_t(sheet.sample % sample_slots);
     std::snprintf(request.name, sizeof(request.name), "%s", stems_base(project.samples[sheet.sample % sample_slots]).c_str());
+    request.best = ui.settings.stems_best;
     if (!library->separate(request)) { notice("Stems: busy"); return; }
     stems_from = {sheet.track, sheet.pad, sound,track_epoch[sheet.track%track_count]};
     sheet.running = true;
+}
+
+void Context::stems_sheet_best() {
+    if (ui.stems_sheet.running) return; // the job under way keeps what it started with
+    ui.settings.stems_best = !ui.settings.stems_best;
+    if (store) store->save_settings(ui.settings.text());
+    notice(ui.settings.stems_best ? "Stems: best, up to 16 kHz" : "Stems: fast, up to 11 kHz");
 }
 
 void Context::stems_sheet_cancel() {
@@ -73,11 +82,58 @@ void Context::stems_sheet_cancel() {
     if (library) library->stop_stems(); // what comes of it ("stopped") ends the sheet's run
 }
 
+// Auto's CLEAN (B2 on Chop's Auto type): the chopped sample's stems separated once (BEST off: about 15 s for 13 s
+// of sound), its DRUMS stem read into a slot of its own, and Auto's cuts found on that (Context::type_chop): hits
+// under chords and voices show there. The pads still play the sample; KIT lays the stem. Off, or another type: the
+// cuts from the sample again. Each turn is one undo step. The four files stay in Samples/Stems, as STEMS leaves them.
+unsigned Context::chop_cut_slot() const {
+    const unsigned stem = unsigned(ui.chop_clean_slot);
+    if (ui.chop_mode == ChopMode::Auto && ui.chop_clean && ui.chop_clean_slot >= 0 && stem < sample_slots && ui.chop_clean_for == ui.chop_sample
+        && ui.chop_sample < sample_slots && project.samples[stem].frames && project.samples[stem].frames == project.samples[ui.chop_sample].frames)
+        return stem;
+    return ui.chop_sample;
+}
+
+void Context::chop_clean_key() {
+    if (ui.chop_mode != ChopMode::Auto || !library || ui.chop_sample >= sample_slots || ui.chop_cleaning) return; // B1 calls a job off
+    auto recut = [&](bool on) {
+        auto edit = scope_edit(UndoScope {UndoScope::Kind::Chop, uint8_t(ui.track % track_count), 0}, on ? "Clean" : "Clean off");
+        ui.chop_clean = on;
+        rechop();
+        if (edit && finish_scope(*edit)) { edits.push(std::move(*edit)); dirty = true; }
+        notice(on ? "Clean: cuts from the drums stem" : "Clean off: cuts from the sample");
+    };
+    if (chop_cut_slot() != ui.chop_sample) { recut(false); return; }
+    const auto& ref = project.samples[ui.chop_sample];
+    const unsigned stem = unsigned(ui.chop_clean_slot);
+    if (ui.chop_clean_slot >= 0 && stem < sample_slots && ui.chop_clean_for == ui.chop_sample && ref.frames && project.samples[stem].frames == ref.frames) {
+        recut(true); // its stem is in already
+        return;
+    }
+    if (ui.stems_sheet.running) { notice("Stems: busy"); return; }
+    if (ref.frames < stems_least_frames) { notice("Clean: under a second"); return; }
+    SampleLibrary::StemsRequest request;
+    request.source = uint16_t(ui.chop_sample);
+    std::snprintf(request.name, sizeof(request.name), "%s", stems_base(ref).c_str());
+    request.best = false;
+    if (!library->separate(request)) { notice("Stems: busy"); return; }
+    ui.chop_cleaning = true;
+    ui.chop_clean_for = uint16_t(ui.chop_sample);
+    ui.chop_clean_slot = -1;
+}
+
 void Context::stems_tick() {
     if (!library) return;
     StemsResult made;
     while (library->take_stems(made)) {
         auto& sheet = ui.stems_sheet;
+        if (ui.chop_cleaning && !sheet.running) { // CLEAN's: its DRUMS stem into a slot
+            if (!made.error.empty()) { ui.chop_cleaning = false; notice(made.error == "stopped" ? std::string("Clean called off") : "Clean: " + made.error); continue; }
+            const int slot = sample_slot(made.paths[0], std::filesystem::path(made.paths[0]).stem().string());
+            if (slot < 0) { ui.chop_cleaning = false; notice("Clean: samples full"); continue; }
+            ui.chop_clean_slot = int16_t(slot);
+            continue;
+        }
         const bool ours = sheet.running;
         sheet.running = false;
         if (!made.error.empty()) { // the sheet stays, its keys back
@@ -94,6 +150,18 @@ void Context::stems_tick() {
             pending_files[held] = {int16_t(slot), stems_from.track, int16_t(stems_from.pad), false, stems_from.sound, uint8_t(stems_land + n),stems_from.epoch};
         }
         if (ui.page == PageId::Stems) back();
+    }
+    // CLEAN's DRUMS stem read in: on, where Chop is still on Auto with that sample.
+    if (ui.chop_cleaning && ui.chop_clean_slot >= 0) {
+        const auto loaded = library->slot(unsigned(ui.chop_clean_slot));
+        if (!loaded.error.empty()) { ui.chop_cleaning = false; ui.chop_clean_slot = -1; notice("Clean: stem not read"); }
+        else if (loaded.ready && (!loaded.streamed || loaded.shaped)) {
+            auto& ref = project.samples.edit(size_t(ui.chop_clean_slot));
+            ref.frames = loaded.frames;
+            ref.root = loaded.root;
+            ui.chop_cleaning = false;
+            if (ui.page == PageId::Chop && ui.chop_mode == ChopMode::Auto && ui.chop_clean_for == ui.chop_sample) chop_clean_key();
+        }
     }
 }
 
@@ -126,6 +194,7 @@ void Context::stems_landed() {
         std::snprintf(ref.path, sizeof(ref.path), "%s", loaded.path.c_str());
         std::snprintf(ref.name, sizeof(ref.name), "%s", loaded.name.c_str());
         ref.frames = loaded.frames;
+        ref.root = loaded.root;
         if (!placed_any) after = unsigned(was.pad) % sampler_pads;
         int kit = -1;
         for (unsigned k = 1; k < sampler_pads && kit < 0; ++k)

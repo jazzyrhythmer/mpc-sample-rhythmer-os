@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cerrno>
 #include <poll.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 #include <time.h>
 #include <sstream>
 
@@ -78,8 +80,8 @@ static bool open_input(snd_rawmidi_t*& input, const std::string& address, bool& 
     return true;
 }
 
-HardwareMidi::HardwareMidi() { rescan(); }
-HardwareMidi::~HardwareMidi() = default;
+HardwareMidi::HardwareMidi() : wake_fd(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)) { rescan(); }
+HardwareMidi::~HardwareMidi() { if (wake_fd >= 0) ::close(wake_fd); }
 bool HardwareMidi::rescan() {
     auto found = enumerate();
     bool lost = false;
@@ -119,6 +121,7 @@ void HardwareMidi::wait(long long timeout_ns) {
     if (timeout_ns <= 0) return;
     pollfd fds[64];
     nfds_t count = 0;
+    if (wake_fd >= 0) fds[count++] = {wake_fd, POLLIN, 0};
     for (auto& port : ports) {
         if (!port->input) continue;
         int room = int(sizeof(fds) / sizeof(fds[0])) - int(count);
@@ -127,6 +130,8 @@ void HardwareMidi::wait(long long timeout_ns) {
     }
     timespec limit {time_t(timeout_ns / 1000000000LL), long(timeout_ns % 1000000000LL)};
     ppoll(count ? fds : nullptr, count, &limit, nullptr);
+    uint64_t woken = 0;
+    if (wake_fd >= 0 && ::read(wake_fd, &woken, sizeof(woken)) < 0) {} // cleared for the next wait
 }
 void HardwareMidi::read(const Receive& receive) {
     for (auto& port : ports) {

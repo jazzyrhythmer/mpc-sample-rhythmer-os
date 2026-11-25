@@ -21,8 +21,9 @@
 // Shift + wheel marks notes one by one along the wheel's walk (drawn with a
 // white outline). Shift let go, the marked notes take the controls: the wheel
 // moves them a step of Q, Shift + wheel a row, Erase deletes, Mute mutes
-// (drawn hollow; again plays them), Note Repeat steps their ratchet, K1-K3
-// set all of them; a Shift tap clears the marks.
+// (drawn hollow; again plays them), Note Repeat steps their ratchet, K1 and
+// K3 set all of them, K2 moves their velocities together; a Shift tap clears
+// the marks.
 #include "rhythmer/engine/engine_host.h"
 #include "rhythmer/model/scales.h"
 #include "rhythmer/pages/common.h"
@@ -58,6 +59,7 @@ void draw(Paint& p, const Snapshot& s) {
     uint32_t from = first * q, to = (first + columns) * q;
     const auto& track = s.track();
     const int lane = roll_lane(track); // 16 Levels on a kit: a row a pitch of its pad, as a synth's
+    const int named_by = lane >= 0 ? levels_root_shift(s.project, track) : 0; // its rows named from its sample's note
     int focus = roll_focus(pattern, ui, lane), top_key = ui.roll_top;
     const Event* focused = focus >= 0 ? &pattern.events[size_t(focus)] : nullptr;
 
@@ -67,8 +69,9 @@ void draw(Paint& p, const Snapshot& s) {
     h.left.push_back(edit_pattern_chip(s));
     if (!ui.recording) {
         if (focused && ui.held_note >= 0) h.left.push_back(pill("LOCK", c)); // its pad held: the pots lock it (roadmap P1)
-        if (focused) // where it sits: the place bar's
-            h.left.push_back(chip(Icon::Note, juce::String(lane >= 0 ? note_name(roll_row(*focused, lane)) : key_label(track, focused->key)), c));
+        if (focused) // where it sits: the place bar's; a slice hit's slice after its pad (issue 24)
+            h.left.push_back(chip(Icon::Note, juce::String(lane >= 0 ? note_name(roll_row(*focused, lane) + named_by) : key_label(track, focused->key)) +
+                                                  (focused->slice ? juce::String::fromUTF8(" \xc2\xb7 ") + juce::String(int(focused->slice)) : juce::String()), c));
         else h.left.push_back(pill("BAR " + juce::String(cursor * q / bar + 1) + " / " + juce::String((pattern.length + bar - 1) / bar)));
     }
     if (marks) { // how many are marked; grey while Shift still marks
@@ -97,7 +100,7 @@ void draw(Paint& p, const Snapshot& s) {
     }
     for (unsigned r = 0; r < rows; ++r) {
         int key = top_key - int(r);
-        bool shade = kit ? (key - int(sampler_first_note)) / 4 % 2 != 0 : key >= 0 && black(key); // a kit: pads in fours
+        bool shade = kit ? (key - int(sampler_first_note)) / 4 % 2 != 0 : key + named_by >= 0 && black(key + named_by); // a kit: pads in fours
         p.fill(0, top + r * row_h, zone::width, row_h - 0.5f, shade ? colour::quiet : colour::panel);
     }
     if (kit) { // the pads' numbers in their bank, every other lane so each has room, the cursor's always
@@ -116,7 +119,7 @@ void draw(Paint& p, const Snapshot& s) {
     // Names on C, F, G and A and the root: never two side by side, so each has room at the floor size.
     int root = int(s.project.root % 12);
     for (unsigned r = 0; r < rows && !kit; ++r) {
-        int key = top_key - int(r);
+        int key = top_key - int(r) + named_by;
         if (key < 0) break;
         int pitch = key % 12;
         bool named = pitch == root || ((pitch == 0 || pitch == 5 || pitch == 7 || pitch == 9) && std::abs(pitch - root) > 1 && std::abs(pitch - root) < 11);
@@ -201,8 +204,8 @@ void draw(Paint& p, const Snapshot& s) {
     if (sheet) { // the note's jobs as cards: the wheel moves, Push does it (Accent first)
         CardSheet m;
         m.chip = "NOTE"; m.chip_colour = c; m.accent = c;
-        m.title = juce::String(lane >= 0 ? note_name(roll_row(*focused, lane)) : key_label(track, focused->key)) + juce::String::fromUTF8(" \xc2\xb7 ") +
-                  where(s, focused->tick);
+        m.title = juce::String(lane >= 0 ? note_name(roll_row(*focused, lane) + named_by) : key_label(track, focused->key)) + juce::String::fromUTF8(" \xc2\xb7 ") +
+                  (focused->slice ? juce::String(int(focused->slice)) + juce::String::fromUTF8(" \xc2\xb7 ") : juce::String()) + where(s, focused->tick);
         auto flag = [&](uint8_t f) { return bool(focused->flags & f); };
         auto state = [&](uint8_t f) { return juce::String(flag(f) ? "ON" : "OFF"); };
         m.items[RowAccent] = card_item(Icon::Accent, "ACCENT", state(step_accent), flag(step_accent));

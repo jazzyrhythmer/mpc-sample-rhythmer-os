@@ -202,6 +202,7 @@ bool roll_paste(Context& c) {
     });
     roll_remark(ui, copies); // the copies are marked: Push again pastes them on
     roll_select(p, ui, roll_lane(c.track()));
+    roll_hear_marks(c, false); // the first of them, heard
     c.notice("Paste " + count_of(copies.size(), "note", "notes"));
     return true;
 }
@@ -243,6 +244,7 @@ bool roll_marks_octave(Context& c, int way) {
     if (!roll_marks_pitch(c.pattern(), ui, way > 0 ? 12 : -12, roll_lane(c.track()), max_key, 12)) { c.notice("No room for an octave"); return true; }
     c.sync_pattern(ui.track, c.track().pattern);
     roll_select(c.pattern(), ui, roll_lane(c.track()));
+    roll_hear_marks(c, false); // an octave up or down, heard
     return true;
 }
 

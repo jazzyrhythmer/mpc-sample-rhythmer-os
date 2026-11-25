@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "drivers/audio.h"
 #include "drivers/codec_power.h"
+#include "drivers/direct_monitor.h"
 #include "drivers/platform.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <iostream>
@@ -38,10 +40,11 @@ bool AudioFormat::valid() const {
     return std::find(audio_rates.begin(), audio_rates.end(), rate) != audio_rates.end()
         && periods >= audio_min_periods && periods <= audio_max_periods;
 }
-void AudioDevice::configure(snd_pcm_t* pcm, bool capture, const AudioFormat& format) {
+void AudioDevice::configure(snd_pcm_t* pcm, bool capture, const AudioFormat& format, bool mapped) {
     snd_pcm_hw_params_t* hw; snd_pcm_hw_params_alloca(&hw);
     check(snd_pcm_hw_params_any(pcm, hw), "Read PCM capabilities");
-    check(snd_pcm_hw_params_set_access(pcm, hw, SND_PCM_ACCESS_RW_INTERLEAVED), "Set interleaved audio");
+    check(snd_pcm_hw_params_set_access(pcm, hw, mapped ? SND_PCM_ACCESS_MMAP_INTERLEAVED : SND_PCM_ACCESS_RW_INTERLEAVED),
+          "Set interleaved audio");
     check(snd_pcm_hw_params_set_format(pcm, hw, SND_PCM_FORMAT_S32_LE), "Set S32 audio");
     check(snd_pcm_hw_params_set_channels(pcm, hw, audio_channels), "Set stereo audio");
     check(snd_pcm_hw_params_set_rate(pcm, hw, format.rate, 0), ("Set " + std::to_string(format.rate) + " Hz").c_str());
@@ -77,7 +80,28 @@ AudioDevice::AudioDevice(const std::string& out, const std::string& in, AudioFor
             try { configure(output, false, running); } catch (const std::exception&) {}
             free_quietly(output);
         }
-        configure(output, false, format);
+        // The codec's output with mmap access, so direct monitoring can add USB-C in just ahead of the DMA
+        // (drivers/direct_monitor.h); read/write as before where the PCM refuses it.
+        if (codec.found()) {
+            try { configure(output, false, format, true); mapped = true; }
+            catch (const std::exception& error) { std::cerr << "Playback without mmap: " << error.what() << '\n'; snd_pcm_hw_free(output); }
+        }
+        if (!mapped) configure(output, false, format);
+        if (mapped) {
+            const snd_pcm_channel_area_t* areas = nullptr;
+            snd_pcm_uframes_t offset = 0, frames = 1;
+            if (snd_pcm_mmap_begin(output, &areas, &offset, &frames) >= 0) {
+                snd_pcm_mmap_commit(output, offset, 0);
+                snd_pcm_uframes_t buffer = 0, period = 0;
+                snd_pcm_get_params(output, &buffer, &period);
+                // Interleaved stereo S32: left at bit 0 of each 64-bit frame, right at bit 32.
+                if (areas && areas[0].addr && areas[1].addr == areas[0].addr && areas[0].first == 0 && areas[1].first == 32 &&
+                    areas[0].step == 64 && areas[1].step == 64 && buffer) {
+                    lent = static_cast<int32_t*>(areas[0].addr);
+                    buffer_frames = unsigned(buffer);
+                }
+            }
+        }
         if (speaker) speaker->powered_up();
         if (in != "off" && snd_pcm_open(&input, in.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK) >= 0) {
             try { configure(input, true, format); }
@@ -91,6 +115,7 @@ AudioDevice::AudioDevice(const std::string& out, const std::string& in, AudioFor
 // The codec powers down as the device closes, not pmdown_time later: the next device, at any rate, or the
 // next program, starts it from off behind the board's output mute, which opens a second after it starts.
 AudioDevice::~AudioDevice() {
+    if (lent) direct_monitor().detach(); // run() has; nothing may write into the buffer as it goes
     if (input) { snd_pcm_drop(input); snd_pcm_close(input); }
     if (output) { snd_pcm_drop(output); free_quietly(output); snd_pcm_close(output); }
 }
@@ -109,6 +134,19 @@ void AudioDevice::run(std::atomic<bool>& running, std::atomic<bool>& failed, Aud
     sched_param priority {}; priority.sched_priority = 30;
     int scheduling = pthread_setschedparam(pthread_self(), SCHED_FIFO, &priority);
     if (scheduling) std::cerr << "Audio priority unavailable: " << scheduling << '\n';
+    DirectMonitor& direct_out = direct_monitor();
+    if (lent) direct_out.attach(lent, buffer_frames, opened.rate);
+    uint64_t written = 0; // frames committed since the playback PCM was prepared, for direct monitoring
+    // Where the DMA is now, for direct monitoring: the frames written less those still queued.
+    auto publish = [&] {
+        if (!lent) return;
+        snd_pcm_sframes_t avail = snd_pcm_avail(output);
+        auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        bool running_now = avail >= 0 && snd_pcm_state(output) == SND_PCM_STATE_RUNNING;
+        uint64_t queued = running_now ? uint64_t(std::max<snd_pcm_sframes_t>(0, snd_pcm_sframes_t(buffer_frames) - avail)) : 0;
+        direct_out.at(written, written > queued ? written - queued : 0, int64_t(now), running_now);
+    };
+    auto restarted = [&] { written = 0; if (lent) direct_out.restart(); };
     try {
         if (input && snd_pcm_start(input) < 0) { snd_pcm_close(input); input = nullptr; }
         stats.capture_active.store(input != nullptr);
@@ -133,16 +171,19 @@ void AudioDevice::run(std::atomic<bool>& running, std::atomic<bool>& failed, Aud
             if (peak > 0.0001f) ++stats.sounding_blocks;
             unsigned offset = 0;
             while (offset < audio_frames && going()) {
-                auto count = snd_pcm_writei(output, outgoing.data() + offset * audio_channels, audio_frames - offset);
+                const int32_t* from = outgoing.data() + offset * audio_channels;
+                auto count = mapped ? snd_pcm_mmap_writei(output, from, audio_frames - offset) : snd_pcm_writei(output, from, audio_frames - offset);
                 if (count == -EAGAIN || count == 0) {
                     int ready = snd_pcm_wait(output, 100);
-                    if (ready < 0) { ++stats.xruns; check(recover(output, ready, false), "Recover PCM wait"); }
+                    if (ready < 0) { ++stats.xruns; check(recover(output, ready, false), "Recover PCM wait"); restarted(); }
                 } else if (count < 0) {
-                    ++stats.xruns; check(recover(output, int(count), false), "Recover playback");
-                } else { offset += unsigned(count); stats.frames.fetch_add(uint64_t(count)); }
+                    ++stats.xruns; check(recover(output, int(count), false), "Recover playback"); restarted();
+                } else { offset += unsigned(count); written += uint64_t(count); stats.frames.fetch_add(uint64_t(count)); }
             }
+            publish();
         }
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; failed.store(true); running.store(false); }
+    if (lent) direct_out.detach();
     stats.capture_active.store(false);
 }
 std::string AudioDevice::devices_json() {

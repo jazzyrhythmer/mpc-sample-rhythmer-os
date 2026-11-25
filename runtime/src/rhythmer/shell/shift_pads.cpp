@@ -47,8 +47,9 @@ void shift_pad(Context& c, unsigned pad) {
         settings.count_in = !settings.count_in;
         toggled(c, job.name, settings.count_in);
         return;
-    case 9: // Rec Quantize: its page, on or off (B3) and the grid recorded notes land on (the pattern's Q or its own)
-        open_tool(PageId::RecQuantize);
+    case 9: // Rec Quantize: on or off in one press, as the MPC; recorded notes land on the pattern's Q
+        settings.rec_quantize = !settings.rec_quantize;
+        toggled(c, job.name, settings.rec_quantize);
         return;
     case 14: // Warp: Time stretch or Pitch for the kit (its Follow how)
         c.toggle_warp_mode();
@@ -61,7 +62,7 @@ void shift_pad(Context& c, unsigned pad) {
         break;
     case 7: // Settings, as doors (MIDI Config one of them; Kerem's choice over the printed MIDI Config)
         if (c.ui.page == PageId::SettingsPage || c.ui.page == PageId::MidiConfig || c.ui.page == PageId::About) { c.back(); return; }
-        c.ui.midi_editing = false; c.ui.settings_editing = false; c.ui.settings_in = false; c.ui.settings_look = false;
+        c.ui.settings_in = false; c.ui.settings_look = false;
         c.open(PageId::SettingsPage);
         return;
     case 8: // Fader: what the selected track's fader follows, PIN, on / off (parity phase 8; round 2 fader C)

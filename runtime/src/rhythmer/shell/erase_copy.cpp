@@ -31,9 +31,9 @@ bool erase_step(Context& c) {
     auto& ui = c.ui;
     if (ui.sheet_open) return false;
     auto& p = c.pattern();
-    unsigned st = unsigned(std::max<int>(ui.step_cursor, 0)) % p.steps();
+    unsigned st = edit_caret(ui, p); // a spare step (shell/spare_bar.h) is empty
     int lane = steps_lane(c.track());
-    if (!step_has_notes(p, st, lane)) { c.notice(step_name(st) + " is empty"); return true; }
+    if (in_spare(ui, p) || !step_has_notes(p, st, lane)) { c.notice(step_name(st) + " is empty"); return true; }
     std::string what = "Erase " + step_name(st);
     c.edit_pattern(ui.track, c.track().pattern, what.c_str(), [&] {
         if (lane < 0) c.set_step(ui.track, st, Step {});
@@ -43,17 +43,22 @@ bool erase_step(Context& c) {
     return true;
 }
 
-// Chop: the slice in hand joins the one before (the chop is Manual from here), as Erase + its pad.
+// Chop: the slice in hand joins its neighbour, as Erase + its pad (Context::chop_erase); a new chop leaves its cut out.
 bool erase_slice(Context& c) {
-    auto& ui = c.ui;
-    if (!ui.slices.count) return false;
-    if (ui.chop_slice == 0) { c.notice("The first slice stays"); return true; }
-    ui.slices.remove(ui.chop_slice);
-    ui.chop_slice = uint8_t(ui.chop_slice - 1);
-    ui.chop_mode = ChopMode::Manual; ui.chop_armed = false;
+    if (!c.ui.slices.count) return false;
+    if (c.ui.slices.count == 1) return true; // one slice: nothing to join
+    const unsigned slice = c.ui.chop_slice;
+    c.chop_change(slice ? slice - 1 : 0, [&c, slice] { c.chop_erase(slice); }); // slice hits from there on: asked first (issue 24)
     return true;
 }
 } // namespace
+
+void ask_clear_track(Context& c) {
+    const unsigned t = c.ui.track % track_count;
+    if (c.ui.recording) c.notice("Clear track: not in a take");
+    else if (!track_clearable(c.project.tracks[t], c.patterns.at[t])) c.notice("Track " + std::to_string(t + 1) + " is empty");
+    else ask(c, UiState::Ask::ClearTrack, int(t));
+}
 
 bool erase_tap(Context& c) {
     auto& ui = c.ui;
@@ -67,8 +72,8 @@ bool erase_tap(Context& c) {
         erase_event(c);
         return true;
     case PageId::Patterns: {
-        if (ui.patterns_cards == 1) { // SCENE: the scene in view's name and tempo (the selected track's pattern's column)
-            c.clear_scene(c.track().pattern % pattern_count);
+        if (ui.patterns_cards == 1) { // SEQUENCE: the sequence in hand (one undo)
+            c.clear_scene(c.project.scene % pattern_count);
             return true;
         }
         unsigned n = c.track().pattern % pattern_count;
@@ -76,12 +81,8 @@ bool erase_tap(Context& c) {
         else ask(c, UiState::Ask::ClearPattern, int(n));
         return true;
     }
-    case PageId::Scenes: c.clear_scene(ui.scene % pattern_count); return true; // the scene in hand's name and tempo
-    case PageId::Tracks:
-        if (ui.recording) c.notice("Clear track: not in a take");
-        else if (!track_clearable(c.project.tracks[t], c.patterns.at[t])) c.notice("Track " + std::to_string(t + 1) + " is empty");
-        else ask(c, UiState::Ask::ClearTrack, int(t));
-        return true;
+    case PageId::Scenes: c.clear_scene(c.project.scene % pattern_count); return true; // the sequence in hand (one undo)
+    case PageId::Mixer: return mixer_fx_lit(ui) && chain_erase(c); // its FX block: the lit effect out
     case PageId::Looper: {
         unsigned loop = ui.loop % loop_tracks;
         if (c.host.looper().view(loop).state == Looper::State::Empty) c.notice("L" + std::to_string(loop + 1) + " is empty");

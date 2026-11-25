@@ -97,12 +97,14 @@ void Context::set_punch_target(unsigned target) {
     if (project.punch_target == target) return;
     punch_release(true); // a new signal: everything lets go
     project.punch_target = uint8_t(target);
+    dirty = true; // kept in the project's file; a punch's own commands no longer mark it
     notice(target ? "Pad FX: the track" : "Pad FX: the master");
 }
 
 void Context::step_punch_bank(int way) {
     punch_release();
     project.punch_bank = uint8_t((int(project.punch_bank) + int(punch_banks) + way) % int(punch_banks));
+    dirty = true; // as set_punch_target()
     static const char* const names[] {"Rhythmer 1", "Rhythmer 2", "MPC"};
     notice(std::string("Pad FX bank: ") + names[project.punch_bank % punch_banks]);
 }
@@ -188,7 +190,7 @@ void Context::close_span(int kind) {
 
 // B3 KEEP: the take (the last punches heard, up to a pass of the selected track's pattern) kept in that pattern
 // where it fell (as its speed plays it), beside what it kept before; the spans kept go, one still sounding carries
-// on from now.
+// on from now. A punch held across the loop point is kept in two parts (heard_punches), counted as the one it was.
 void Context::keep_punches() {
     unsigned t = ui.track % track_count, n = track().pattern % pattern_count;
     int position = host.position_of(t);
@@ -204,8 +206,12 @@ void Context::keep_punches() {
         if (spans[k].until) spans[k].until = written(spans[k].until);
     }
     auto heard = heard_punches(spans.data(), ui.span_count, written(host.ticks()), uint32_t(position), pattern.length);
-    unsigned added = 0;
-    for (const auto& k : heard) added += std::find(pattern.punches.begin(), pattern.punches.end(), k) == pattern.punches.end();
+    unsigned added = 0, parts = 0; // parts: the second parts among them
+    for (size_t k = 0; k < heard.size(); ++k) {
+        if (std::find(pattern.punches.begin(), pattern.punches.end(), heard[k]) != pattern.punches.end()) continue;
+        ++added;
+        parts += k && !heard[k].tick && heard[k - 1].tick + heard[k - 1].length == pattern.length && heard[k].kind == heard[k - 1].kind;
+    }
     if (!added) { notice(heard.empty() ? "Punch, then Keep" : "Kept already"); return; }
     if (pattern.punches.size() >= max_pattern_punches) { notice(std::to_string(max_pattern_punches) + " punches at most"); return; }
     edit_pattern(t, n, "Keep punches", [&] {
@@ -220,6 +226,7 @@ void Context::keep_punches() {
     for (unsigned k = 0; k < ui.span_count; ++k)
         if (!ui.spans[k].until) { auto span = ui.spans[k]; span.from = std::max(span.from, now); ui.spans[left++] = span; }
     ui.span_count = uint8_t(left);
+    added = std::max(added - parts, 1u);
     notice(added == 1 ? std::string("Punch kept") : std::to_string(added) + " punches kept");
 }
 

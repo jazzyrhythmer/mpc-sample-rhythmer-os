@@ -6,8 +6,10 @@ __pycache__/
 *.o
 *.wav
 *.png
-# Doc pages' screenshots and diagrams are tracked (base/tools/check_private_files.py allows them).
+# Doc pages' screenshots and diagrams are tracked (base/tools/check_private_files.py allows them), and so is the art
+# of a worked example (docs/examples/plugin-skin).
 !docs/images/**/*.png
+!docs/examples/**/*.png
 *.log
 .DS_Store
 .env*

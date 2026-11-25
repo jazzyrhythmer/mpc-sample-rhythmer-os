@@ -71,18 +71,37 @@ inline int navigation_check(){
     }
     reset(PageId::PluginPresets,EngineKind::Midi);c.ui.presets_back=PageId::Bus;c.ui.plugin_target=UiState::PluginTarget::Effect;c.ui.plugin_chain=track_count;ask(c,UiState::Ask::ReplacePlugin,0);c.select_track(1);
     NAV(c.ui.page==PageId::PluginPresets&&c.ui.ask==UiState::Ask::ReplacePlugin,"global bus workflow remains global");ask_button(c,SurfaceButton::TopLeft);
+    // Native v0.8 reuses Rack for track, submix and looper FX. Its caller alone
+    // no longer proves that a preset browser belongs to the selected track.
+    for(bool full:{false,true})for(bool loop:{false,true})for(int index=0;index<8;++index){
+        reset(PageId::PluginPresets,EngineKind::Midi,full);c.ui.presets_back=PageId::Rack;
+        c.ui.presets_entry=3;c.ui.presets_cursor=5;c.ui.plugin_target=UiState::PluginTarget::Effect;
+        c.ui.plugin_chain=track_count+1;c.ui.fx_sub=loop?-1:int8_t(index);c.ui.fx_loop=loop?int8_t(index):-1;
+        c.ui.back_depth=1;c.ui.back_stack[0]=PageId::Rack;
+        c.select_track(1);
+        NAV(c.ui.page==PageId::PluginPresets&&c.ui.presets_entry==3&&c.ui.presets_cursor==5,"global submix/loop presets survive track selection");
+        NAV(c.ui.fx_sub==(loop?-1:index)&&c.ui.fx_loop==(loop?index:-1),"global preset owner is retained");
+        c.back_plugin_presets();NAV(c.ui.page==PageId::Rack,"global presets Back returns to FX chain");
+        NAV(c.ui.fx_sub==(loop?-1:index)&&c.ui.fx_loop==(loop?index:-1),"Back retains submix/looper chain");
+    }
+    for(bool full:{false,true}){
+        reset(PageId::PluginPresets,EngineKind::Midi,full);c.ui.presets_back=PageId::Rack;
+        c.ui.fx_sub=c.ui.fx_loop=-1;c.select_track(1);
+        NAV(c.ui.page==PageId::Stage&&c.ui.back_depth==0,"track FX preset browser follows newly selected track");
+    }
     // A tap delayed until release cannot act on a different track/page.
     reset(PageId::Stage,EngineKind::Sampler);button(SurfaceButton::WheelPush,true);c.select_track(1);button(SurfaceButton::WheelPush,false);NAV(c.ui.page==PageId::Stage&&!c.ui.track_types,"old encoder tap cannot enter new track");
-    reset(PageId::Stage,EngineKind::Sampler);button(SurfaceButton::WheelPush,true);c.open(PageId::Tracks);button(SurfaceButton::WheelPush,false);NAV(c.ui.page==PageId::Tracks,"old encoder tap cannot activate new page");
+    reset(PageId::Stage,EngineKind::Sampler);button(SurfaceButton::WheelPush,true);c.open(PageId::Mixer);button(SurfaceButton::WheelPush,false);NAV(c.ui.page==PageId::Mixer,"old encoder tap cannot activate new page");
     reset(PageId::Stage,EngineKind::Sampler);c.open_name(NameTarget::Scene,"CHANGED",16,false);std::string scene=c.project.scenes[0].name;back();NAV(!c.ui.name.open()&&scene==c.project.scenes[0].name,"name Back cancels rather than saves");
     reset(PageId::Stage,EngineKind::Sampler);c.ui.exit_open=true;c.ui.exit_pick=2;back();NAV(!c.ui.exit_open&&!c.ui.exit_off,"exit Back never leaves for stock app");
     // Empty chooser has a real escape, retaining caller before select_track clears ownership.
-    reset(PageId::Stage,EngineKind::None);c.ui.new_for=0;c.ui.new_back=PageId::Tracks;back();NAV(c.ui.page==PageId::Tracks&&c.ui.track==1,"empty cancel restores TRACKS caller");
-    reset(PageId::Stage,EngineKind::None);for(auto& t:c.project.tracks)t.engine=EngineKind::None;c.ui.new_for=0;c.ui.new_back=PageId::Stage;back();NAV(c.ui.page==PageId::Tracks,"all-empty chooser can return to TRACKS");
+    reset(PageId::Stage,EngineKind::None);c.ui.new_for=0;c.ui.new_back=PageId::Mixer;back();NAV(c.ui.page==PageId::Mixer&&c.ui.track==1,"empty cancel restores TRACKS caller");
+    reset(PageId::Stage,EngineKind::None);for(auto& t:c.project.tracks)t.engine=EngineKind::None;c.ui.new_for=0;c.ui.new_back=PageId::Stage;back();NAV(c.ui.page==PageId::Mixer,"all-empty chooser can return to TRACKS");
     reset(PageId::Stage,EngineKind::None);c.ui.new_for=0;c.ui.new_sources=true;back();NAV(c.ui.page==PageId::Stage&&!c.ui.new_sources,"source step Back -> type step");
     // Note Repeat retains its approved contextual B1 priority.
-    reset(PageId::Tracks,EngineKind::Midi);c.track().repeat=true;c.track().repeat_rate=7;tap(SurfaceButton::TopLeft);NAV(c.ui.page==PageId::Tracks&&c.track().repeat_rate!=7,"NOTE REPEAT retains speed softkeys");c.track().repeat=false;tap(SurfaceButton::TopLeft);NAV(c.ui.page==PageId::TrackActions,"B1 otherwise opens TRACK SETUP");
-    reset(PageId::Tracks,EngineKind::Midi);c.ui.recording=true;change_track_type(c,EngineKind::Sampler);NAV(c.track().engine==EngineKind::Midi,"recording protects type change");c.ui.recording=false;c.prints.freeze[0].state=FreezeState::Frozen;change_track_type(c,EngineKind::Sampler);NAV(c.ui.ask==UiState::Ask::Unfreeze&&c.track().engine==EngineKind::Midi,"frozen type change asks first");back();NAV(c.ui.ask==UiState::Ask::None,"frozen question Back cancels");
+    reset(PageId::Mixer,EngineKind::Midi);c.track().repeat=true;c.track().repeat_rate=7;tap(SurfaceButton::TopLeft);NAV(c.ui.page==PageId::Mixer&&c.track().repeat_rate!=7,"NOTE REPEAT retains speed softkeys");c.track().repeat=false;tap(SurfaceButton::TopLeft);NAV(c.ui.page==PageId::Mixer&&c.ui.mixer_b1==1,"B1 otherwise keeps native Mixer FX switching");
+    menu_open(c);std::array<MenuItem,menu_here_max> setup_items{};auto setup_count=menu_here(c.project,c.ui,setup_items);unsigned setup_at=setup_count;for(unsigned i=0;i<setup_count;++i)if(setup_items[i].job==MenuJob::TrackSetup)setup_at=i;NAV(setup_at<setup_count,"Mixer HERE has TRACK SETUP");c.ui.menu=menu_here_view;c.ui.menu_row=uint8_t(setup_at);menu_button(c,SurfaceButton::WheelPush);NAV(c.ui.page==PageId::TrackActions,"Menu opens TRACK SETUP without replacing native Mixer keys");
+    reset(PageId::Mixer,EngineKind::Midi);c.ui.recording=true;change_track_type(c,EngineKind::Sampler);NAV(c.track().engine==EngineKind::Midi,"recording protects type change");c.ui.recording=false;c.prints.freeze[0].state=FreezeState::Frozen;change_track_type(c,EngineKind::Sampler);NAV(c.ui.ask==UiState::Ask::Unfreeze&&c.track().engine==EngineKind::Midi,"frozen type change asks first");back();NAV(c.ui.ask==UiState::Ask::None,"frozen question Back cancels");
     // Track replacement/move invalidates late jobs; merely selecting a track does not.
     reset(PageId::Stage,EngineKind::Sampler);auto epoch=c.track_epoch[0];c.select_track(1);NAV(c.track_epoch[0]==epoch,"track focus leaves job owner valid");c.ui.track=0;c.pending_files[0].slot=0;c.pending_files[0].track=0;c.ui.stems_sheet.running=true;c.stems_from.track=0;
     auto replacement=std::make_unique<TrackState>(track_state(c,0));restore_track(c,0,*replacement);NAV(c.track_epoch[0]!=epoch&&c.pending_files[0].slot<0&&!c.ui.stems_sheet.running,"replace invalidates late loads/stems");epoch=c.track_epoch[0];trade_tracks(c,0,1);NAV(c.track_epoch[0]!=epoch,"move/swap invalidates old job destination");

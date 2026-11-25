@@ -1,13 +1,13 @@
-# RHYTHMER OS 0.2.0 — Projects, tracks and patterns
+# RHYTHMER OS 0.3.0 — Projects, tracks and patterns
 
-![System structure](../assets/manual/os-structure.png)
+![System structure](../images/rhythmer/os-structure.png)
 
 ## The four things you select
 
 | Item | Meaning | How to select it |
 | --- | --- | --- |
 | Project | The complete session: tracks, patterns, mix and arrangement | SHIFT + Pad 16 → SAVE / OPEN / NEW; SHIFT + B1 SAVE AS chooses another folder/name |
-| Track | One part of the session; its instrument/audio, patterns and mix | PAD BANK + pad 1–16, or TRACKS |
+| Track | One part of the session; its instrument/audio, patterns and mix | PAD BANK + pad 1–16, or MIXER |
 | Pattern | Notes and supported motion for one track; up to 128 per track | SEQ → B1 PATTERNS → pattern pad |
 | Sequence | A pattern number launched across tracks | SEQ → B1 SEQUENCES → sequence pad |
 

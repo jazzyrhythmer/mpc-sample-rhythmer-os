@@ -1,0 +1,1959 @@
+// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
+#include "rhythmer/model/project_file.h"
+#include "rhythmer/model/gen_menu_order.h"
+#include "rhythmer/model/keygroup_track.h"
+#include "rhythmer/model/fader.h"
+#include "rhythmer/model/pad_params.h"
+#include "rhythmer/model/scene_links.h"
+#include "rhythmer/model/scales.h"
+#include "rhythmer/engine/engine_info.h"
+#include "rhythmer/engine/midi_engine.h"
+#include "rhythmer/engine/sampler.h"
+#include <algorithm>
+#include <bitset>
+#include <cstdio>
+#include <cstring>
+#include <memory>
+
+namespace rhythmer {
+namespace {
+constexpr char magic[8] {'M', 'E', 'L', 'O', 'D', 'E', 'E', '1'};
+
+// The synths that left Rhythmer (model/project.h, legacy_engine): a file's track of one opens as a PLUGIN track on
+// the same voice, now an Open MPC plug-in of its own (Melodee Poly, PD and Chip), named from the card's top so the
+// rack finds it in the card's Rhythmer/Plugins folder (plugin/plugin_rack.cpp), with the track's values and routes as the
+// plug-in's state: its `melodee=` and `melodee_mods=` lines, which take them in Rhythmer's order and numbering.
+struct LegacySynth {
+    uint8_t engine;
+    const char* path;               // the plug-in's folder from the card's top
+    const char* name;
+    const char* tag;                // its state's first word
+    unsigned params, before_pressure; // its values, and how many a file from before params_version 1 carries
+};
+constexpr LegacySynth legacy_synths[] {
+    {legacy_engine::prophet, "Rhythmer/Plugins/Ellic Studio - VST - Melodee Poly", "Melodee Poly", "melodee-poly", 53, 50},
+    {legacy_engine::cz, "Rhythmer/Plugins/Ellic Studio - VST - Melodee PD", "Melodee PD", "melodee-pd", 20, 17},
+    {legacy_engine::sid, "Rhythmer/Plugins/Ellic Studio - VST - Melodee Chip", "Melodee Chip", "melodee-chip", 22, 18},
+};
+
+// A VST2 plug-in's state as Rhythmer's VST2 hosts keep it (plugin/vst2_instance.cpp, vst2_bridge_instance.cpp: "MVS2",
+// then 1 for the plug-in's own chunk), the chunk a text the plug-in reads up to its last byte.
+std::vector<uint8_t> vst2_text_state(const std::string& text) {
+    std::vector<uint8_t> out {'M', 'V', 'S', '2', 1};
+    out.insert(out.end(), text.begin(), text.end());
+    out.push_back(0);
+    return out;
+}
+
+// Track `t` was a legacy synth: a PLUGIN track on its plug-in in a free entry, its values that plug-in's state.
+// Without a free entry it opens empty.
+void open_as_plugin(Project& project, unsigned t, const LegacySynth& synth, unsigned file_version,
+                    std::array<std::vector<uint8_t>, max_plugins>& states) {
+    auto& tr = project.tracks[t];
+    unsigned entry = max_plugins;
+    for (unsigned e = 0; e < max_plugins && entry == max_plugins; ++e)
+        if (!project.plugins[e].used()) entry = e;
+    if (entry == max_plugins) { tr.engine = EngineKind::None; return; }
+    std::string text = std::string(synth.tag) + " 1\nmelodee=";
+    unsigned count = file_version >= 1 ? synth.params : synth.before_pressure;
+    for (unsigned p = 0; p < count && p < max_params; ++p) text += (p ? "," : "") + std::to_string(tr.params[p]);
+    text += "\nmelodee_mods=";
+    for (unsigned r = 0; r < mod_routes; ++r)
+        text += (r ? "," : "") + std::to_string(tr.mods[r].source) + ":" + std::to_string(tr.mods[r].destination) + ":"
+            + std::to_string(int(tr.mods[r].amount));
+    text += "\n";
+    auto& ref = project.plugins[entry];
+    ref = PluginRef {};
+    std::snprintf(ref.path, sizeof(ref.path), "%s", synth.path);
+    std::snprintf(ref.name, sizeof(ref.name), "%s", synth.name);
+    states[entry] = vst2_text_state(text);
+    tr.engine = EngineKind::Plugin;
+    tr.plugin = uint8_t(entry);
+    tr.params = {};
+    tr.mods = {};
+}
+constexpr unsigned loop_record = 15; // LOOP: bars, feedback, source, frames, ticks, tempo, layers, stopped
+
+class Writer {
+public:
+    std::vector<uint8_t> out;
+    void u8(unsigned v) { out.push_back(uint8_t(v)); }
+    void u16(unsigned v) { u8(v); u8(v >> 8); }
+    void u32(uint32_t v) { u16(v); u16(v >> 16); }
+    void i16(int v) { u16(uint16_t(int16_t(v))); }
+    void text(const char* s) { size_t n = std::strlen(s); u8(unsigned(n)); out.insert(out.end(), s, s + n); }
+    // A section: its tag, then a length filled in when it ends.
+    size_t begin(const char* tag) { out.insert(out.end(), tag, tag + 4); u32(0); return out.size(); }
+    void end(size_t at) { uint32_t n = uint32_t(out.size() - at); for (int k = 0; k < 4; ++k) out[at - 4 + k] = uint8_t(n >> (8 * k)); }
+};
+
+class Reader {
+public:
+    Reader(const uint8_t* data, size_t size) : p(data), end_(data + size) {}
+    bool ok = true;
+    bool done() const { return p >= end_; }
+    unsigned u8() { if (p >= end_) { ok = false; return 0; } return *p++; }
+    unsigned u16() { unsigned a = u8(); return a | u8() << 8; }
+    uint32_t u32() { uint32_t a = u16(); return a | uint32_t(u16()) << 16; }
+    int i16() { return int16_t(uint16_t(u16())); }
+    void text(char* out, size_t size) {
+        unsigned n = u8();
+        for (unsigned k = 0; k < n; ++k) { char c = char(u8()); if (k + 1 < size) out[k] = c; }
+        out[std::min<size_t>(n, size - 1)] = 0;
+    }
+    Reader section(char tag[5]) {
+        for (int k = 0; k < 4; ++k) tag[k] = char(u8());
+        tag[4] = 0;
+        uint32_t n = u32();
+        if (!ok || size_t(end_ - p) < n) { ok = false; return Reader(p, 0); }
+        Reader inner(p, n);
+        p += n;
+        return inner;
+    }
+private:
+    const uint8_t* p;
+    const uint8_t* end_;
+};
+
+void write_chain(Writer& w, const Chain& chain) {
+    w.u8(chain.size);
+    unsigned count = chain.count();
+    w.u8(count);
+    for (unsigned k = 0; k < count; ++k) {
+        const auto& s = chain.slots[k];
+        w.u8(s.kind); w.u8(s.bypass);
+        for (auto v : s.params) w.i16(v);
+    }
+}
+void read_chain(Reader& r, Chain& chain) {
+    chain = Chain {{}, uint8_t(std::clamp<unsigned>(r.u8(), 1, max_slots))};
+    unsigned count = std::min<unsigned>(r.u8(), max_slots);
+    for (unsigned k = 0; k < count; ++k) {
+        auto& s = chain.slots[k];
+        s.kind = uint8_t(r.u8()); s.bypass = r.u8() != 0;
+        for (auto& v : s.params) v = int16_t(r.i16());
+    }
+}
+// One kit pad's sound: the same record in TRAK (banks A-D) and KITX (E-H).
+void write_pad(Writer& w, unsigned n, const PadSound& pad) {
+    w.u8(n); w.u16(pad.sample); w.u32(pad.start); w.u32(pad.end); w.i16(pad.pitch); w.i16(pad.fine); w.u8(pad.level);
+    w.i16(pad.pan); w.u8(unsigned(pad.play)); w.u8(pad.reverse); w.u8(pad.group);
+    w.u8(pad.attack); w.u8(pad.decay); w.u8(pad.sustain); w.u8(pad.release); w.u16(pad.own_tempo);
+}
+// Into `pads` (`count` of them; a project's kit or a bank file), `samples` the slots its sample may name.
+void read_pad(Reader& r, PadSound* pads, unsigned count, unsigned samples = sample_slots) {
+    auto& pad = pads[r.u8() % count];
+    pad.sample = uint16_t(r.u16()); pad.start = r.u32(); pad.end = r.u32();
+    pad.pitch = int8_t(std::clamp(r.i16(), -24, 24)); pad.fine = int8_t(std::clamp(r.i16(), -50, 50));
+    pad.level = uint8_t(std::min(127u, r.u8())); pad.pan = int8_t(std::clamp(r.i16(), -50, 50));
+    pad.play = PadPlay(r.u8() & 1); pad.reverse = r.u8() != 0; pad.group = uint8_t(r.u8() % 17);
+    pad.attack = uint8_t(r.u8()); pad.decay = uint8_t(r.u8()); pad.sustain = uint8_t(r.u8()); pad.release = uint8_t(r.u8());
+    pad.own_tempo = uint16_t(r.u16());
+    if (pad.sample >= samples) pad.sample = no_sample;
+}
+
+// A kit pad's Sample Mode values (parity phase 4), in PAD4: older builds
+// skip the section and older files load with the MPC's defaults, except
+// that their pads decay from the start, as they did.
+void write_pad4(Writer& w, unsigned n, const PadSound& pad) {
+    w.u8(n);
+    w.u8(unsigned(pad.loop) | unsigned(pad.loop_lock) << 1 | unsigned(pad.mono) << 2 | unsigned(pad.decay_from_start) << 3);
+    w.u32(pad.loop_start); w.u8(pad.link); w.u8(pad.offset); w.u8(pad.velocity_sense);
+    w.u8(unsigned(pad.filter)); w.u8(pad.cutoff); w.u8(pad.resonance);
+    w.u8(pad.filter_attack); w.u8(pad.filter_decay); w.u8(pad.filter_sustain); w.u8(pad.filter_release); w.u8(pad.filter_amount);
+    w.u8(pad.warp); w.u8(pad.beats); w.i16(pad.gain);
+}
+void read_pad4(Reader& r, PadSound* pads, unsigned count) {
+    auto& pad = pads[r.u8() % count];
+    unsigned flags = r.u8();
+    pad.loop = flags & 1; pad.loop_lock = (flags >> 1) & 1; pad.mono = (flags >> 2) & 1; pad.decay_from_start = (flags >> 3) & 1;
+    pad.loop_start = r.u32(); pad.link = uint8_t(r.u8() % 17); pad.offset = uint8_t(std::min(100u, r.u8()));
+    pad.velocity_sense = uint8_t(std::min(100u, r.u8()));
+    pad.filter = PadFilter(std::min(r.u8(), pad_filter_count - 1));
+    pad.cutoff = uint8_t(std::min(100u, r.u8())); pad.resonance = uint8_t(std::min(100u, r.u8()));
+    pad.filter_attack = uint8_t(std::min(100u, r.u8())); pad.filter_decay = uint8_t(std::min(100u, r.u8()));
+    pad.filter_sustain = uint8_t(std::min(100u, r.u8())); pad.filter_release = uint8_t(std::min(100u, r.u8()));
+    pad.filter_amount = uint8_t(std::min(100u, r.u8()));
+    unsigned warp = r.u8();
+    pad.warp = uint8_t(warp == warp_seq || (warp >= warp_min && warp <= warp_max) ? warp : warp_off);
+    pad.beats = uint8_t(std::min(max_pad_beats, r.u8()));
+    pad.gain = int16_t(std::clamp(r.i16(), -2000, 6000));
+}
+// A kit pad's layers (roadmap P3), in LAYR: how a hit picks, layer 1's
+// velocities, then layers 2-4 as they are set. Older builds skip the section
+// and play layer 1 alone; older files have no layers.
+// A pad's cloud (PCLD, BCLD): pad, on or off, position, size, density, scan, spread.
+void write_cloud(Writer& w, unsigned n, const PadSound& pad) {
+    w.u8(n); w.u8(pad.cloud);
+    w.u8(pad.cloud_position); w.u8(pad.cloud_size); w.u8(pad.cloud_density); w.u8(pad.cloud_scan); w.u8(pad.cloud_spread);
+}
+void read_cloud(Reader& r, PadSound* pads, unsigned count) {
+    unsigned n = r.u8();
+    bool on = r.u8() != 0;
+    std::array<uint8_t, 5> v {};
+    for (auto& one : v) one = uint8_t(std::min(r.u8(), 100u));
+    if (!r.ok) return;
+    auto& pad = pads[n % count];
+    pad.cloud = on;
+    pad.cloud_position = v[0]; pad.cloud_size = v[1]; pad.cloud_density = v[2]; pad.cloud_scan = v[3]; pad.cloud_spread = v[4];
+}
+
+void write_layers(Writer& w, unsigned n, const PadSound& pad) {
+    w.u8(n); w.u8(unsigned(pad.layer_play)); w.u8(pad.low_velocity); w.u8(pad.high_velocity);
+    w.u8(pad_layers - 1);
+    for (const auto& l : pad.layers) {
+        w.u16(l.sample); w.u32(l.start); w.u32(l.end); w.i16(l.pitch); w.i16(l.fine); w.i16(l.gain); w.i16(l.pan);
+        w.u8(l.low); w.u8(l.high);
+    }
+}
+void read_layers(Reader& r, PadSound* pads, unsigned count, unsigned samples) {
+    auto& pad = pads[r.u8() % count];
+    pad.layer_play = LayerPlay(std::min(r.u8(), unsigned(LayerPlay::Count) - 1));
+    pad.low_velocity = uint8_t(std::clamp(r.u8(), 1u, 127u)); pad.high_velocity = uint8_t(std::clamp(r.u8(), 1u, 127u));
+    unsigned layers = r.u8();
+    for (unsigned k = 0; k < layers && r.ok; ++k) {
+        PadLayer l;
+        l.sample = uint16_t(r.u16()); l.start = r.u32(); l.end = r.u32();
+        l.pitch = int8_t(std::clamp(r.i16(), -48, 48)); l.fine = int8_t(std::clamp(r.i16(), -99, 99));
+        l.gain = int16_t(std::clamp(r.i16(), -9600, 2400)); l.pan = int8_t(std::clamp(r.i16(), -50, 50));
+        l.low = uint8_t(std::clamp(r.u8(), 1u, 127u)); l.high = uint8_t(std::clamp(r.u8(), 1u, 127u));
+        if (l.sample >= samples) l.sample = no_sample;
+        if (k < pad.layers.size()) pad.layers[k] = l;
+    }
+}
+// A step as files before parity phase 2 kept it (PATT).
+void read_step(Reader& r, Step& s) {
+    s = Step {};
+    unsigned notes = std::min<unsigned>(r.u8(), notes_per_step);
+    // Keys keep the whole byte: kit pads in banks F-H are notes past 127 (model/sampler.h).
+    for (unsigned k = 0; k < notes; ++k) { s.notes[k].key = uint8_t(r.u8()); s.notes[k].velocity = uint8_t(r.u8() & 127); }
+    s.length = uint8_t(std::max(1u, r.u8())); s.chance = uint8_t(std::min(100u, r.u8())); s.flags = uint8_t(r.u8());
+}
+} // namespace
+
+std::vector<uint8_t> save_project(const Project& project, const PatternBank& patterns, const std::array<std::vector<uint8_t>, max_plugins>* states,
+                                  const PrintTable* prints) {
+    Writer w;
+    w.out.insert(w.out.end(), magic, magic + 8);
+    auto at = w.begin("RID1"); w.text(project.recovery_id); w.end(at);
+    at = w.begin("PROJ");
+    w.text(project.name); w.u16(project.tempo); w.u8(project.swing); w.u8(project.root); w.u8(project.scale);
+    w.end(at);
+    at = w.begin("PVER"); // which engine parameters TRAK's values cover
+    w.u8(params_version);
+    w.end(at);
+    at = w.begin("KGVR"); // saved with keygroup tracks: an instrument on a kit pad is one on purpose (no migration)
+    w.u8(1);
+    w.end(at);
+    for (unsigned t = 0; t < track_count; ++t) {
+        const auto& tr = project.tracks[t];
+        at = w.begin("TRAK");
+        // A MIDI, PLUGIN, KEYGROUP or AUDIO track is None here and itself in MIDT / PLGT / KGRP / AUDT, so older builds
+        // load it empty (not as the engine after their last). A keygroup's instrument is its pad 1, kept with the pads as a kit's.
+        bool own_section = tr.engine == EngineKind::Midi || tr.engine == EngineKind::Plugin || tr.engine == EngineKind::Keygroup
+                        || tr.engine == EngineKind::Audio;
+        w.u8(t); w.u8(own_section ? 0u : unsigned(tr.engine)); w.u16(tr.preset); w.text(tr.name);
+        auto values = tr.params;
+        if (tr.engine == EngineKind::Midi) // P1-P16's own programs where older builds kept them (Pattern::program now)
+            for (unsigned p = 0; p < legacy_patterns; ++p) values[size_t(midi_track::PatternProgram0 + p)] = patterns.at[t][p].program;
+        w.u8(max_params); for (auto v : values) w.i16(v);
+        // Older builds know one send: the largest of the four, into its bus (SNDS, later, has all four).
+        unsigned loudest = unsigned(std::max_element(tr.mix.sends.begin(), tr.mix.sends.end()) - tr.mix.sends.begin());
+        w.u8(tr.mix.level); w.i16(tr.mix.pan); w.u8(tr.mix.sends[loudest]); w.u8(loudest); w.u8(tr.mix.mute); w.u8(tr.mix.solo);
+        w.u8(tr.pattern); w.u8(unsigned(tr.layout)); w.i16(tr.octave); w.u8(tr.last_note);
+        w.u8(mod_routes); for (auto m : tr.mods) { w.u8(m.source); w.u8(m.destination); w.i16(m.amount); }
+        write_chain(w, tr.fx);
+        w.u8(tr.bank); w.u8(tr.last_pad); w.u8(tr.levels); w.u8(tr.levels_pad); w.u8(tr.levels_kind);
+        unsigned used = 0; // banks A-D here, as before; E-H in KITX
+        for (unsigned n = 0; n < legacy_pads; ++n) used += tr.pads[n].used();
+        w.u8(used);
+        for (unsigned n = 0; n < legacy_pads; ++n) if (tr.pads[n].used()) write_pad(w, n, tr.pads[n]);
+        w.end(at);
+        for (unsigned p = 0; p < pattern_count; ++p) { // each pattern's notes, on the 96-a-quarter clock
+            const auto& pattern = patterns.at[t][p];
+            bool plain = pattern.length == 16 * sixteenth_ticks && pattern.division == Division::Sixteenth && pattern.events.empty() &&
+                         pattern.motion.empty() && pattern.lanes.empty() && pattern.feel == Feel {} && pattern.euclids.empty() &&
+                         pattern.punches.empty() && !pattern.program && pattern.free; // not written: an empty Free pattern of a bar
+            if (plain) continue;
+            at = w.begin("EVNT");
+            w.u8(t); w.u8(p); w.u32(pattern.length); w.u8(unsigned(pattern.division));
+            w.u32(uint32_t(pattern.events.size()));
+            for (const auto& e : pattern.events) { w.u32(e.tick); w.u16(e.length); w.u8(e.key); w.u8(e.velocity); w.u8(e.chance); w.u8(e.flags); }
+            w.end(at);
+            if (pattern.is_free()) { // Free length (shell/free_length.h), after its EVNT: older builds read it as fixed
+                at = w.begin("FREE");
+                w.u8(t); w.u8(p);
+                w.end(at);
+            }
+            uint32_t pitched = 0;
+            for (const auto& e : pattern.events) pitched += e.pitch != 0;
+            if (pitched) { // what older builds skip: the notes that play off their pad's root, by their place in EVNT
+                at = w.begin("PTCH");
+                w.u8(t); w.u8(p); w.u32(pitched);
+                for (uint32_t n = 0; n < pattern.events.size(); ++n)
+                    if (pattern.events[n].pitch) { w.u32(n); w.u8(uint8_t(pattern.events[n].pitch)); }
+                w.end(at);
+            }
+            uint32_t cut = 0;
+            for (const auto& e : pattern.events) cut += e.cutoff != 0;
+            if (cut) { // roadmap P3: kit notes kept with 16 Levels' cutoff (+ 1), by their place in EVNT
+                at = w.begin("LVCF");
+                w.u8(t); w.u8(p); w.u32(cut);
+                for (uint32_t n = 0; n < pattern.events.size(); ++n)
+                    if (pattern.events[n].cutoff) { w.u32(n); w.u8(pattern.events[n].cutoff); }
+                w.end(at);
+            }
+            uint32_t sliced = 0;
+            for (const auto& e : pattern.events) sliced += e.slice != 0;
+            if (sliced) { // issue 24: kit notes played on Chop, their slice + 1, by their place in EVNT
+                at = w.begin("SLCE");
+                w.u8(t); w.u8(p); w.u32(sliced);
+                for (uint32_t n = 0; n < pattern.events.size(); ++n)
+                    if (pattern.events[n].slice) { w.u32(n); w.u8(pattern.events[n].slice); }
+                w.end(at);
+            }
+            uint32_t ratchets = 0;
+            for (const auto& e : pattern.events) ratchets += e.hits() > 1 || e.ramp || e.pitch_ramp;
+            if (ratchets) { // ratchets (roadmap P1), by their place in EVNT: hits, velocity ramp, pitch ramp
+                at = w.begin("RTCH");
+                w.u8(t); w.u8(p); w.u32(ratchets);
+                for (uint32_t n = 0; n < pattern.events.size(); ++n) {
+                    const auto& e = pattern.events[n];
+                    if (e.hits() > 1 || e.ramp || e.pitch_ramp) { w.u32(n); w.u8(e.hits()); w.u8(uint8_t(e.ramp)); w.u8(uint8_t(e.pitch_ramp)); }
+                }
+                w.end(at);
+            }
+            uint32_t conditions = 0;
+            for (const auto& e : pattern.events) conditions += e.condition != trig_always;
+            if (conditions) { // trig conditions (roadmap P1, model/trig.h), by their place in EVNT
+                at = w.begin("COND");
+                w.u8(t); w.u8(p); w.u32(conditions);
+                for (uint32_t n = 0; n < pattern.events.size(); ++n)
+                    if (pattern.events[n].condition != trig_always) { w.u32(n); w.u8(pattern.events[n].condition); }
+                w.end(at);
+            }
+            if (pattern.feel != Feel {}) { // its feel (roadmap P1): strength, swing, humanize, its groove
+                const auto& f = pattern.feel;
+                at = w.begin("FEEL");
+                w.u8(t); w.u8(p); w.u8(f.strength); w.u8(f.swing); w.u8(f.humanize); w.u8(f.humanize_velocity);
+                w.u16(legacy_groove(f.groove_from)); w.u8(f.groove_amount); w.u16(f.groove_step);
+                w.u8(unsigned(f.groove_offsets.size()));
+                for (size_t n = 0; n < f.groove_offsets.size(); ++n) { w.u8(uint8_t(f.groove_offsets[n])); w.u8(n < f.groove_levels.size() ? f.groove_levels[n] : 100); }
+                w.end(at);
+                if (f.groove_from && !legacy_groove(f.groove_from)) { // a groove from a pattern past P16 (the banks): its source
+                    at = w.begin("GRVB");
+                    w.u8(t); w.u8(p); w.u16(f.groove_from);
+                    w.end(at);
+                }
+            }
+            if (pattern.program) { // a MIDI track's own program for it (P1-P16 also in TRAK's values, for older builds)
+                at = w.begin("PPRG");
+                w.u8(t); w.u8(p); w.u8(pattern.program);
+                w.end(at);
+            }
+            if (pattern.follow.on()) { // its follow action (roadmap P5, model/follow.h): first, second, odds, after, bars or plays
+                const auto& f = pattern.follow;
+                at = w.begin("FOLW");
+                w.u8(t); w.u8(p); w.u8(f.action); w.u8(f.other); w.u8(f.chance); w.u8(f.count); w.u8(f.plays);
+                w.end(at);
+            }
+            if (!pattern.euclids.empty()) { // the Euclidean rhythms laid on its kit lanes (roadmap P1): key, hits, steps, rotation
+                at = w.begin("EUCL");
+                w.u8(t); w.u8(p); w.u8(unsigned(pattern.euclids.size()));
+                for (const auto& e : pattern.euclids) { w.u8(e.key); w.u8(e.hits); w.u8(e.steps); w.u8(e.rotate); }
+                w.end(at);
+            }
+            if (!pattern.punches.empty()) { // punches kept with it (pad-fx C): tick, length, kind, target, depth, snap | tail << 4
+                at = w.begin("KEPT");   // | 128: kept since they end with their pattern (one across the loop point in two parts)
+                w.u8(t); w.u8(p); w.u8(unsigned(pattern.punches.size()));
+                for (const auto& k : pattern.punches) {
+                    w.u32(k.tick); w.u32(k.length); w.u8(k.kind); w.u8(k.target); w.u8(k.depth);
+                    w.u8(unsigned(k.snap & 3) | unsigned(k.tail & 3) << 4 | 128);
+                }
+                w.end(at);
+            }
+            if (!pattern.lanes.empty()) { // kit lanes of their own length (roadmap P1): key, ticks
+                at = w.begin("LANE");
+                w.u8(t); w.u8(p); w.u8(unsigned(pattern.lanes.size()));
+                for (const auto& l : pattern.lanes) { w.u8(l.key); w.u32(l.length); }
+                w.end(at);
+            }
+            // Motion (roadmap P1): the pattern's own points at their ticks, locks with their hold. The mixer strip's lanes
+            // (model/strip.h) in MOTS, the same records, which older builds skip (they took 206.. for a pad's values).
+            for (bool strip_lanes : {false, true}) {
+                uint32_t count = 0;
+                for (const auto& m : pattern.motion) count += is_strip_lane(m.param) == strip_lanes;
+                if (!count) continue;
+                at = w.begin(strip_lanes ? "MOTS" : "MOTK");
+                w.u8(t); w.u8(p); w.u32(count);
+                for (const auto& m : pattern.motion)
+                    if (is_strip_lane(m.param) == strip_lanes) { w.u32(m.tick); w.u8(m.param); w.u8(m.pad); w.i16(m.value); w.u16(m.hold); }
+                w.end(at);
+            }
+        }
+    }
+    bool sped = false; // the tracks' playback speeds (roadmap P1), when one is not x1
+    for (const auto& tr : project.tracks) sped |= tr.speed != speed_normal;
+    if (sped) {
+        at = w.begin("TSPD");
+        w.u8(track_count);
+        for (const auto& tr : project.tracks) w.u8(tr.speed);
+        w.end(at);
+    }
+    bool named = false; // tracks with a name of their own (Tracks, Shift + Push), kept when their sound changes
+    for (const auto& tr : project.tracks) named |= tr.named;
+    if (named) {
+        at = w.begin("TNAM");
+        w.u8(1); // the section's version
+        w.u8(track_count);
+        for (const auto& tr : project.tracks) w.u8(tr.named);
+        w.end(at);
+    }
+    at = w.begin("TIME"); // time signature, BPM per pattern (P1-P16, as older builds read it)
+    w.u8(project.signature); w.u8(project.seq_tempo);
+    for (unsigned n = 0; n < legacy_patterns; ++n) w.u16(project.pattern_tempo[n]);
+    w.end(at);
+    at = w.begin("TIM2"); // BPM per pattern, every one of the banks
+    w.u8(pattern_count);
+    for (auto v : project.pattern_tempo) w.u16(v);
+    w.end(at);
+    at = w.begin("SONG");
+    const auto& song = project.song;
+    w.u16(song.count);
+    for (unsigned n = 0; n < song.count; ++n) {
+        const auto& c = song.clips[n];
+        w.u8(c.track); w.u8(c.pattern); w.u16(c.bar); w.u16(c.bars); w.u8(c.muted);
+    }
+    w.u8(song.marker_count);
+    for (unsigned n = 0; n < song.marker_count; ++n) { w.u16(song.markers[n].bar); w.text(song.markers[n].name); }
+    w.u16(song.loop_start); w.u16(song.loop_end);
+    w.end(at);
+    for (unsigned b = 0; b < bus_count; ++b) {
+        at = w.begin("BUSS");
+        w.u8(b); w.u8(project.buses[b].level); write_chain(w, project.buses[b].fx);
+        w.u8(project.buses[b].mute); // the mixer: past what older builds read
+        w.end(at);
+    }
+    at = w.begin("MSTR");
+    write_chain(w, project.master);
+    w.end(at);
+    // The Looper (docs/LOOPER.md): on, its settings, each loop's set length, feedback, source and the audio kept
+    // beside the file (frames, ticks in 1/65536, tempo, layers); its tracks' strips and chains.
+    bool loops_used = project.looper.on;
+    for (unsigned l = 0; l < loop_tracks; ++l) loops_used |= project.loop_fx[l].count() > 0;
+    if (loops_used) {
+        const auto& lp = project.looper;
+        at = w.begin("LOOP");
+        w.u8(lp.on); w.u8(lp.quantize); w.u8(lp.then); w.u8(lp.transport);
+        w.u8(loop_record); // each loop's record is this long; a reader skips what it does not know, takes defaults for what is missing
+        for (const auto& l : lp.loops) {
+            w.u8(l.bars); w.u8(l.feedback); w.u8(l.source); w.u32(l.frames);
+            w.u32(uint32_t(std::clamp(l.ticks, 0.0, 65535.0) * 65536.0)); w.u16(l.tempo); w.u8(l.layers); w.u8(l.stopped);
+        }
+        w.end(at);
+        at = w.begin("LPMX");
+        for (unsigned l = 0; l < loop_tracks; ++l) {
+            const auto& m = project.loop_mix[l];
+            w.u8(m.level); w.i16(m.pan); w.u8(m.send); w.u8(m.bus); w.u8(m.mute); w.u8(m.solo);
+            write_chain(w, project.loop_fx[l]);
+        }
+        w.end(at);
+    }
+    at = w.begin("TRNS"); // each track's transposition
+    for (unsigned t = 0; t < track_count; ++t) w.i16(project.tracks[t].transpose);
+    w.end(at);
+    at = w.begin("SPCH"); // punches written into the song
+    w.u16(project.song.punch_count);
+    for (unsigned n = 0; n < project.song.punch_count; ++n) {
+        const auto& e = project.song.punches[n];
+        w.u16(e.bar); w.u8(e.step); w.u8(e.length); w.u8(e.kind); w.u8(e.target); w.u8(e.depth);
+    }
+    w.end(at);
+    at = w.begin("PDFX"); // each sampler pad's own chain
+    for (unsigned t = 0; t < track_count; ++t)
+        for (unsigned n = 0; n < sampler_pads; ++n) {
+            const auto& chain = project.tracks[t].pad_fx.at[n];
+            if (chain.count()) { w.u8(t); w.u8(n); write_chain(w, chain); }
+        }
+    w.u8(255);
+    w.end(at);
+    at = w.begin("PNCH");
+    w.u8(project.punch_target); w.u8(project.punch_bank); w.u8(project.punch_depth); w.u8(project.punch_snap); w.u8(project.punch_tail);
+    w.u8(255); // where older builds wrote each pad's own punch (Pad Punch, removed)
+    w.u8(project.punch_quantize); // after what older builds read: Pad FX quantize (Shift + B3)
+    w.end(at);
+    at = w.begin("KNFX"); // Knob FX (parity phase 7): the entry, its effect and values, bypass, the tracks and kit pads it is on
+    {
+        const auto& k = project.knob_fx;
+        w.u8(k.choice); w.u8(k.kind); w.u8(k.bypass);
+        for (auto v : k.params) w.i16(v);
+        w.u16(k.tracks);
+        for (unsigned t = 0; t < track_count; ++t)
+            if (k.any_pad(t)) { w.u8(t); w.u32(uint32_t(k.pads[t][0])); w.u32(uint32_t(k.pads[t][0] >> 32)); w.u32(uint32_t(k.pads[t][1])); w.u32(uint32_t(k.pads[t][1] >> 32)); }
+        w.u8(255);
+        w.u8(1); // Knob FX C, after what older builds read (version 1): A and B of K1-K3, the fader's place between them
+        for (auto v : k.a) w.i16(v);
+        for (auto v : k.b) w.i16(v);
+        w.u8(k.morph);
+    }
+    w.end(at);
+    at = w.begin("PFXP"); // Pad FX's K1-K3 for the MPC's sixteen, Flex Beat's settings (parity phase 7b)
+    for (const auto& one : project.pad_fx_params) for (auto v : one) w.i16(v);
+    w.u8(project.flex.mode); w.u8(project.flex.mix); w.u8(project.flex.quantize);
+    w.end(at);
+    at = w.begin("CMPR"); // the master compressor (parity phase 7)
+    {
+        const auto& c = project.compressor;
+        w.u8(c.on); w.u8(c.color); w.u8(c.attack); w.u8(c.release); w.u8(c.amount); w.u8(c.boost);
+        w.u8(c.sidechain); w.u8(c.key); // Sidechain (older files end before it: off)
+        w.u8(c.key_pad);                // its key pad (older files: the whole track)
+    }
+    w.end(at);
+    for (unsigned t = 0; t < track_count; ++t) { // kit pads in banks E-H (parity phase 1c)
+        const auto& tr = project.tracks[t];
+        unsigned used = 0;
+        for (unsigned n = legacy_pads; n < sampler_pads; ++n) used += tr.pads[n].used();
+        if (!used) continue;
+        at = w.begin("KITX");
+        w.u8(t); w.u8(used);
+        for (unsigned n = legacy_pads; n < sampler_pads; ++n) if (tr.pads[n].used()) write_pad(w, n, tr.pads[n]);
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // every used kit pad's Sample Mode values (parity phase 4)
+        const auto& tr = project.tracks[t];
+        unsigned used = 0;
+        for (const auto& pad : tr.pads) used += pad.used();
+        if (!used) continue;
+        at = w.begin("PAD4");
+        w.u8(t); w.u8(used);
+        for (unsigned n = 0; n < sampler_pads; ++n) if (tr.pads[n].used()) write_pad4(w, n, tr.pads[n]);
+        w.end(at);
+    }
+    { // Modulators (roadmap P4): those in use, each with its targets
+        unsigned used = 0;
+        for (const auto& m : project.modulators) used += m.kind != ModKind::Off || m.target_count();
+        if (used) {
+            at = w.begin("MODS");
+            w.u8(used);
+            for (unsigned n = 0; n < modulator_count; ++n) {
+                const auto& m = project.modulators[n];
+                if (m.kind == ModKind::Off && !m.target_count()) continue;
+                w.u8(n); w.u8(unsigned(m.kind)); w.u8(unsigned(m.shape)); w.u8(m.sync); w.u8(m.rate); w.u8(m.division);
+                w.u8(m.source); w.u8(m.attack); w.u8(m.release);
+                w.u8(m.target_count());
+                for (unsigned i = 0; i < modulator_targets; ++i)
+                    if (const auto& t = m.targets[i]; t.used()) { w.u8(i); w.u8(t.track); w.u8(t.param); w.u8(t.pad); w.u8(uint8_t(t.depth)); w.i16(t.low); w.i16(t.high); }
+            }
+            w.end(at);
+        }
+    }
+    { // Macros (roadmap P4): those with targets, each with its value
+        unsigned used = 0;
+        for (const auto& m : project.macros) used += m.target_count() > 0;
+        if (used) {
+            at = w.begin("MACR");
+            w.u8(used);
+            for (unsigned n = 0; n < macro_count; ++n) {
+                const auto& m = project.macros[n];
+                if (!m.target_count()) continue;
+                w.u8(n); w.u8(m.value); w.u8(m.target_count());
+                for (unsigned i = 0; i < macro_targets; ++i)
+                    if (const auto& t = m.targets[i]; t.used()) { w.u8(i); w.u8(t.track); w.u8(t.param); w.u8(t.pad); w.i16(t.low); w.i16(t.high); }
+            }
+            w.end(at);
+        }
+    }
+    { // Compressors and Gates keyed by another track or bus (roadmap P4): chain, slot, key
+        unsigned keyed = 0;
+        for (unsigned n = 0; n < mix_chain_count; ++n) for (const auto& s : project.chain(n).slots) keyed += s.used() && s.key;
+        if (keyed) { // the submixes' chains (25-32) and keys (21-28) are past what older builds read, which skip them
+            at = w.begin("FXKY");
+            w.u16(keyed);
+            for (unsigned n = 0; n < mix_chain_count; ++n)
+                for (unsigned k = 0; k < max_slots; ++k)
+                    if (const auto& s = project.chain(n).slots[k]; s.used() && s.key) { w.u8(n); w.u8(k); w.u8(s.key); }
+            w.end(at);
+        }
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // kit pads whose loop's seam is crossfaded (roadmap P3): pad, milliseconds
+        const auto& tr = project.tracks[t];
+        unsigned used = 0;
+        for (const auto& pad : tr.pads) used += pad.used() && pad.loop_xfade;
+        if (!used) continue;
+        at = w.begin("PXFD");
+        w.u8(t); w.u8(used);
+        for (unsigned n = 0; n < sampler_pads; ++n) if (tr.pads[n].used() && tr.pads[n].loop_xfade) { w.u8(n); w.u8(tr.pads[n].loop_xfade); }
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // kit pads in a colour of their own (Stage's COLOUR, an MPC kit's): pad, 0xRRGGBB
+        const auto& tr = project.tracks[t];
+        unsigned used = 0;
+        for (const auto& pad : tr.pads) used += pad.used() && pad.colour;
+        if (!used) continue;
+        at = w.begin("PCOL");
+        w.u8(t); w.u8(used);
+        for (unsigned n = 0; n < sampler_pads; ++n) if (tr.pads[n].used() && tr.pads[n].colour) { w.u8(n); w.u32(tr.pads[n].colour); }
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // kit pads' own sends into buses A-D: pad, four sends
+        const auto& tr = project.tracks[t];
+        unsigned used = 0;
+        for (const auto& pad : tr.pads) used += pad.used() && pad.sending();
+        if (!used) continue;
+        at = w.begin("PSND");
+        w.u8(t); w.u8(used);
+        for (unsigned n = 0; n < sampler_pads; ++n)
+            if (tr.pads[n].used() && tr.pads[n].sending()) { w.u8(n); for (auto send : tr.pads[n].sends) w.u8(send); }
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // kit pads sent to a submix: pad, submix 1-8
+        const auto& tr = project.tracks[t];
+        unsigned used = 0;
+        for (const auto& pad : tr.pads) used += pad.used() && pad.out;
+        if (!used) continue;
+        at = w.begin("PSUB");
+        w.u8(t); w.u8(used);
+        for (unsigned n = 0; n < sampler_pads; ++n) if (tr.pads[n].used() && tr.pads[n].out) { w.u8(n); w.u8(tr.pads[n].out); }
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // kit pads with a cloud, or cloud values of their own
+        const auto& tr = project.tracks[t];
+        unsigned used = 0;
+        for (const auto& pad : tr.pads) used += pad.used() && !pad.plain_cloud();
+        if (!used) continue;
+        at = w.begin("PCLD");
+        w.u8(t); w.u8(used);
+        for (unsigned n = 0; n < sampler_pads; ++n) if (tr.pads[n].used() && !tr.pads[n].plain_cloud()) write_cloud(w, n, tr.pads[n]);
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // kit pads with layers, or layer values of their own (roadmap P3)
+        const auto& tr = project.tracks[t];
+        unsigned used = 0;
+        for (const auto& pad : tr.pads) used += pad.used() && !pad.plain_layers();
+        if (!used) continue;
+        at = w.begin("LAYR");
+        w.u8(t); w.u8(used);
+        for (unsigned n = 0; n < sampler_pads; ++n) if (tr.pads[n].used() && !tr.pads[n].plain_layers()) write_layers(w, n, tr.pads[n]);
+        w.end(at);
+    }
+    // Instruments' zones trimmed (round 3 "instrument C"): pad, slot, zone, cents, tenths of a dB. ZTRM names the slot
+    // in a byte; the trims of an instrument in a slot past legacy_sample_slots go in ZTRX, the slot in two.
+    for (unsigned t = 0; t < track_count; ++t)
+        for (bool wide : {false, true}) {
+            const auto& tr = project.tracks[t];
+            auto live = [&](const ZoneTrim& z) { // stale ones not kept
+                return z.used() && tr.pads[z.pad % sampler_pads].sample == z.slot && (z.slot >= legacy_sample_slots) == wide;
+            };
+            unsigned used = unsigned(std::count_if(tr.zone_trims.begin(), tr.zone_trims.end(), live));
+            if (!used) continue;
+            at = w.begin(wide ? "ZTRX" : "ZTRM");
+            w.u8(t); w.u8(used);
+            for (const auto& z : tr.zone_trims) {
+                if (!live(z)) continue;
+                w.u8(z.pad);
+                if (wide) w.u16(z.slot); else w.u8(z.slot);
+                w.u16(z.zone); w.u8(uint8_t(z.tune)); w.i16(z.level);
+            }
+            w.end(at);
+        }
+    for (unsigned t = 0; t < track_count; ++t) { // the four sends of a track that sends to more than one bus (round 2)
+        const auto& sends = project.tracks[t].mix.sends;
+        if (std::count_if(sends.begin(), sends.end(), [](uint8_t v) { return v > 0; }) < 2) continue; // TRAK says it already
+        at = w.begin("SNDS");
+        w.u8(t); w.u8(bus_count);
+        for (auto v : sends) w.u8(v);
+        w.end(at);
+    }
+    // The mixer (rhythmer-sample docs/MIXER_PLAN.md). Each strip that is not as it comes (STRP: its number, trim,
+    // width, the bands, the compressor), the tracks' outputs when one goes to a submix (OUTS), and each submix that
+    // is not as it comes (SUBM: name, level, pan, mute, solo, sends, chain). A reader skips what a newer build
+    // appends to a record; older builds skip the sections, and play every strip flat into the master.
+    for (unsigned n = 0; n < strip_channels; ++n) {
+        const auto& s = project.strip(n);
+        if (s.flat()) continue;
+        at = w.begin("STRP");
+        w.u8(n); w.i16(s.trim); w.u8(s.width); w.u8(s.eq_on);
+        w.u8(eq_bands); for (auto g : s.eq) w.i16(g);
+        w.u8(s.comp_on); w.u8(s.comp_amount); w.u8(s.comp_ratio); w.u8(s.comp_speed); w.u8(s.comp_key); w.u8(s.comp_mix);
+        w.i16(s.comp_gain);
+        w.end(at);
+    }
+    if (project.input_wet) { // the mixer's input recorded after its strip
+        at = w.begin("INWT");
+        w.u8(1);
+        w.end(at);
+    }
+    if (std::any_of(project.tracks.begin(), project.tracks.end(), [](const Track& t) { return t.mix.out != out_master; })) {
+        at = w.begin("OUTS");
+        w.u8(track_count);
+        for (const auto& t : project.tracks) w.u8(t.mix.out);
+        w.end(at);
+    }
+    for (unsigned n = 0; n < sub_count; ++n) {
+        const auto& sub = project.subs[n];
+        if (sub.plain()) continue;
+        at = w.begin("SUBM");
+        w.u8(n); w.text(sub.name); w.u8(sub.mix.level); w.i16(sub.mix.pan); w.u8(sub.mix.mute); w.u8(sub.mix.solo);
+        w.u8(bus_count); for (auto v : sub.mix.sends) w.u8(v);
+        write_chain(w, sub.fx);
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // 16 Levels' ends where they are not as they come (round 2)
+        const auto& tr = project.tracks[t];
+        if (tr.levels_ends == Track {}.levels_ends) continue;
+        at = w.begin("LVLE");
+        w.u8(t); w.u8(4);
+        for (const auto& e : tr.levels_ends) { w.u8(uint8_t(e[0])); w.u8(uint8_t(e[1])); }
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // the fader's target where one is picked, or it is off (parity phase 8)
+        const auto& tr = project.tracks[t];
+        if (tr.fader_target == fader_by_engine && tr.fader_on && !tr.fader_learned.learned() && !tr.fader_pin) continue;
+        at = w.begin("FADR");
+        w.u8(t); w.u8(tr.fader_target); w.u8(tr.fader_on);
+        const auto& l = tr.fader_learned; // fader C, after what older builds read: the pot it learned, and PIN
+        w.u8(uint8_t(l.what)); w.u16(l.lane); w.u8(l.engine); w.u8(l.pot); w.u8(tr.fader_pin);
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // the Prog layout's progression, its key and voicing, where it has one
+        const auto& tr = project.tracks[t];
+        if (tr.prog.empty() && !tr.prog_shift && !tr.prog_voicing && !tr.prog.name[0]) continue;
+        at = w.begin("PROG");
+        w.u8(t); w.u8(1); // the section's version
+        w.text(tr.prog.name); w.text(tr.prog.file); w.u8(tr.prog.root); w.u8(uint8_t(tr.prog_shift)); w.u8(tr.prog_voicing);
+        w.u8(tr.prog.count);
+        for (unsigned n = 0; n < tr.prog.count && n < prog_chords; ++n) {
+            const auto& chord = tr.prog.chords[n];
+            w.u8(chord.root ? 1 : 0); w.text(chord.name); w.u8(chord.count);
+            for (unsigned k = 0; k < chord.count; ++k) w.u8(chord.notes[k]);
+        }
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // a pattern chain (seq-sheet2 B): the patterns in the order they play
+        const auto& tr = project.tracks[t];
+        if (tr.chain_count < 2) continue;
+        at = w.begin("CHAN");
+        w.u8(t); w.u8(tr.chain_count);
+        for (unsigned n = 0; n < tr.chain_count; ++n) w.u8(tr.chain[n]);
+        w.end(at);
+    }
+    if (!project.song.tempo.empty()) { // the song's tempo lane (roadmap P5): bar, tempo, ramp
+        const auto& lane = project.song.tempo;
+        at = w.begin("TMPL");
+        w.u8(lane.count);
+        for (unsigned n = 0; n < lane.count; ++n) { w.u16(lane.points[n].bar); w.u16(lane.points[n].tempo); w.u8(lane.points[n].ramp); }
+        w.end(at);
+    }
+    for (unsigned n = 0; n < pattern_count; ++n) { // scenes (roadmap P5): a column's name, tempo and colour, where it has one
+        const auto& scene = project.scenes[n];
+        if (scene.plain()) continue;
+        at = w.begin("SCNE");
+        w.u8(n); w.text(scene.name); w.u16(scene.tempo); w.u8(scene.colour);
+        w.end(at);
+    }
+    { // sequence links (model/scene_links.h): the scene in hand, the tracks off, each track's pattern in each scene
+        at = w.begin("SEQL");
+        w.u8(1); // the section's version
+        w.u8(project.scene);
+        uint16_t off = 0;
+        unsigned listed = 0;
+        for (unsigned t = 0; t < track_count; ++t) {
+            const auto& track = project.tracks[t];
+            if (track.off) off = uint16_t(off | 1u << t);
+            for (auto v : track.in_scene) if (v) { ++listed; break; }
+        }
+        w.u16(off);
+        w.u8(uint8_t(listed));
+        for (unsigned t = 0; t < track_count; ++t) {
+            const auto& track = project.tracks[t];
+            bool any = false;
+            for (auto v : track.in_scene) any |= v != 0;
+            if (!any) continue;
+            w.u8(uint8_t(t));
+            for (auto v : track.in_scene) w.u8(v);
+        }
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // a MIDI track (docs/MIDI_TRACKS.md): its port and channel are in TRAK's params
+        if (project.tracks[t].engine != EngineKind::Midi) continue;
+        at = w.begin("MIDT");
+        w.u8(t); w.u8(3); // the section's version: 2 has bank, program and the CCs in TRAK's params; 3 the rest of roadmap P4's
+        const auto& midi = project.tracks[t].midi;
+        w.text(midi.device);
+        for (auto n : midi.drum_note) w.u8(n);
+        w.text(midi.sysex);
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // a KEYGROUP track (model/project.h); TRAK said None
+        if (project.tracks[t].engine != EngineKind::Keygroup) continue;
+        at = w.begin("KGRP");
+        w.u8(t); w.u8(1); // the section's version
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // an AUDIO track (freeze plan F3) and its source and monitor; TRAK said None
+        const auto& tr = project.tracks[t];
+        if (tr.engine != EngineKind::Audio) continue;
+        at = w.begin("AUDT");
+        w.u8(t); w.u8(1); // the section's version
+        w.u8(unsigned(tr.audio.source)); w.u8(unsigned(tr.audio.monitor));
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) // an audio track's pattern's take (freeze plan F3, model/audio_track.h)
+        for (unsigned p = 0; p < pattern_count; ++p) {
+            const auto& g = patterns.at[t][p].audio;
+            if (!g.used()) continue;
+            at = w.begin("PAUD");
+            w.u8(1); // the section's version
+            w.u8(t); w.u8(p); w.u16(g.take);
+            w.u32(g.offset); w.u32(g.frames); w.u32(g.take_frames); w.u16(g.tempo); w.i16(g.gain);
+            w.u32(g.fade_in); w.u32(g.fade_out);
+            w.u8(unsigned(g.reverse) | unsigned(g.warp) << 1);
+            w.u8(unsigned(g.mode)); w.i16(g.semi); w.i16(g.fine);
+            w.end(at);
+        }
+    for (unsigned t = 0; t < track_count; ++t) { // a PLUGIN track and the entry of PLUG it plays; TRAK said None
+        const auto& tr = project.tracks[t];
+        if (tr.engine != EngineKind::Plugin) continue;
+        at = w.begin("PLGT");
+        w.u8(t); w.u8(tr.plugin);
+        w.end(at);
+    }
+    for (unsigned e = 0; e < max_plugins; ++e) { // the plug-ins: the entry, its path, its state as it saved itself
+        const auto& ref = project.plugins[e];
+        if (!ref.used()) continue;
+        at = w.begin("PLUG");
+        size_t length = std::strlen(ref.path);
+        w.u8(e); w.u16(unsigned(length));
+        w.out.insert(w.out.end(), ref.path, ref.path + length);
+        static const std::vector<uint8_t> none;
+        const auto& state = states ? (*states)[e] : none;
+        w.u32(uint32_t(state.size()));
+        w.out.insert(w.out.end(), state.begin(), state.end());
+        w.u32(uint32_t(ref.id)); w.text(ref.name); // after the state: which plug-in of a bundle, and its name
+        w.u8(ref.transport ? 1 : 0);              // and TRANSPORT (without it: on)
+        w.text(ref.preset);                       // and the preset picked last (without it: none)
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // a track's own MIDI channel (parity phase 9)
+        if (!project.tracks[t].midi_channel && project.tracks[t].midi_in == TrackMidiIn::Any) continue;
+        at = w.begin("MIDC");
+        w.u8(t); w.u8(project.tracks[t].midi_channel); w.u8(unsigned(project.tracks[t].midi_in)); // the port: after the channel
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // muted kit pads, a bit each
+        const auto& tr = project.tracks[t];
+        if (!tr.any_pad_muted()) continue;
+        at = w.begin("PMUT");
+        w.u8(t); w.u8(unsigned(tr.pad_mutes.size()));
+        for (auto bits : tr.pad_mutes) { w.u32(uint32_t(bits)); w.u32(uint32_t(bits >> 32)); }
+        w.end(at);
+    }
+    // A sample's chop is kept in its WAV file (shell/mpc_wav_slices.h), not here; older files' CHOP is read.
+    // SMPL names its slot in a byte and holds the first legacy_sample_slots, as it always has; the slots past them
+    // go in SMPX, the slot in two. A build that holds 64 samples a project skips SMPX and loads the pads that name
+    // those slots empty (its read_pad() takes a slot past its own as none).
+    for (unsigned n = 0; n < sample_slots; ++n) {
+        const auto& s = project.samples[n];
+        if (!s.used()) continue;
+        if (n < legacy_sample_slots) { at = w.begin("SMPL"); w.u8(n); }
+        else { at = w.begin("SMPX"); w.u16(n); }
+        w.text(s.path); w.text(s.name);
+        w.u8(uint8_t(s.root)); // its note, after what older builds read
+        w.end(at);
+    }
+    at=w.begin("GN8S"); w.u8(2); w.u16(project.gen8.seed); w.u8(project.gen8.genre);
+    w.u8(project.gen8.amount); w.u8(project.gen8.complexity); w.end(at);
+    at=w.begin("GN9S");w.u8(project.gen8.first);w.u8(project.gen8.last);w.u8(project.gen8.assign);w.u8(project.gen8.bars);w.end(at);
+    at=w.begin("GPPS");for(const auto& p:project.plugins)w.u16(uint16_t(p.gen_program+1));w.end(at);
+    at=w.begin("BRKS");for(const auto& t:project.tracks)w.u8(t.break_bars);w.end(at);
+    at=w.begin("GNGP");w.u8(project.gen8.group);w.end(at);
+    at=w.begin("BRPF");for(const auto& t:project.tracks)for(auto v:t.break_perf)w.u16(v);w.end(at);
+    at=w.begin("BRSR");for(const auto& t:project.tracks)w.u8(t.break_source);w.end(at);
+    at=w.begin("CHGN");w.u8(1);for(const auto& t:project.tracks){const auto& a=t.chord_gen;
+        w.u8(a.type);w.u8(a.genre);w.u8(a.progression);w.u8(a.chords);w.u8(a.bars);w.u8(a.rhythm);w.u8(a.gate);w.u8(a.color);w.u8(a.voicing);w.u8(a.octave);
+        w.u8(a.energy);w.u8(a.play);w.u8(a.rate);w.u8(a.local);w.u8(a.root);w.u8(a.scale);w.u32(a.seed);w.u32(a.harmony);}w.end(at);
+    at=w.begin("GNLN");w.u8(project.gen8.length);w.end(at);
+    at=w.begin("ACGN");for(const auto& t:project.tracks){const auto& a=t.acid_gen;
+        w.u8(a.density);w.u8(a.accent);w.u8(a.slide);w.u8(a.octaves);w.u8(a.octave);w.u8(a.auto_bars);w.u32(a.seed);}w.end(at);
+    if (prints)
+        for (const auto& p : prints->records) { // freeze plan F2a: a print, its file in "<project> Prints"
+            at = w.begin("PRNT");
+            w.u8(1); // the section's version
+            w.u8(p.track); w.u8(p.pattern); w.u8(unsigned(p.tap)); w.u8(unsigned(p.tail));
+            w.u32(p.frames); w.u32(p.pass); w.u32(uint32_t(p.hash)); w.u32(uint32_t(p.hash >> 32));
+            w.text(p.file.c_str());
+            w.u32(p.rate);
+            w.u8(p.sends); // after what older builds read: the buses its pad sends ride along for
+            w.end(at);
+        }
+    if (prints)
+        for (unsigned t = 0; t < track_count; ++t) { // freeze plan F2b: a frozen track (older builds skip it and play live)
+            const auto& f = prints->freeze[t];
+            if (!f.frozen()) continue;
+            at = w.begin("FRZN");
+            w.u8(1); // the section's version
+            w.u8(t); w.u8(unsigned(f.state)); w.u8(unsigned(f.tap)); w.u8(unsigned(f.tail));
+            for (auto word : f.patterns) { w.u32(uint32_t(word)); w.u32(uint32_t(word >> 32)); }
+            w.end(at);
+        }
+    return w.out;
+}
+
+std::string load_project(const std::vector<uint8_t>& data, Project& target, PatternBank& target_patterns, unsigned* version,
+                         std::array<std::vector<uint8_t>, max_plugins>* states, PrintTable* target_prints) {
+    std::array<std::vector<uint8_t>, max_plugins> plugin_states;
+    PrintTable prints;
+    unsigned file_version = 0;
+    bool keygroups_known = false; // KGVR: saved since keygroup tracks
+    bool links_known = false;     // SEQL: saved since sequence links
+    std::array<std::bitset<pattern_count>, track_count> played_on; // KEPT: patterns whose punches may reach past their end
+    if (data.size() < 8 || std::memcmp(data.data(), magic, 8)) return "not a Rhythmer project";
+    auto project = std::make_unique<Project>();
+    auto patterns = std::make_unique<PatternBank>();
+    std::array<bool, track_count> pad4 {};  // tracks whose pads had a PAD4 section
+    std::array<bool, track_count> programs {}; // tracks whose patterns' programs came in PPRG
+    std::array<uint8_t, track_count> legacy {}; // tracks of a synth or kit Rhythmer no longer has (legacy_engine)
+    // Motion before roadmap P1 (MOT2, MOTP, MOTW: the project's, on sixteenths; MOTN: steps of each pattern's division),
+    // laid into the patterns at the end, once their lengths and divisions are known.
+    struct LegacyMotion { uint8_t track = 0, pattern = 0, param = 0, pad = 0; uint16_t step = 0; int16_t value = 0; bool division = false; };
+    std::vector<LegacyMotion> legacy_motion;
+    Reader file(data.data() + 8, data.size() - 8);
+    while (!file.done() && file.ok) {
+        char tag[5];
+        Reader r = file.section(tag);
+        std::string name = tag;
+        if (name == "RID1") { r.text(project->recovery_id, sizeof(project->recovery_id));
+        } else if (name == "PROJ") {
+            r.text(project->name, sizeof(project->name));
+            project->tempo = uint16_t(std::clamp<unsigned>(r.u16(), 300, 3000));
+            project->swing = uint8_t(std::clamp<unsigned>(r.u8(), 50, 75));
+            project->root = uint8_t(r.u8() % 12); project->scale = uint8_t(r.u8());
+        } else if (name == "GN8S") {
+            auto revision=r.u8();if(revision==1||revision==2) {
+                project->gen8.seed=uint16_t(std::min<unsigned>(r.u16(),9999));
+                unsigned genre=std::min<unsigned>(r.u8(),revision==1?58:60);if(revision==1){unsigned at=0;while(at<59&&gen_fm1_menu[at]!=genre)++at;genre=at+2;}project->gen8.genre=uint8_t(genre);
+                project->gen8.amount=uint8_t(std::min<unsigned>(r.u8(),100));
+                project->gen8.complexity=uint8_t(std::min<unsigned>(r.u8(),100));
+            }
+        } else if(name=="BRPF") {for(auto& t:project->tracks)for(unsigned i=0;i<10;i++){unsigned lo=i==6?3:i==7?1:i==8?2:0,hi=i==4||i==5||i==9?1:i==6?80:i==7?std::min<unsigned>(300,t.break_perf[6]*10):i==8?4:127;t.break_perf[i]=uint16_t(std::clamp<unsigned>(r.u16(),lo,hi));}
+        } else if(name=="BRSR") {for(auto& t:project->tracks)t.break_source=r.u8()%2;
+        } else if(name=="GNLN") {project->gen8.length=uint8_t(std::min<unsigned>(r.u8(),16));
+        } else if(name=="CHGN") {if(r.u8()==1)for(auto& t:project->tracks){auto& a=t.chord_gen;
+            a.type=r.u8()%2;a.genre=std::min<unsigned>(r.u8(),60);a.progression=r.u8()%7;a.chords=std::clamp<unsigned>(r.u8(),1,8);a.bars=std::clamp<unsigned>(r.u8(),1,16);a.rhythm=std::min<unsigned>(r.u8(),100);a.gate=std::clamp<unsigned>(r.u8(),10,100);a.color=r.u8()%4;a.voicing=r.u8()%5;a.octave=std::clamp<unsigned>(r.u8(),2,6);
+            a.energy=std::min<unsigned>(r.u8(),100);a.play=r.u8()%5;a.rate=r.u8()%4;a.local=r.u8()%2;a.root=r.u8()%12;a.scale=r.u8()%13;a.seed=r.u32();a.harmony=r.u32();}
+        } else if(name=="ACGN") {for(auto& t:project->tracks){auto& a=t.acid_gen;
+        a.density=std::min<unsigned>(r.u8(),100);a.accent=std::min<unsigned>(r.u8(),100);a.slide=std::min<unsigned>(r.u8(),100);
+        a.octaves=std::clamp<unsigned>(r.u8(),1,3);a.octave=std::min<unsigned>(r.u8(),4);a.auto_bars=std::min<unsigned>(r.u8(),16);a.seed=r.u32();}
+        } else if(name=="GNGP") {project->gen8.group=uint8_t(std::min<unsigned>(r.u8(),3));
+        } else if(name=="GN9S") {
+            project->gen8.first=uint8_t(std::min<unsigned>(r.u8(),15));project->gen8.last=uint8_t(std::min<unsigned>(r.u8(),15));project->gen8.assign=uint8_t(r.u8()!=0);project->gen8.bars=uint8_t(std::clamp<unsigned>(r.u8(),1,4));
+        } else if(name=="GPPS") {for(auto& p:project->plugins)p.gen_program=int16_t(std::min<unsigned>(r.u16(),32768))-1;
+        } else if(name=="BRKS") {for(auto& t:project->tracks)t.break_bars=uint8_t(std::min<unsigned>(r.u8(),4));
+        } else if (name == "TRAK") {
+            unsigned t = r.u8();
+            if (t >= track_count) continue;
+            auto& tr = project->tracks[t];
+            unsigned engine = r.u8();
+            legacy[t] = engine >= legacy_engine::prophet && engine <= legacy_engine::kit909 ? uint8_t(engine) : 0;
+            tr.engine = legacy[t] || engine >= unsigned(EngineKind::Count) ? EngineKind::None : EngineKind(engine);
+            tr.preset = uint16_t(r.u16()); r.text(tr.name, sizeof(tr.name));
+            unsigned params = r.u8();
+            for (unsigned k = 0; k < params; ++k) { int v = r.i16(); if (k < max_params) tr.params[k] = int16_t(v); }
+            tr.mix.level = uint8_t(std::min(127u, r.u8())); tr.mix.pan = int8_t(std::clamp(r.i16(), -50, 50));
+            tr.mix.send = uint8_t(std::min(100u, r.u8())); tr.mix.bus = uint8_t(r.u8() % bus_count);
+            tr.mix.sends = {}; tr.mix.sends[tr.mix.bus] = tr.mix.send; // one send, as older files keep it; SNDS has all four
+            tr.mix.mute = r.u8() != 0; tr.mix.solo = r.u8() != 0;
+            tr.pattern = uint8_t(r.u8() % pattern_count); tr.layout = PadLayout(std::min<unsigned>(r.u8(), unsigned(PadLayout::Count) - 1));
+            tr.octave = int8_t(std::clamp(r.i16(), -1, 7)); tr.last_note = uint8_t(r.u8() & 127); // octave: a kit's 16 Levels goes to -1 (model/scales.h)
+            unsigned routes = r.u8();
+            for (unsigned k = 0; k < routes; ++k) {
+                ModRoute m {uint8_t(r.u8()), uint8_t(r.u8()), int8_t(std::clamp(r.i16(), -100, 100))};
+                if (k < mod_routes) tr.mods[k] = m;
+            }
+            read_chain(r, tr.fx);
+            tr.bank = uint8_t(r.u8() % sampler_banks); tr.last_pad = uint8_t(r.u8() % sampler_pads);
+            tr.levels = r.u8() != 0; tr.levels_pad = uint8_t(r.u8() % sampler_pads); tr.levels_kind = uint8_t(r.u8() % 6); // LevelsKind: Velocity, Scale, Tune, Filter, Loop, Zones
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) read_pad(r, tr.pads.data(), sampler_pads);
+        } else if (name == "PVER") {
+            file_version = r.u8();
+        } else if (name == "KGVR") {
+            keygroups_known = r.u8() >= 1;
+        } else if (name == "KITX") {
+            unsigned t = r.u8();
+            if (t >= track_count) continue;
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) read_pad(r, project->tracks[t].pads.data(), sampler_pads);
+        } else if (name == "PAD4") {
+            unsigned t = r.u8();
+            if (t >= track_count) continue;
+            pad4[t] = true;
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) read_pad4(r, project->tracks[t].pads.data(), sampler_pads);
+        } else if (name == "CHOP") { // before chops were kept in the WAV files: written into them at the next save
+            unsigned n = r.u8();
+            SampleChop c;
+            c.from = r.u32(); c.to = r.u32();
+            c.mode = ChopMode(std::min(r.u8(), unsigned(ChopMode::Count) - 1));
+            c.amount = int16_t(r.i16());
+            if (c.mode == ChopMode::Beats) // then beats a slice (1-8), now the division: 1/4, 1/2, 1 bar, 2 bars nearest
+                c.amount = int16_t(c.amount <= 1 ? 2 : c.amount <= 2 ? 3 : c.amount <= 5 ? 4 : 5);
+            unsigned count = std::min(r.u8(), max_slices);
+            c.slices.count = count;
+            uint32_t last = r.u32();
+            bool sorted = true;
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                c.slices.start[k] = r.u32();
+                if (k) c.slices.stop[k - 1] = c.slices.start[k];
+                sorted = sorted && (!k || c.slices.start[k] > c.slices.start[k - 1]);
+            }
+            if (count) c.slices.stop[count - 1] = last;
+            c.unwritten = true;
+            if (r.ok && sorted && n < sample_slots) project->chops.edit(n) = c; // a damaged one is cut afresh
+        } else if (name == "MODS") { // modulators (roadmap P4); without it none
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) {
+                unsigned n = r.u8();
+                Modulator m;
+                m.kind = ModKind(std::min<unsigned>(r.u8(), unsigned(ModKind::Count) - 1));
+                m.shape = LfoShape(std::min<unsigned>(r.u8(), unsigned(LfoShape::Count) - 1));
+                m.sync = r.u8() != 0; m.rate = uint8_t(std::min<unsigned>(r.u8(), 100)); m.division = uint8_t(std::min<unsigned>(r.u8(), lfo_divisions - 1));
+                m.source = uint8_t(r.u8() % (track_count + bus_count)); m.attack = uint8_t(std::min<unsigned>(r.u8(), 100)); m.release = uint8_t(std::min<unsigned>(r.u8(), 100));
+                unsigned targets = r.u8();
+                for (unsigned k2 = 0; k2 < targets && r.ok; ++k2) {
+                    unsigned i = r.u8();
+                    ModTarget t;
+                    t.track = uint8_t(r.u8()); t.param = uint8_t(r.u8()); t.pad = uint8_t(r.u8() % sampler_pads); t.depth = int8_t(std::clamp<int>(int8_t(r.u8()), -100, 100));
+                    t.low = int16_t(r.i16()); t.high = int16_t(r.i16());
+                    if (i < modulator_targets && t.track < track_count) m.targets[i] = t;
+                }
+                if (r.ok && n < modulator_count) project->modulators[n] = m;
+            }
+        } else if (name == "MACR") { // macros (roadmap P4); without it none
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) {
+                unsigned n = r.u8();
+                Macro m;
+                m.value = uint8_t(std::min<unsigned>(r.u8(), 127));
+                unsigned targets = r.u8();
+                for (unsigned k2 = 0; k2 < targets && r.ok; ++k2) {
+                    unsigned i = r.u8();
+                    MacroTarget t;
+                    t.track = uint8_t(r.u8()); t.param = uint8_t(r.u8()); t.pad = uint8_t(r.u8() % sampler_pads); t.low = int16_t(r.i16()); t.high = int16_t(r.i16());
+                    if (i < macro_targets && t.track < track_count) m.targets[i] = t;
+                }
+                if (r.ok && n < macro_count) project->macros[n] = m;
+            }
+        } else if (name == "FXKY") { // keyed Compressors and Gates (roadmap P4); without it each hears itself
+            unsigned keyed = r.u16();
+            for (unsigned k = 0; k < keyed && r.ok; ++k) {
+                unsigned n = r.u8(), slot = r.u8(), key = r.u8();
+                if (n < mix_chain_count && slot < max_slots && key < fx_key_count) project->chain(n).slots[slot].key = uint8_t(key);
+            }
+        } else if (name == "PXFD") { // loop seam crossfades (roadmap P3); without it no pad's seam is faded
+            unsigned t = r.u8();
+            if (t >= track_count) continue;
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) {
+                unsigned n = r.u8(), ms = r.u8();
+                project->tracks[t].pads[n % sampler_pads].loop_xfade = uint8_t(std::min(ms, max_loop_xfade));
+            }
+        } else if (name == "PCOL") { // kit pads' own colours; without it every pad lights in its track's
+            unsigned t = r.u8();
+            if (t >= track_count) continue;
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) {
+                unsigned n = r.u8();
+                uint32_t colour = r.u32() & 0xFFFFFF;
+                if (r.ok) project->tracks[t].pads[n % sampler_pads].colour = colour;
+            }
+        } else if (name == "PSND") { // kit pads' own sends; without it no pad sends on its own
+            unsigned t = r.u8();
+            if (t >= track_count) continue;
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) {
+                unsigned n = r.u8();
+                std::array<uint8_t, 4> sends {};
+                for (auto& send : sends) send = uint8_t(std::min(r.u8(), 100u));
+                if (r.ok) project->tracks[t].pads[n % sampler_pads].sends = sends;
+            }
+        } else if (name == "PSUB") { // kit pads sent to a submix; without it each plays in its kit
+            unsigned t = r.u8();
+            if (t >= track_count) continue;
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) {
+                unsigned n = r.u8(), out = r.u8();
+                if (r.ok && out <= 8) project->tracks[t].pads[n % sampler_pads].out = uint8_t(out);
+            }
+        } else if (name == "PCLD") { // kit pads' clouds; without it a pad plays as a cloud only from an older file's kit-wide Cloud
+            unsigned t = r.u8();
+            if (t >= track_count) continue;
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) read_cloud(r, project->tracks[t].pads.data(), sampler_pads);
+        } else if (name == "LAYR") { // pad layers (roadmap P3); without it every pad plays its one sample
+            unsigned t = r.u8();
+            if (t >= track_count) continue;
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) read_layers(r, project->tracks[t].pads.data(), sampler_pads, sample_slots);
+        } else if (name == "ZTRM" || name == "ZTRX") { // instruments' zones trimmed (round 3 "instrument C"); without it none are
+            const bool wide = name == "ZTRX"; // the slot in two bytes
+            unsigned t = r.u8();
+            if (t >= track_count) continue;
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) {
+                unsigned pad = r.u8(), slot = wide ? r.u16() : r.u8(), zone = r.u16();
+                int tune = int8_t(uint8_t(r.u8())), level = r.i16();
+                if (r.ok && pad < sampler_pads && slot < sample_slots) set_trim(project->tracks[t].zone_trims, pad, zone, slot, tune, level);
+            }
+        } else if (name == "PMUT") {
+            unsigned t = r.u8();
+            if (t >= track_count) continue;
+            unsigned words = r.u8();
+            for (unsigned k = 0; k < words && r.ok; ++k) {
+                uint64_t bits = r.u32();
+                bits |= uint64_t(r.u32()) << 32;
+                if (k < project->tracks[t].pad_mutes.size()) project->tracks[t].pad_mutes[k] = bits;
+            }
+        } else if (name == "PATT") { // before parity phase 2: steps of the pattern's division, 24 ticks a quarter
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            unsigned steps = std::clamp<unsigned>(r.u16(), 1, 256);
+            pattern.division = legacy_division(r.u8());
+            unsigned q = pattern.q();
+            pattern.length = steps * q;
+            pattern.events.clear();
+            unsigned count = r.u16();
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                unsigned s = r.u16();
+                Step step;
+                read_step(r, step);
+                if (s >= steps) continue;
+                for (const auto& n : step.notes) {
+                    if (!n.velocity) continue;
+                    Event e;
+                    e.tick = s * q; e.length = uint16_t(step.length * q);
+                    e.key = n.key; e.velocity = n.velocity; e.chance = step.chance; e.flags = step.flags;
+                    pattern.add(e);
+                }
+            }
+        } else if (name == "EVNT") {
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            pattern.length = std::clamp<uint32_t>(r.u32(), 1, max_bars * 16 * ticks_per_quarter);
+            pattern.free = false; // written: its length was set, unless FREE follows
+            pattern.division = Division(std::min<unsigned>(r.u8(), unsigned(Division::Count) - 1));
+            uint32_t count = std::min<uint32_t>(r.u32(), max_pattern_events);
+            pattern.events.clear();
+            pattern.events.reserve(count);
+            for (uint32_t k = 0; k < count && r.ok; ++k) {
+                Event e;
+                e.tick = r.u32(); e.length = uint16_t(std::max(1u, r.u16()));
+                e.key = uint8_t(r.u8()); e.velocity = uint8_t(std::clamp(r.u8(), 1u, 127u));
+                e.chance = uint8_t(std::min(100u, r.u8())); e.flags = uint8_t(r.u8());
+                if (r.ok) pattern.events.push_back(e);
+            }
+            pattern.sort();
+        } else if (name == "PTCH") {
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            uint32_t count = std::min<uint32_t>(r.u32(), max_pattern_events);
+            for (uint32_t k = 0; k < count && r.ok; ++k) {
+                uint32_t place = r.u32();
+                auto pitch = int8_t(uint8_t(r.u8()));
+                if (r.ok && place < pattern.events.size()) pattern.events[place].pitch = pitch;
+            }
+        } else if (name == "LVCF") { // 16 Levels' cutoffs kept with kit notes (roadmap P3); without it each pad's own
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            uint32_t count = std::min<uint32_t>(r.u32(), max_pattern_events);
+            for (uint32_t k = 0; k < count && r.ok; ++k) {
+                uint32_t place = r.u32();
+                unsigned cut = r.u8();
+                if (r.ok && place < pattern.events.size()) pattern.events[place].cutoff = uint8_t(std::min(cut, 101u));
+            }
+        } else if (name == "SLCE") { // issue 24: slice hits played on Chop; without it each plays its pad's region
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            uint32_t count = std::min<uint32_t>(r.u32(), max_pattern_events);
+            for (uint32_t k = 0; k < count && r.ok; ++k) {
+                uint32_t place = r.u32();
+                unsigned slice = r.u8();
+                // Written in order with their slices, so the places after EVNT's sort are still theirs.
+                if (r.ok && place < pattern.events.size()) pattern.events[place].slice = uint8_t(std::min(slice, max_slices));
+            }
+        } else if (name == "RTCH") { // ratchets (roadmap P1); without it every note plays once
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            uint32_t count = std::min<uint32_t>(r.u32(), max_pattern_events);
+            for (uint32_t k = 0; k < count && r.ok; ++k) {
+                uint32_t place = r.u32();
+                unsigned hits = r.u8();
+                auto ramp = int8_t(uint8_t(r.u8())), pitch_ramp = int8_t(uint8_t(r.u8()));
+                if (!r.ok || place >= pattern.events.size()) continue;
+                auto& e = pattern.events[place];
+                e.ratchet = uint8_t(std::clamp<unsigned>(hits, 1, max_ratchet));
+                e.ramp = int8_t(std::clamp<int>(ramp, -100, 100));
+                e.pitch_ramp = int8_t(std::clamp<int>(pitch_ramp, -max_pitch_ramp, max_pitch_ramp));
+            }
+        } else if (name == "COND") { // trig conditions (roadmap P1); without it every note plays on every pass
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            uint32_t count = std::min<uint32_t>(r.u32(), max_pattern_events);
+            for (uint32_t k = 0; k < count && r.ok; ++k) {
+                uint32_t place = r.u32();
+                unsigned condition = r.u8();
+                if (r.ok && place < pattern.events.size() && condition < trig_count) pattern.events[place].condition = uint8_t(condition);
+            }
+        } else if (name == "TNAM") { // tracks named on the Name sheet; without it, each named after its sound
+            unsigned version = r.u8(), count = r.u8();
+            for (unsigned k = 0; k < count && r.ok && version >= 1; ++k) {
+                bool own = r.u8() != 0;
+                if (k < track_count && r.ok) project->tracks[k].named = own;
+            }
+        } else if (name == "TSPD") { // the tracks' playback speeds (roadmap P1); without it every track at x1
+            unsigned count = r.u8();
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                unsigned speed = r.u8();
+                if (k < track_count && r.ok) project->tracks[k].speed = uint8_t(speed < speed_count ? speed : speed_normal);
+            }
+        } else if (name == "KEPT") { // punches kept with a pattern (pad-fx C); without it a pattern keeps none
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            unsigned count = r.u8();
+            pattern.punches.clear();
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                PatternPunch punch;
+                punch.tick = r.u32(); punch.length = r.u32();
+                punch.kind = uint8_t(r.u8()); punch.target = uint8_t(r.u8()); punch.depth = uint8_t(std::min(100u, r.u8()));
+                unsigned grid = r.u8();
+                punch.snap = uint8_t(grid & 3); punch.tail = uint8_t(std::min(2u, (grid >> 4) & 3));
+                if (r.ok && pattern.punches.size() < max_pattern_punches) pattern.punches.push_back(punch);
+                if (r.ok && !(grid & 128)) played_on[t].set(p); // from before they ended with their pattern
+            }
+        } else if (name == "EUCL") { // Euclidean rhythms laid on kit lanes (roadmap P1); their notes are in EVNT either way
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            unsigned count = r.u8();
+            pattern.euclids.clear();
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                EuclidLane e;
+                e.key = uint8_t(r.u8());
+                unsigned hits = r.u8(), steps = std::clamp(r.u8(), 1u, 64u), rotate = r.u8();
+                e.steps = uint8_t(steps); e.hits = uint8_t(std::min(hits, steps)); e.rotate = uint8_t(rotate % steps);
+                if (r.ok) pattern.euclids.push_back(e);
+            }
+        } else if (name == "FOLW") { // a pattern's follow action (roadmap P5); without it the pattern plays on
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            PatternFollow f;
+            f.action = uint8_t(r.u8() % unsigned(FollowAction::Count)); f.other = uint8_t(r.u8() % unsigned(FollowAction::Count));
+            f.chance = uint8_t(std::min(r.u8(), 100u)); f.count = uint8_t(std::clamp(r.u8(), 1u, follow_most)); f.plays = r.u8() != 0;
+            if (r.ok) patterns->at[t][p].follow = f;
+        } else if (name == "FEEL") { // a pattern's feel (roadmap P1); without it its notes play as written
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            Feel f;
+            f.strength = uint8_t(std::min(100u, r.u8())); f.swing = uint8_t(std::clamp(r.u8(), 50u, 75u));
+            f.humanize = uint8_t(std::min(100u, r.u8())); f.humanize_velocity = uint8_t(std::min(100u, r.u8()));
+            f.groove_from = groove_of_legacy(uint16_t(r.u16())); f.groove_amount = uint8_t(std::min(100u, r.u8()));
+            f.groove_step = uint16_t(std::clamp(r.u16(), 1u, 4u * ticks_per_quarter));
+            unsigned steps = std::min(r.u8(), 64u);
+            for (unsigned k = 0; k < steps && r.ok; ++k) {
+                f.groove_offsets.push_back(int8_t(uint8_t(r.u8())));
+                f.groove_levels.push_back(uint8_t(std::clamp(r.u8(), 25u, 175u)));
+            }
+            if (r.ok) patterns->at[t][p].feel = f;
+        } else if (name == "GRVB") { // a groove's source past P16 (after its FEEL)
+            unsigned t = r.u8(), p = r.u8(), from = r.u16();
+            if (r.ok && t < track_count && p < pattern_count && from <= track_count * pattern_count) patterns->at[t][p].feel.groove_from = uint16_t(from);
+        } else if (name == "FREE") { // Free length: an empty pattern whose first take sets its length (after its EVNT)
+            unsigned t = r.u8(), p = r.u8();
+            if (r.ok && t < track_count && p < pattern_count) patterns->at[t][p].free = true;
+        } else if (name == "PPRG") { // a MIDI track's own program for a pattern
+            unsigned t = r.u8(), p = r.u8(), program = r.u8();
+            if (r.ok && t < track_count && p < pattern_count) { patterns->at[t][p].program = uint8_t(std::min(program, 128u)); programs[t] = true; }
+        } else if (name == "LANE") { // kit lanes of their own length (roadmap P1); without it every key loops with the pattern
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            unsigned count = r.u8();
+            pattern.lanes.clear();
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                unsigned key = r.u8();
+                uint32_t ticks = r.u32();
+                if (r.ok) pattern.set_lane_length(key, ticks); // EVNT came first: the pattern's length is known
+            }
+        } else if (name == "MOTK" || name == "MOTS") { // Motion (roadmap P1): a pattern's points at their ticks
+            // (MOTS: the mixer strip's lanes, after MOTK, joining its points)
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            const bool strip_lanes = name == "MOTS";
+            uint32_t count = std::min<uint32_t>(r.u32(), motion_points);
+            if (!strip_lanes) pattern.motion.clear();
+            count = std::min<uint32_t>(count, uint32_t(motion_points - std::min<size_t>(pattern.motion.size(), motion_points)));
+            pattern.motion.reserve(pattern.motion.size() + count);
+            for (uint32_t k = 0; k < count && r.ok; ++k) {
+                MotionPoint m;
+                m.tick = r.u32(); m.param = uint8_t(r.u8()); m.pad = uint8_t(r.u8() % sampler_pads); m.value = int16_t(r.i16());
+                m.hold = uint16_t(r.u16());
+                if (r.ok && is_strip_lane(m.param) == strip_lanes) pattern.motion.push_back(m);
+            }
+            pattern.sort_motion();
+        } else if (name == "MOTN" || name == "MOT2") { // the project's Motion before roadmap P1
+            bool division = name == "MOTN";
+            unsigned count = r.u16();
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                LegacyMotion e;
+                e.track = uint8_t(r.u8() % track_count); e.pattern = uint8_t(r.u8() % pattern_count); e.step = uint16_t(r.u16());
+                e.param = uint8_t(r.u8()); e.value = int16_t(r.i16()); e.division = division;
+                if (e.param >= motion_pad_base) continue; // pad lanes live in MOTP
+                if (r.ok) legacy_motion.push_back(e);
+            }
+        } else if (name == "MOTP") { // a kit pad's lanes (parity phase 3)
+            unsigned count = r.u16();
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                LegacyMotion e;
+                e.track = uint8_t(r.u8() % track_count); e.pattern = uint8_t(r.u8() % pattern_count); e.step = uint16_t(r.u16());
+                e.pad = uint8_t(r.u8() % sampler_pads);
+                unsigned which = r.u8();
+                e.value = int16_t(r.i16());
+                if (r.ok && which < pad_param_count) { e.param = uint8_t(motion_pad_param(PadParam(which))); legacy_motion.push_back(e); }
+            }
+        } else if (name == "MOTW") { // the mod wheel's lane (parity phase 8)
+            unsigned count = r.u16();
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                LegacyMotion e;
+                e.track = uint8_t(r.u8() % track_count); e.pattern = uint8_t(r.u8() % pattern_count); e.step = uint16_t(r.u16());
+                e.param = uint8_t(motion_wheel); e.value = int16_t(std::clamp<int>(r.i16(), 0, 127));
+                if (r.ok) legacy_motion.push_back(e);
+            }
+        } else if (name == "SNDS") { // a track's four sends (round 2); without it the one TRAK holds
+            unsigned t = r.u8(), buses = r.u8();
+            std::array<uint8_t, bus_count> sends {};
+            for (unsigned b = 0; b < buses && r.ok; ++b) { unsigned v = r.u8(); if (b < bus_count) sends[b] = uint8_t(std::min(100u, v)); }
+            if (r.ok && t < track_count) project->tracks[t].mix.sends = sends;
+        } else if (name == "STRP") { // a mixer strip; without it the channel's is flat
+            unsigned n = r.u8();
+            Strip s;
+            s.trim = int16_t(std::clamp(r.i16(), -trim_range, trim_range));
+            s.width = uint8_t(std::min(width_max, r.u8()));
+            s.eq_on = r.u8() != 0;
+            unsigned bands = r.u8();
+            for (unsigned b = 0; b < bands && r.ok; ++b) {
+                int g = std::clamp(r.i16(), -eq_range, eq_range);
+                if (b < eq_bands) s.eq[b] = int16_t(g);
+            }
+            s.comp_on = r.u8() != 0;
+            s.comp_amount = uint8_t(std::min(comp_amount_max, r.u8()));
+            s.comp_ratio = uint8_t(std::clamp(r.u8(), comp_ratio_min, comp_ratio_max));
+            unsigned speed = r.u8(), key = r.u8();
+            s.comp_speed = uint8_t(speed < unsigned(CompSpeed::Count) ? speed : unsigned(CompSpeed::Medium));
+            s.comp_key = uint8_t(key < fx_key_count ? key : 0);
+            s.comp_mix = uint8_t(std::min(100u, r.u8()));
+            s.comp_gain = int16_t(std::clamp(r.i16(), comp_gain_min, comp_gain_max));
+            if (r.ok && n < strip_channels) project->strip(n) = s;
+        } else if (name == "INWT") { // the mixer's input recorded after its strip; without it, before
+            project->input_wet = r.u8() != 0;
+        } else if (name == "OUTS") { // the tracks' outputs; without it every track plays into the master
+            unsigned count = r.u8();
+            for (unsigned t = 0; t < count && r.ok; ++t) {
+                unsigned out = r.u8();
+                if (t < track_count) project->tracks[t].mix.out = uint8_t(out <= sub_count ? out : out_master);
+            }
+        } else if (name == "SUBM") { // a submix; without it the submix is as it comes (its strip is STRP's, kept here)
+            unsigned n = r.u8();
+            Submix sub;
+            r.text(sub.name, sizeof(sub.name));
+            sub.mix.level = uint8_t(std::min(127u, r.u8())); sub.mix.pan = int8_t(std::clamp(r.i16(), -50, 50));
+            sub.mix.mute = r.u8() != 0; sub.mix.solo = r.u8() != 0;
+            unsigned buses = r.u8();
+            for (unsigned b = 0; b < buses && r.ok; ++b) { unsigned v = r.u8(); if (b < bus_count) sub.mix.sends[b] = uint8_t(std::min(100u, v)); }
+            read_chain(r, sub.fx);
+            if (r.ok && n < sub_count) {
+                auto& to = project->subs[n];
+                std::memcpy(to.name, sub.name, sizeof(to.name));
+                to.mix = sub.mix;
+                for (unsigned k = 0; k < max_slots; ++k) sub.fx.slots[k].key = to.fx.slots[k].key; // FXKY's, if it came first
+                to.fx = sub.fx;
+            }
+        } else if (name == "LVLE") { // 16 Levels' two ends a type (round 2); without it each type's own
+            unsigned t = r.u8(), kinds = r.u8();
+            for (unsigned k = 0; k < kinds && r.ok; ++k) {
+                int low = int8_t(r.u8()), high = int8_t(r.u8());
+                if (!r.ok || t >= track_count || k >= 4) continue;
+                auto range = levels_range(LevelsKind(k));
+                project->tracks[t].levels_ends[k] = {int8_t(std::clamp(low, range.low, range.high)), int8_t(std::clamp(high, range.low, range.high))};
+            }
+        } else if (name == "FADR") { // the fader's target (parity phase 8); without it each track takes its engine's default
+            unsigned t = r.u8(), target = r.u8(), on = r.u8();
+            if (!r.ok || t >= track_count) continue;
+            project->tracks[t].fader_target = uint8_t(target < fader_targets ? target : fader_by_engine);
+            project->tracks[t].fader_on = on != 0;
+            if (r.done()) continue; // older files end here: nothing learned
+            unsigned what = r.u8(), lane = r.u16(), engine = r.u8(), pot = r.u8(), pin = r.u8(); // fader C
+            if (r.ok && what <= unsigned(FaderLearn::Send)) {
+                project->tracks[t].fader_learned = {FaderLearn(what), uint16_t(lane), uint8_t(engine), uint8_t(pot % 3)};
+                project->tracks[t].fader_pin = pin != 0;
+            }
+        } else if (name == "TMPL") { // the song's tempo lane (roadmap P5); without it the project's tempo throughout
+            unsigned count = r.u8();
+            TempoLane lane;
+            for (unsigned n = 0; n < count && r.ok; ++n) {
+                unsigned bar = r.u16(), tempo = r.u16(), ramp = r.u8();
+                if (r.ok) lane.set(bar, tempo, ramp != 0);
+            }
+            if (r.ok) project->song.tempo = lane;
+        } else if (name == "SCNE") { // a scene's name, tempo and colour (roadmap P5); without it the column alone
+            unsigned n = r.u8();
+            Scene scene;
+            r.text(scene.name, sizeof(scene.name));
+            unsigned tempo = r.u16();
+            scene.tempo = uint16_t(tempo ? std::clamp(tempo, 300u, 3000u) : 0);
+            if (!r.done()) scene.colour = uint8_t(std::min(r.u8(), 16u)); // older files end here: none
+            if (r.ok && n < pattern_count) project->scenes[n] = scene;
+        } else if (name == "SEQL") { // sequence links (model/scene_links.h); without it the scenes are columns (keep_columns)
+            if (r.u8() < 1) continue; // a later version would add after these
+            links_known = true;
+            project->scene = uint8_t(r.u8() % pattern_count);
+            unsigned off = r.u16(), listed = r.u8();
+            for (unsigned t = 0; t < track_count; ++t) project->tracks[t].off = (off >> t & 1) != 0;
+            for (unsigned k = 0; k < listed && r.ok; ++k) {
+                unsigned t = r.u8();
+                std::array<uint8_t, pattern_count> values {};
+                for (auto& v : values) { v = uint8_t(r.u8()); if (v != scene_off && v > pattern_count) v = 0; }
+                if (r.ok && t < track_count) project->tracks[t].in_scene = values;
+            }
+        } else if (name == "PROG") { // the Prog layout's progression; without it none
+            unsigned t = r.u8(), version = r.u8();
+            Progression prog;
+            r.text(prog.name, sizeof(prog.name)); r.text(prog.file, sizeof(prog.file));
+            prog.root = uint8_t(r.u8() % 12);
+            int shift = int8_t(r.u8());
+            unsigned voicing = r.u8(), count = r.u8();
+            for (unsigned n = 0; n < count && r.ok; ++n) {
+                ProgChord chord;
+                chord.root = r.u8() != 0;
+                r.text(chord.name, sizeof(chord.name));
+                unsigned notes = r.u8();
+                for (unsigned k = 0; k < notes && r.ok; ++k) {
+                    unsigned key = r.u8();
+                    if (k < notes_per_step) chord.notes[k] = uint8_t(std::min(key, 127u));
+                }
+                chord.count = uint8_t(std::min(notes, notes_per_step));
+                if (n < prog_chords) prog.chords[n] = chord;
+            }
+            if (!r.ok || t >= track_count || version < 1) continue;
+            prog.count = uint8_t(std::min(count, prog_chords));
+            auto& tr = project->tracks[t];
+            tr.prog = prog;
+            tr.prog_shift = int8_t(std::clamp(shift, -6, 5));
+            tr.prog_voicing = uint8_t(voicing % 4);
+        } else if (name == "CHAN") { // a pattern chain (seq-sheet2 B); without it a track plays the one pattern
+            unsigned t = r.u8(), count = r.u8();
+            if (!r.ok || t >= track_count) continue;
+            auto& tr = project->tracks[t];
+            tr.chain_count = 0; tr.chain_at = 0;
+            for (unsigned n = 0; n < count && r.ok; ++n) {
+                unsigned p = r.u8();
+                if (r.ok && n < max_chain) tr.chain[tr.chain_count++] = uint8_t(p % pattern_count);
+            }
+            if (tr.chain_count < 2) tr.chain_count = 0;
+        } else if (name == "MIDT") { // a MIDI track; TRAK, before it, said None
+            unsigned t = r.u8(), version = r.u8();
+            if (r.ok && t < track_count && version >= 1) {
+                auto& tr = project->tracks[t];
+                tr.engine = EngineKind::Midi;
+                const auto& info = engine_info(EngineKind::Midi);
+                if (version < 2) // before Stage: bank, program and the CCs at their initial values, not the zeros the file holds
+                    for (unsigned p = midi_track::routing_params; p < info.param_count; ++p) tr.params[p] = info.params[p].initial;
+                else if (version < 3) // before roadmap P4: its slots past the third, expression, delay, audio and SysEx at theirs
+                    for (unsigned p = midi_track::Cc3 + 1; p < info.param_count; ++p) tr.params[p] = info.params[p].initial;
+                if (version >= 3) {
+                    r.text(tr.midi.device, sizeof(tr.midi.device));
+                    for (auto& n : tr.midi.drum_note) n = uint8_t(std::min(r.u8(), 127u));
+                    r.text(tr.midi.sysex, sizeof(tr.midi.sysex));
+                }
+            }
+        } else if (name == "KGRP") { // a KEYGROUP track; TRAK, before it, said None
+            unsigned t = r.u8(), version = r.u8();
+            if (r.ok && t < track_count && version >= 1) project->tracks[t].engine = EngineKind::Keygroup;
+        } else if (name == "AUDT") { // an AUDIO track (freeze plan F3); TRAK, before it, said None
+            unsigned t = r.u8(), version = r.u8();
+            if (!r.ok || t >= track_count || version < 1) continue;
+            auto& tr = project->tracks[t];
+            tr.engine = EngineKind::Audio;
+            tr.audio.source = InputSource(std::min<unsigned>(r.u8(), unsigned(InputSource::Count) - 1));
+            tr.audio.monitor = TrackMonitor(std::min<unsigned>(r.u8(), unsigned(TrackMonitor::Count) - 1));
+        } else if (name == "PAUD") { // an audio track's pattern's take (freeze plan F3); a later version is skipped
+            if (r.u8() != 1) continue;
+            unsigned t = r.u8(), p = r.u8();
+            AudioRegion g;
+            g.take = uint16_t(r.u16());
+            g.offset = r.u32(); g.frames = r.u32(); g.take_frames = r.u32();
+            g.tempo = uint16_t(std::clamp<unsigned>(r.u16(), 300, 3000));
+            g.gain = int16_t(std::clamp(r.i16(), region_gain_min, region_gain_max));
+            g.fade_in = r.u32(); g.fade_out = r.u32();
+            unsigned flags = r.u8();
+            g.reverse = flags & 1; g.warp = flags & 2;
+            g.mode = WarpMode(std::min<unsigned>(r.u8(), unsigned(WarpMode::Count) - 1));
+            g.semi = int8_t(std::clamp(r.i16(), -24, 24)); g.fine = int8_t(std::clamp(r.i16(), -50, 50));
+            if (!r.ok || t >= track_count || p >= pattern_count || !g.used()) continue;
+            g.take_frames = std::max(g.take_frames, g.offset + g.frames);
+            g.fade_in = std::min(g.fade_in, g.frames); g.fade_out = std::min(g.fade_out, g.frames);
+            patterns->at[t][p].audio = g;
+        } else if (name == "PLGT") { // a PLUGIN track; TRAK, before it, said None
+            unsigned t = r.u8(), entry = r.u8();
+            if (r.ok && t < track_count) {
+                project->tracks[t].engine = EngineKind::Plugin;
+                project->tracks[t].plugin = uint8_t(entry < max_plugins ? entry : no_plugin);
+            }
+        } else if (name == "PLUG") {
+            unsigned e = r.u8(), length = r.u16();
+            char path[plugin_path_length] {};
+            for (unsigned k = 0; k < length; ++k) { char ch = char(r.u8()); if (k + 1 < sizeof(path)) path[k] = ch; }
+            uint32_t size = r.u32();
+            std::vector<uint8_t> state;
+            for (uint32_t k = 0; k < size && r.ok; ++k) state.push_back(uint8_t(r.u8()));
+            if (!r.ok || e >= max_plugins) continue;
+            std::memcpy(project->plugins[e].path, path, sizeof(path));
+            plugin_states[e] = std::move(state);
+            if (!r.done()) { project->plugins[e].id = int32_t(r.u32()); r.text(project->plugins[e].name, sizeof(project->plugins[e].name)); }
+            if (!r.done()) project->plugins[e].transport = r.u8() != 0;
+            if (!r.done()) r.text(project->plugins[e].preset, sizeof(project->plugins[e].preset));
+        } else if (name == "MIDC") { // a track's own MIDI channel; without it none
+            unsigned t = r.u8(), channel = r.u8();
+            if (r.ok && t < track_count) project->tracks[t].midi_channel = uint8_t(channel <= 16 ? channel : 0);
+            if (r.ok && t < track_count && !r.done()) project->tracks[t].midi_in = TrackMidiIn(std::min<unsigned>(r.u8(), unsigned(TrackMidiIn::Count) - 1));
+        } else if (name == "TIME") {
+            project->signature = uint8_t(std::min<unsigned>(r.u8(), time_signature_count - 1));
+            project->seq_tempo = r.u8() != 0;
+            for (unsigned n = 0; n < legacy_patterns; ++n) { unsigned bpm = r.u16(); project->pattern_tempo[n] = uint16_t(bpm ? std::clamp<unsigned>(bpm, 300, 3000) : 0); }
+        } else if (name == "TIM2") { // every pattern's (after TIME)
+            unsigned count = r.u8();
+            for (unsigned n = 0; n < count && r.ok; ++n) {
+                unsigned bpm = r.u16();
+                if (r.ok && n < pattern_count) project->pattern_tempo[n] = uint16_t(bpm ? std::clamp<unsigned>(bpm, 300, 3000) : 0);
+            }
+        } else if (name == "SONG") {
+            auto& song = project->song;
+            unsigned count = r.u16();
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                Clip c;
+                c.track = uint8_t(r.u8() % track_count); c.pattern = uint8_t(r.u8() % pattern_count);
+                c.bar = uint16_t(std::min<unsigned>(r.u16(), song_bars)); c.bars = uint16_t(std::clamp<unsigned>(r.u16(), 1, 16)); c.muted = r.u8() != 0;
+                if (song.count < song.clips.size()) song.clips[song.count++] = c;
+            }
+            unsigned markers = r.u8();
+            for (unsigned k = 0; k < markers && r.ok; ++k) {
+                Marker m;
+                m.bar = uint16_t(r.u16()); r.text(m.name, sizeof(m.name));
+                if (song.marker_count < song.markers.size()) song.markers[song.marker_count++] = m;
+            }
+            song.loop_start = uint16_t(r.u16()); song.loop_end = uint16_t(r.u16());
+        } else if (name == "BUSS") {
+            unsigned b = r.u8();
+            if (b >= bus_count) continue;
+            project->buses[b].level = uint8_t(std::min(100u, r.u8()));
+            read_chain(r, project->buses[b].fx);
+            project->buses[b].mute = !r.done() && r.u8() != 0; // the mixer; without it, heard
+        } else if (name == "PRNT") { // freeze plan F2a: a print (model/print.h); a later version of it is skipped
+            if (r.u8() != 1) continue;
+            PrintRecord p;
+            p.track = uint8_t(r.u8()); p.pattern = uint8_t(r.u8());
+            unsigned tap = r.u8(), tail = r.u8();
+            p.frames = r.u32(); p.pass = r.u32();
+            uint32_t low = r.u32();
+            p.hash = uint64_t(low) | uint64_t(r.u32()) << 32;
+            char file[256];
+            r.text(file, sizeof(file));
+            p.file = file;
+            p.rate = r.u32();
+            if (!r.done()) p.sends = uint8_t(r.u8() & 15); // a kit's pad sends beside it; none before they were kept
+            if (!r.ok || p.rate < 8000 || p.track >= track_count || p.pattern >= pattern_count || tap > 1 || tail > 2 || p.file.empty()) continue;
+            p.tap = PrintTap(tap); p.tail = PrintTail(tail);
+            prints.put(p);
+        } else if (name == "FRZN") { // freeze plan F2b: a frozen track; a later version of it is skipped (the track plays live)
+            if (r.u8() != 1) continue;
+            unsigned t = r.u8(), state = r.u8(), tap = r.u8(), tail = r.u8();
+            TrackFreeze f;
+            for (auto& word : f.patterns) { uint32_t low = r.u32(); word = uint64_t(low) | uint64_t(r.u32()) << 32; }
+            if (!r.ok || t >= track_count || state < 1 || state > 2 || tap > 1 || tail > 2) continue;
+            f.state = FreezeState(state); f.tap = PrintTap(tap); f.tail = PrintTail(tail);
+            prints.freeze[t] = f;
+        } else if (name == "MSTR") {
+            read_chain(r, project->master);
+        } else if (name == "LOOP") { // the Looper (docs/LOOPER.md)
+            auto& lp = project->looper;
+            lp.on = r.u8() != 0;
+            lp.quantize = uint8_t(std::min<unsigned>(r.u8(), unsigned(looper::Quantize::Count) - 1));
+            lp.then = uint8_t(std::min<unsigned>(r.u8(), unsigned(looper::Then::Count) - 1));
+            lp.transport = uint8_t(std::min<unsigned>(r.u8(), unsigned(looper::Transport::Count) - 1));
+            unsigned size = r.u8();
+            for (unsigned l = 0; l < loop_tracks && r.ok; ++l) {
+                auto& t = lp.loops[l];
+                unsigned left = size;
+                auto byte = [&]() -> unsigned { if (!left) return 0; --left; return r.u8(); };
+                auto word = [&]() { unsigned a = byte(); return a | byte() << 8; };
+                auto quad = [&]() { uint32_t a = word(); return a | uint32_t(word()) << 16; };
+                t.bars = uint8_t(std::min(16u, byte())); t.feedback = uint8_t(std::min(100u, byte()));
+                unsigned source = byte();
+                t.source = uint8_t(source < looper::source_count && source != looper::source_loop(l) ? source : looper::source_input);
+                t.frames = quad(); t.ticks = quad() / 65536.0; t.tempo = uint16_t(word()); t.layers = uint8_t(byte()); t.stopped = byte() != 0;
+                while (left) byte(); // what a newer build added
+                if (!r.ok || t.ticks <= 0) t.frames = 0;
+            }
+        } else if (name == "LPMX") {
+            for (unsigned l = 0; l < loop_tracks && r.ok; ++l) {
+                auto& m = project->loop_mix[l];
+                m.level = uint8_t(std::min(127u, r.u8())); m.pan = int8_t(std::clamp(r.i16(), -50, 50));
+                m.send = uint8_t(std::min(100u, r.u8())); m.bus = uint8_t(r.u8() % bus_count); m.mute = r.u8() != 0; m.solo = r.u8() != 0;
+                read_chain(r, project->loop_fx[l]);
+                project->loop_fx[l].size = track_slots;
+            }
+        } else if (name == "TRNS") {
+            for (unsigned t = 0; t < track_count && r.ok; ++t) project->tracks[t].transpose = int8_t(std::clamp(r.i16(), -12, 12));
+        } else if (name == "SPCH") {
+            unsigned count = r.u16();
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                SongPunch e;
+                e.bar = uint16_t(std::min<unsigned>(r.u16(), song_bars)); e.step = uint8_t(r.u8() % 16); e.length = uint8_t(std::max(1u, r.u8()));
+                e.kind = uint8_t(r.u8() % punch_kinds); e.target = uint8_t(r.u8()); e.depth = uint8_t(std::min(100u, r.u8()));
+                if (e.target != 255 && e.target >= track_count) e.target = 255;
+                if (r.ok) project->song.add_punch(e);
+            }
+        } else if (name == "PDFX") {
+            while (r.ok && !r.done()) {
+                unsigned t = r.u8();
+                if (t >= track_count) break;
+                auto& chain = project->tracks[t].pad_fx.at[r.u8() % sampler_pads];
+                read_chain(r, chain);
+                for (unsigned k = pad_slots; k < max_slots; ++k) chain.slots[k] = EffectSlot {};
+                chain.size = pad_slots;
+            }
+        } else if (name == "PNCH") {
+            project->punch_target = uint8_t(r.u8() % 2); project->punch_bank = uint8_t(r.u8() % 3);
+            project->punch_depth = uint8_t(std::min(100u, r.u8())); project->punch_snap = uint8_t(r.u8() % 4); project->punch_tail = uint8_t(r.u8() % 3);
+            while (r.ok && !r.done()) { // older files: each pad's own punch (Pad Punch, removed), skipped
+                if (r.u8() >= track_count) break;
+                r.u8(); r.u8(); r.u8(); r.u8();
+            }
+            if (r.ok && !r.done()) project->punch_quantize = r.u8() != 0; // older files: quantized, as they played
+        } else if (name == "KNFX") {
+            auto& k = project->knob_fx;
+            k.choice = uint8_t(r.u8()); k.kind = uint8_t(r.u8()); k.bypass = r.u8() != 0;
+            if (k.kind >= effect_kinds) k.kind = 0;
+            for (auto& v : k.params) v = int16_t(r.i16());
+            k.tracks = uint16_t(r.u16());
+            while (r.ok && !r.done()) {
+                unsigned t = r.u8();
+                if (t >= track_count) break;
+                uint64_t words[4];
+                for (auto& w : words) w = r.u32();
+                k.pads[t][0] = words[0] | words[1] << 32; k.pads[t][1] = words[2] | words[3] << 32;
+            }
+            k.settle(); // before Knob FX C: A and B are the values heard
+            if (r.ok && !r.done() && r.u8() >= 1) {
+                std::array<int16_t, 3> a {}, b {};
+                for (auto& v : a) v = int16_t(r.i16());
+                for (auto& v : b) v = int16_t(r.i16());
+                unsigned morph = r.u8();
+                if (r.ok) { k.a = a; k.b = b; k.morph = uint8_t(std::min(127u, morph)); }
+            }
+        } else if (name == "PFXP") {
+            for (auto& one : project->pad_fx_params) for (auto& v : one) v = int16_t(r.i16());
+            project->flex.mode = uint8_t(r.u8() & 1); project->flex.mix = uint8_t(std::min(100u, r.u8())); project->flex.quantize = r.u8() != 0;
+        } else if (name == "CMPR") {
+            auto& c = project->compressor;
+            c.on = r.u8() != 0; c.color = r.u8() != 0;
+            c.attack = uint8_t(std::min(100u, r.u8())); c.release = uint8_t(std::min(100u, r.u8()));
+            c.amount = uint8_t(std::min(100u, r.u8())); c.boost = uint8_t(std::min(24u, r.u8()));
+            c.sidechain = false; c.key = 0;
+            if (!r.done()) { c.sidechain = r.u8() != 0; c.key = uint8_t(r.u8() % track_count); }
+            c.key_pad = MasterComp::whole_kit;
+            if (!r.done()) { unsigned pad = r.u8(); c.key_pad = pad < sampler_pads ? uint8_t(pad) : MasterComp::whole_kit; }
+        } else if (name == "SMPL" || name == "SMPX") { // SMPX: a slot past the first 64, named in two bytes
+            unsigned n = name == "SMPX" ? r.u16() : r.u8();
+            if (n >= sample_slots) continue;
+            auto& ref = project->samples.edit(n);
+            r.text(ref.path, sizeof(ref.path));
+            r.text(ref.name, sizeof(ref.name));
+            // Its note; a file from before has none, and its samples play as the C they always did.
+            const int root = r.done() ? root_none : int(int8_t(r.u8()));
+            ref.root = int8_t(root >= 0 && root < 12 ? root : root == root_unread ? root_unread : root_none);
+        }
+        if (!r.ok) return "damaged section " + name;
+    }
+    if (!file.ok) return "damaged file";
+    for (unsigned t = 0; t < track_count; ++t) // before parity phase 4 a pad's decay ran from its start, and pads were Poly
+        if (!pad4[t]) for (auto& pad : project->tracks[t].pads) { pad.decay_from_start = true; pad.mono = false; }
+    for (unsigned t = 0; t < track_count; ++t) { // before Cloud was each pad's, a kit had one: when on, its values onto every pad
+        auto& tr = project->tracks[t];
+        if (tr.engine != EngineKind::Sampler || !tr.params[sampler::Cloud]) continue;
+        const auto& info = engine_info(EngineKind::Sampler);
+        auto value = [&](unsigned p) { return uint8_t(std::clamp<int>(tr.params[p], 0, 100)); };
+        for (auto& pad : tr.pads) {
+            pad.cloud = tr.params[sampler::Cloud] != 0;
+            pad.cloud_position = value(sampler::Position); pad.cloud_size = value(sampler::Size); pad.cloud_density = value(sampler::Density);
+            pad.cloud_scan = value(sampler::Scan); pad.cloud_spread = value(sampler::Spread);
+        }
+        for (unsigned p = sampler::Cloud; p <= sampler::Spread; ++p) tr.params[p] = info.params[p].initial;
+    }
+    for (unsigned t = 0; t < track_count; ++t) // PROPHET, CZ and SID as their plug-ins; FM6 and the 909 empty, patterns kept
+        for (const auto& synth : legacy_synths)
+            if (legacy[t] == synth.engine) open_as_plugin(*project, t, synth, file_version, plugin_states);
+    for (unsigned t = 0; t < track_count; ++t) { // a MIDI track's P1-P16 programs: from TRAK's values when no PPRG came
+        auto& tr = project->tracks[t];
+        for (unsigned p = 0; p < legacy_patterns; ++p) {
+            auto& value = tr.params[size_t(midi_track::PatternProgram0 + p)];
+            if (tr.engine == EngineKind::Midi && !programs[t]) patterns->at[t][p].program = uint8_t(std::clamp<int>(value, 0, 128));
+            if (tr.engine == EngineKind::Midi) value = 0; // the pattern holds it now
+        }
+    }
+    for (const auto& e : legacy_motion) { // into its pattern, at its sixteenth (MOTN's step of Q to the nearest sixteenth)
+        auto& pattern = patterns->at[e.track][e.pattern];
+        uint32_t sixteenth = e.division ? (uint32_t(e.step) * pattern.q() + sixteenth_ticks / 2) / sixteenth_ticks : e.step;
+        MotionPoint m;
+        m.tick = sixteenth * sixteenth_ticks; m.param = e.param; m.pad = e.pad; m.value = e.value;
+        pattern.write_motion(m);
+    }
+    for (unsigned t = 0; t < track_count; ++t) // kept punches from before they ended with their pattern, as they were heard
+        for (unsigned p = 0; p < pattern_count; ++p) if (played_on[t].test(p)) split_punches(patterns->at[t][p]);
+    // From before keygroup tracks: each kit's instrument pad its own keygroup track (model/keygroup_track.h).
+    if (!keygroups_known) migrate_instrument_pads(*project, *patterns);
+    // From before sequence links: each scene with notes, a name, tempo or colour plays its column, as it did.
+    if (!links_known) keep_columns(*project, *patterns);
+    for (unsigned t = 0; t < track_count; ++t) // freeze plan F3: takes only on audio tracks' patterns
+        if (project->tracks[t].engine != EngineKind::Audio) for (auto& p : patterns->at[t]) p.audio = AudioRegion {};
+    target = *project;
+    target_patterns = *patterns;
+    if (version) *version = file_version;
+    if (states) *states = std::move(plugin_states);
+    if (target_prints) *target_prints = std::move(prints);
+    return {};
+}
+
+// A kit bank as a file: "MLDBANK1", then sections as a project's. BNAM its
+// name, BSMP the files its pads play, BPAD / BPD4 the pads (the records of
+// TRAK and PAD4, numbered 0-15 and naming BSMP's entries), BPFX their chains.
+namespace {
+constexpr char bank_magic[8] {'M', 'L', 'D', 'B', 'A', 'N', 'K', '1'};
+}
+
+unsigned BankFile::used() const {
+    unsigned n = 0;
+    for (const auto& pad : pads) n += pad.used();
+    return n;
+}
+
+std::vector<uint8_t> save_bank(const BankFile& bank) {
+    Writer w;
+    w.out.assign(bank_magic, bank_magic + 8);
+    size_t at = w.begin("BNAM");
+    w.text(bank.name);
+    w.end(at);
+    at = w.begin("BSMP");
+    unsigned files = 0;
+    for (unsigned k = 0; k < bank_pads; ++k) files += bank.samples[k].used(); // the pads' own; their layers' go in BLSM
+    w.u8(files);
+    for (unsigned k = 0; k < bank_pads; ++k)
+        if (bank.samples[k].used()) { w.u8(k); w.text(bank.samples[k].path); w.text(bank.samples[k].name); w.u32(bank.samples[k].frames); }
+    w.end(at);
+    at = w.begin("BPAD");
+    w.u8(bank.used());
+    for (unsigned k = 0; k < bank_pads; ++k) if (bank.pads[k].used()) write_pad(w, k, bank.pads[k]);
+    w.end(at);
+    at = w.begin("BPD4");
+    w.u8(bank.used());
+    for (unsigned k = 0; k < bank_pads; ++k) if (bank.pads[k].used()) write_pad4(w, k, bank.pads[k]);
+    w.end(at);
+    unsigned layered = 0, extra = 0; // layers (roadmap P3): their files after the pads' in BLSM, the layers in BLYR
+    for (const auto& pad : bank.pads) layered += pad.used() && !pad.plain_layers();
+    for (unsigned k = bank_pads; k < bank.samples.size(); ++k) extra += bank.samples[k].used();
+    if (extra) {
+        at = w.begin("BLSM");
+        w.u8(extra);
+        for (unsigned k = bank_pads; k < bank.samples.size(); ++k)
+            if (bank.samples[k].used()) { w.u8(k); w.text(bank.samples[k].path); w.text(bank.samples[k].name); w.u32(bank.samples[k].frames); }
+        w.end(at);
+    }
+    unsigned faded = 0; // loop seam crossfades (roadmap P3): pad, milliseconds
+    for (const auto& pad : bank.pads) faded += pad.used() && pad.loop_xfade;
+    if (faded) {
+        at = w.begin("BXFD");
+        w.u8(faded);
+        for (unsigned k = 0; k < bank_pads; ++k) if (bank.pads[k].used() && bank.pads[k].loop_xfade) { w.u8(k); w.u8(bank.pads[k].loop_xfade); }
+        w.end(at);
+    }
+    unsigned coloured = 0; // the pads' own colours, as PCOL: pad, 0xRRGGBB
+    for (const auto& pad : bank.pads) coloured += pad.used() && pad.colour;
+    if (coloured) {
+        at = w.begin("BCOL");
+        w.u8(coloured);
+        for (unsigned k = 0; k < bank_pads; ++k) if (bank.pads[k].used() && bank.pads[k].colour) { w.u8(k); w.u32(bank.pads[k].colour); }
+        w.end(at);
+    }
+    unsigned sending = 0; // the pads' own sends, as PSND: pad, four sends
+    for (const auto& pad : bank.pads) sending += pad.used() && pad.sending();
+    if (sending) {
+        at = w.begin("BSND");
+        w.u8(sending);
+        for (unsigned k = 0; k < bank_pads; ++k)
+            if (bank.pads[k].used() && bank.pads[k].sending()) { w.u8(k); for (auto send : bank.pads[k].sends) w.u8(send); }
+        w.end(at);
+    }
+    unsigned routed = 0; // the pads sent to a submix, as PSUB: pad, submix
+    for (const auto& pad : bank.pads) routed += pad.used() && pad.out;
+    if (routed) {
+        at = w.begin("BSUB");
+        w.u8(routed);
+        for (unsigned k = 0; k < bank_pads; ++k) if (bank.pads[k].used() && bank.pads[k].out) { w.u8(k); w.u8(bank.pads[k].out); }
+        w.end(at);
+    }
+    unsigned clouded = 0; // the pads' clouds, as PCLD
+    for (const auto& pad : bank.pads) clouded += pad.used() && !pad.plain_cloud();
+    if (clouded) {
+        at = w.begin("BCLD");
+        w.u8(clouded);
+        for (unsigned k = 0; k < bank_pads; ++k) if (bank.pads[k].used() && !bank.pads[k].plain_cloud()) write_cloud(w, k, bank.pads[k]);
+        w.end(at);
+    }
+    if (layered) {
+        at = w.begin("BLYR");
+        w.u8(layered);
+        for (unsigned k = 0; k < bank_pads; ++k) if (bank.pads[k].used() && !bank.pads[k].plain_layers()) write_layers(w, k, bank.pads[k]);
+        w.end(at);
+    }
+    at = w.begin("BPFX");
+    for (unsigned k = 0; k < bank_pads; ++k)
+        if (bank.chains[k].count()) { w.u8(k); write_chain(w, bank.chains[k]); }
+    w.u8(255);
+    w.end(at);
+    return std::move(w.out);
+}
+
+bool load_bank(const std::vector<uint8_t>& data, BankFile& out) {
+    if (data.size() < 8 || std::memcmp(data.data(), bank_magic, 8)) return false;
+    BankFile bank;
+    Reader file(data.data() + 8, data.size() - 8);
+    while (!file.done() && file.ok) {
+        char tag[5];
+        Reader r = file.section(tag);
+        if (!file.ok) return false;
+        std::string name(tag);
+        if (name == "BNAM") {
+            r.text(bank.name, sizeof(bank.name));
+        } else if (name == "BSMP") {
+            unsigned files = r.u8();
+            for (unsigned k = 0; k < files && r.ok; ++k) {
+                auto& ref = bank.samples[r.u8() % bank_pads];
+                r.text(ref.path, sizeof(ref.path)); r.text(ref.name, sizeof(ref.name)); ref.frames = r.u32();
+            }
+        } else if (name == "BPAD") {
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) read_pad(r, bank.pads.data(), bank_pads, bank_pads);
+        } else if (name == "BPD4") {
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) read_pad4(r, bank.pads.data(), bank_pads);
+        } else if (name == "BLSM") {
+            unsigned files = r.u8();
+            for (unsigned k = 0; k < files && r.ok; ++k) {
+                auto& ref = bank.samples[r.u8() % bank.samples.size()];
+                r.text(ref.path, sizeof(ref.path)); r.text(ref.name, sizeof(ref.name)); ref.frames = r.u32();
+            }
+        } else if (name == "BXFD") {
+            unsigned faded = r.u8();
+            for (unsigned k = 0; k < faded && r.ok; ++k) { unsigned n = r.u8(), ms = r.u8(); bank.pads[n % bank_pads].loop_xfade = uint8_t(std::min(ms, max_loop_xfade)); }
+        } else if (name == "BCOL") {
+            unsigned coloured = r.u8();
+            for (unsigned k = 0; k < coloured && r.ok; ++k) {
+                unsigned n = r.u8();
+                uint32_t colour = r.u32() & 0xFFFFFF;
+                if (r.ok) bank.pads[n % bank_pads].colour = colour;
+            }
+        } else if (name == "BSUB") {
+            unsigned routed = r.u8();
+            for (unsigned k = 0; k < routed && r.ok; ++k) {
+                unsigned n = r.u8(), out = r.u8();
+                if (r.ok && n < bank_pads && out <= 8) bank.pads[n].out = uint8_t(out);
+            }
+        } else if (name == "BSND") {
+            unsigned sending = r.u8();
+            for (unsigned k = 0; k < sending && r.ok; ++k) {
+                unsigned n = r.u8();
+                std::array<uint8_t, 4> sends {};
+                for (auto& send : sends) send = uint8_t(std::min(r.u8(), 100u));
+                if (r.ok) bank.pads[n % bank_pads].sends = sends;
+            }
+        } else if (name == "BCLD") {
+            unsigned clouded = r.u8();
+            for (unsigned k = 0; k < clouded && r.ok; ++k) read_cloud(r, bank.pads.data(), bank_pads);
+        } else if (name == "BLYR") {
+            unsigned used = r.u8();
+            for (unsigned k = 0; k < used && r.ok; ++k) read_layers(r, bank.pads.data(), bank_pads, unsigned(bank.samples.size()));
+        } else if (name == "BPFX") {
+            while (r.ok && !r.done()) {
+                unsigned k = r.u8();
+                if (k >= bank_pads) break;
+                auto& chain = bank.chains[k];
+                read_chain(r, chain);
+                for (unsigned n = pad_slots; n < max_slots; ++n) chain.slots[n] = EffectSlot {};
+                chain.size = pad_slots;
+            }
+        }
+        if (!r.ok) return false;
+    }
+    for (auto& pad : bank.pads) { // a pad whose file is not listed plays nothing; nor does such a layer
+        if (pad.used() && !bank.samples[pad.sample % bank.samples.size()].used()) pad = PadSound {};
+        for (auto& l : pad.layers) if (l.used() && !bank.samples[l.sample % bank.samples.size()].used()) l = PadLayer {};
+    }
+    out = bank;
+    return true;
+}
+
+BankFile bank_of(const Project& project, unsigned track, unsigned bank, const char* name) {
+    BankFile out;
+    const auto& tr = project.tracks[track % track_count];
+    std::snprintf(out.name, sizeof(out.name), "%s", name);
+    std::array<int, sample_slots> mapped;
+    mapped.fill(-1);
+    unsigned files = 0;
+    for (unsigned k = 0; k < bank_pads; ++k) {
+        unsigned n = (bank % sampler_banks) * bank_pads + k;
+        PadSound pad = tr.pads[n];
+        if (pad.used()) {
+            unsigned s = pad.sample % sample_slots;
+            if (!project.samples[s].used()) pad = PadSound {};
+            else {
+                if (mapped[s] < 0) { mapped[s] = int(files); out.samples[files++] = project.samples[s]; }
+                pad.sample = uint16_t(mapped[s]);
+            }
+        }
+        out.pads[k] = pad;
+        if (pad.used()) out.chains[k] = tr.pad_fx.at[n];
+    }
+    // Layers' files after the pads' own (BLSM), so a bank's first sixteen stay as older builds read them.
+    unsigned extra = bank_pads;
+    for (unsigned k = 0; k < bank_pads; ++k)
+        for (auto& l : out.pads[k].layers) {
+            if (!l.used()) continue;
+            unsigned s = l.sample % sample_slots;
+            if (!project.samples[s].used() || !out.pads[k].used()) { l = PadLayer {}; continue; }
+            if (mapped[s] < 0 && extra < out.samples.size()) { mapped[s] = int(extra); out.samples[extra++] = project.samples[s]; }
+            if (mapped[s] < 0) { l = PadLayer {}; continue; }
+            l.sample = uint16_t(mapped[s]);
+        }
+    return out;
+}
+
+} // namespace rhythmer

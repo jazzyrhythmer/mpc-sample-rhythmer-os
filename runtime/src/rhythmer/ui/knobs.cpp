@@ -36,6 +36,10 @@ void shift_mark(Paint& p, float x, float y, juce::Colour c, bool filled) {
 }
 
 void knob_strip(Paint& p, const std::array<KnobCard, 3>& cards) {
+    if (auto* seen = controls_sink()) { // the preview's controls audit: a pot with no job here has no label
+        seen->knobs_drawn = true;
+        for (size_t k = 0; k < 3; ++k) seen->knobs[k] = cards[k].state == KnobCard::State::Idle ? juce::String() : cards[k].label;
+    }
     // 3 px above, 3 below, 6 px at the sides, 4 px between: 100 x 46 cards.
     constexpr float top = zone::knobs_y + 3, h = 46, gap = 4;
     constexpr float w = (zone::width - 2 * zone::pad - 2 * gap) / 3.0f;

@@ -16,7 +16,9 @@ namespace rhythmer {
 namespace fs=std::filesystem;
 uint64_t Context::project_save_hash() {
     PluginStates states; if(plugins)states=plugins->states();
-    return recovery_file::hash(rhythmer::save_project(project,patterns,&states,&prints));
+    auto bytes=rhythmer::save_project(project,patterns,&states,&prints);
+    write_jams(bytes,jams);
+    return recovery_file::hash(bytes);
 }
 bool Context::queue_project_save(const std::string& path, bool recovery, bool new_identity) {
     if(!store||path.empty())return false;
@@ -37,6 +39,7 @@ bool Context::queue_project_save(const std::string& path, bool recovery, bool ne
     if(!recovery)std::snprintf(copy->name,sizeof(copy->name),"%s",fs::path(path).stem().c_str());
     PluginStates states;if(plugins)states=plugins->states();
     save_bytes=rhythmer::save_project(*copy,patterns,&states,&prints);
+    write_jams(save_bytes,jams);
     if(recovery){recovery_file::append_origin(save_bytes,recovered_project?recovery_origin:project_path);recovery_file::append_text(save_bytes,"RCMP",slot);}
     save_from=project_path.empty()?audio_staging_from:project_path;
     save_target=path;save_id=id;save_is_recovery=recovery;save_pending=true;save_queued=false;last_save_failed=false;++save_ticket;

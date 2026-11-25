@@ -15,6 +15,8 @@
 // last said, so the MIDI thread never calls into it for a value.
 #pragma once
 
+#include "rhythmer/plugin/screen_source.h"
+
 #include <juce_audio_processors_headless/juce_audio_processors_headless.h>
 
 #include <array>
@@ -35,10 +37,11 @@ struct clap_plugin_note_ports;
 struct clap_plugin_preset_load;
 struct clap_event_header;
 struct clap_output_events;
+struct rhythmer_screen;
 
 namespace rhythmer {
 
-class ClapInstance final : public juce::AudioPluginInstance
+class ClapInstance final : public juce::AudioPluginInstance, public ScreenSource
 {
 public:
     struct Info
@@ -56,6 +59,10 @@ public:
     // The rack's thread, a few times a second: what the plug-in asked of the main thread (request_callback, a
     // parameter rescan, a new latency) done now.
     void idle();
+    // Any thread: whether its next block should run although the rack let it sleep (plugin/idle_gate.h). It asked to
+    // be run (request_process, or its parameters' request_flush), or a value set here waits for it (a pot turned).
+    // The next processBlock() takes both.
+    bool wantsProcess() const override;
 
     const juce::String getName() const override { return name; }
     void fillInPluginDescription (juce::PluginDescription&) const override;
@@ -63,6 +70,7 @@ public:
     void releaseResources() override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     double getTailLengthSeconds() const override;
+    bool takeTailChange (double& seconds); // audio thread, before the rack decides whether to sleep
     bool acceptsMidi() const override { return notePort >= 0; }
     bool producesMidi() const override { return false; }
     juce::AudioProcessorEditor* createEditor() override { return nullptr; }
@@ -84,6 +92,24 @@ public:
     std::vector<Preset> findPresets (const juce::File& cache) const;
     void setPresets (std::vector<Preset>);
     const std::string& clapId() const { return info.id; }
+    // Pages (plugin/plugin_pages.h). module(): the group of the parameter at `index` (its place in getParameters())
+    // as clap_param_info.module gives it, "/" between levels ("" none). remotePages(): the plug-in's own pages of
+    // up to eight controls (CLAP remote-controls), asked now, as parameter indices; empty with none.
+    // remotePagesChanged(): it said they changed since remotePages() was last called.
+    struct RemotePage
+    {
+        std::string section, name;
+        std::vector<int> params;
+    };
+    std::string module (int index) const;
+    std::vector<RemotePage> remotePages();
+    bool remotePagesChanged() const;
+    // Its own screen (plugin/screen_source.h), when it offers one: the calls wait for no other main-thread call.
+    bool hasScreen() const override { return screen != nullptr; }
+    bool screenDraw (const rhythmer_screen_frame& frame, bool& changed) override;
+    bool screenInput (const rhythmer_screen_input& input, bool& used) override;
+    bool screenControls (std::array<int, 3>& indices) override;
+    bool takeRedraw() override;
     int getNumPrograms() override;                      // its presets (1 with none, as JUCE has it)
     int getCurrentProgram() override;                   // the one loaded here last (0 none yet)
     void setCurrentProgram (int) override;              // loads that preset, again if it is the one loaded
@@ -106,6 +132,7 @@ private:
                   bool clapNotes, bool midiNotes, double rate, int block);
     void readParameters();          // main thread, under `mainLock`
     void refreshValues();           // main thread, under `mainLock`: every cached value from the plug-in
+    double readTailSeconds() const; // CLAP permits this query on the main or audio thread
     void readLatency();             // main thread, under `mainLock`
     void stopProcessing();          // main thread, the audio thread no longer running it
     static bool pushOut (const clap_output_events*, const clap_event_header*);
@@ -118,12 +145,13 @@ private:
     const clap_plugin_latency* latency = nullptr;
     const clap_plugin_tail* tail = nullptr;
     const clap_plugin_preset_load* presetLoad = nullptr;
+    const rhythmer_screen* screen = nullptr;
     std::vector<Preset> presets;    // under `mainLock`
     int currentPreset = -1;         // under `mainLock`
     juce::File file;
     Info info;
     juce::String name;
-    std::recursive_mutex mainLock;
+    mutable std::recursive_mutex mainLock;
     bool active = false, processing = false;
     double rate;
     int block;

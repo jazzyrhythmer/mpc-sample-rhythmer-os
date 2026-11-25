@@ -39,6 +39,13 @@ void list_row(Paint& p, float x, float y, float w, const ListRow& row) {
     float nx = x + 9, nw = row.number.isEmpty() ? 0 : std::max(16.0f, p.width(row.number, number));
     p.text(row.number, nx, y, nw, list_row_h, number);
     float cy = y + list_row_h / 2, right = x + w - 7;
+    if (row.badge.isNotEmpty()) { // a track's number on its colour
+        auto style = plain(colour::bg, type::small, Weight::SemiBold);
+        float bw = std::max(15.0f, p.width(row.badge, style) + 8);
+        p.fill(right - bw, cy - 7.5f, bw, 15, row.dim ? row.accent.withAlpha(0.45f) : row.accent, 3);
+        p.text(row.badge, right - bw, cy - 7.5f, bw, 15, style, juce::Justification::centred);
+        right -= bw + 6;
+    }
     if (row.starred) { star(p, right - 5.5f, cy, 5.5f, row.accent); right -= 19; }
     if (row.chevron) { icon(p, Icon::ChevronRight, right - 10, cy - 5, 10, colour::dim, 1.6f); right -= 14; }
     if (row.fact.isNotEmpty()) {
@@ -46,6 +53,13 @@ void list_row(Paint& p, float x, float y, float w, const ListRow& row) {
         float fw = p.width(row.fact, style);
         p.text(row.fact, right - fw, y, fw + 1, list_row_h, style);
         right -= fw + 6;
+    }
+    if (row.chip.isNotEmpty()) { // a word on a light chip
+        auto style = caps_text(colour::bg);
+        float cw = p.width(row.chip, style) + 10;
+        p.fill(right - cw, cy - 7.5f, cw, 15, colour::text, 3);
+        p.text(row.chip, right - cw, cy - 7.5f, cw, 15, style, juce::Justification::centred);
+        right -= cw + 6;
     }
     if (row.fact_icon != Icon::None) { icon(p, row.fact_icon, right - 12, cy - 6, 12, row.accent, 1.6f); right -= 18; }
     if (row.pad.isNotEmpty()) { // the pad it is on: a raised chip with the pads glyph

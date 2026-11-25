@@ -1,6 +1,7 @@
 # sample-base
 
-An open-source, standalone JUCE application base for **MPC Sample AC50 firmware 1.3.0.12**.
+An open-source, standalone JUCE application base for **MPC Sample AC50 firmware 1.3.0.12, 1.4.0.7 and 1.4.0.8**
+([what 1.4 changes](docs/HARDWARE.md#firmware-14)).
 It draws its own screen, reads the physical pads and makes simple beeps and
 boops without running or injecting into the stock MPC application.
 
@@ -125,10 +126,12 @@ No offline mode opens the MPC's audio, display or control surface.
 ## Install from a release (no SSH)
 
 Each [release](https://github.com/keremimo/sample-base/releases) has a zip
-with an `autorun` folder. Copy it to the top level of the MPC's microSD card
-(move any existing `autorun` folder away first) and switch the MPC on: the
-stock app starts, runs the card's signed autorun, and a few seconds later
-the demos take over. Push the wheel to go back to stock until the next boot;
+with an `autorun` folder and an `autorun.sh`. Copy both to the top level of
+the MPC's microSD card (move any existing `autorun` folder away first) and
+switch the MPC on: the stock app starts, runs the card's autorun (1.3.0.12
+its signed `autorun/autorun.sh` by itself; 1.4, with Developer Mode on, the
+top `autorun.sh` once you answer Yes), and a few seconds later the demos
+take over. Push the wheel to go back to stock until the next boot;
 delete the folder to uninstall. The zip's `README.txt` has the details.
 
 To make one, commit, then run `./release.sh v0.1.0`. It builds, strips and
@@ -140,7 +143,9 @@ from [release/README.txt](release/README.txt), the
 
 ## Run on the MPC
 
-Connect USB networking with root SSH access configured:
+Connect USB networking with root SSH access: on firmware 1.4, switch on
+Developer Mode (stock app Settings, DEV ENHANCEMENTS (BETA)); on 1.3.0.12,
+an SSH server of your own on port 2222.
 
 ```sh
 python3 device.py start
@@ -150,9 +155,10 @@ python3 device.py screenshot
 python3 device.py stock
 ```
 
-The helper defaults to `192.168.155.1:2222` and
-`~/.ssh/mpc_sample_client_ed25519`. `--host`, `--port` and `--key` override
-these. Supply your own SSH key and keep it outside this repository.
+The helper connects to `192.168.155.1`, port 22 (1.4's Developer Mode: root,
+no password) or else 2222 with `~/.ssh/mpc_sample_client_ed25519` when that
+file exists. `--host`, `--port` and `--key` override these. Supply your own
+SSH key and keep it outside this repository.
 The start command restarts applications, so finish any project edits first;
 there is no additional confirmation prompt.
 
@@ -175,14 +181,19 @@ python3 device.py uninstall-sd
 ```
 
 `install-sd` copies the app, the recovery script and two small boot scripts
-into `sample-base/` on the card with their hashes, keeps the card's autorun
-in `sample-base/autorun-backup/`, and chains a start after the card's own
-`autorun/autorun.sh` (signed in `autorun.check`, the firmware's salted
-digest). At boot the stock app runs that autorun; the boot script hands off
+into `autorun/sample-base/` on the card with their hashes, keeps the card's
+autorun in `autorun/sample-base/autorun-backup/`, and chains a start after the
+card's own `autorun/autorun.sh` (signed in `autorun.check`, the firmware's
+salted digest; a card without one gets one). On 1.3.0.12 nothing is added at
+the card's top; on 1.4 the top gets [install/top-autorun.sh](install/top-autorun.sh)
+as `autorun.sh`, which runs `autorun/autorun.sh`, since 1.4 runs only that
+file. A `sample-base/` at the top from an older install is moved into
+`autorun/`. At boot the stock app runs that autorun; the boot script hands off
 to a separate service that checks the stock identity and the files, copies
 them into a new RAM directory, runs the self-test and starts the same
 session unit as `start`. Leaving the app (or any failure) returns to stock
-until the next boot. Only the card changes; `--remove-plugins` also takes
+until the next boot; on 1.4 the stock app asks again each time it starts,
+and Yes starts the app again. Only the card changes; `--remove-plugins` also takes
 MPC-Plugins' start out of that autorun.
 
 For a bounded test that automatically returns to stock:
@@ -303,6 +314,7 @@ Contributions are welcome under the licence of the affected files. Before
 committing, enable the privacy hook with `git config core.hooksPath .githooks`
 and run `python3 tools/check_private_files.py` after staging. It takes source
 text only, plus the docs' own images (PNG, JPEG, GIF or WebP under a
-`docs/images/` folder). Keep generated builds and local device material in
+`docs/images/` folder) and the images and fonts (TrueType or OpenType) of
+worked examples under `docs/examples/`. Keep generated builds and local device material in
 ignored storage. This is an independent
 community project, unaffiliated with Akai Professional or inMusic.

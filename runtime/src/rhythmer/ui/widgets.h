@@ -33,6 +33,9 @@ struct ListRow {
     // `played_head`. `tag_lead` then leads the tag in the accent, the tag in mid.
     float played = -1, played_wake = 1, played_head = 0;
     juce::String tag_lead;
+    // At the right edge, last: a track's number on its colour (`accent`), as the header's track tag; and before
+    // the facts, a word on a light chip ("NOW").
+    juce::String badge, chip;
 };
 void list_row(Paint& p, float x, float y, float w, const ListRow& row);
 constexpr float list_row_h = 23, list_row_gap = 1;

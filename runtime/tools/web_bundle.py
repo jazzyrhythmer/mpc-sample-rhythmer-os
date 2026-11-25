@@ -361,7 +361,12 @@ def main():
 
     # RHYTHMER's practical guides are linked from the guide hub as well as
     # the foundation chapters. Register them too, with their own local images.
+    practical = {"MANUAL_020_EN.md", "FIRST_GROOVE_020_EN.md", "QUICK_REFERENCE_020_EN.md",
+                 "SYSTEM_MAP_020_EN.md", "TRACK_WORKFLOW.md", "SD_CARD_GUIDE.md"}
     for source in sorted((DOCS / "guide").glob("*.md")):
+        # Archive old language/technical drafts in source, not in the user-facing web manual.
+        if source.name != source.name.lower() and source.name not in practical:
+            continue
         route = page_of(source)
         if route in files:
             continue

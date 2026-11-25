@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #pragma once
 #include "rhythmer/shell/bindings.h"
+#include "rhythmer/model/slice_banks.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -25,6 +26,43 @@ inline uint32_t zoom_width(uint32_t span, int zoom) {
     double f = double(std::min(zoom, zoom_top)) / zoom_top;
     double w = double(span) * std::pow(double(zoom_closest) / double(span), f);
     return std::clamp(uint32_t(std::lround(w)), zoom_closest, span);
+}
+// The zoom that shows about `width` of `span`: 0 where all of it fits.
+inline int zoom_for_width(uint32_t span, uint32_t width) {
+    if (span <= width) return 0;
+    if (width <= zoom_closest || span <= zoom_closest) return zoom_top;
+    double f = std::log(double(width) / double(span)) / std::log(double(zoom_closest) / double(span));
+    return std::clamp(int(std::lround(f * zoom_top)), 0, zoom_top);
+}
+// Chop: the wheel moving a cut closes the view in on it, about follow_view across, unless Shift + K set a zoom; the
+// next pad, Minus / Plus or K1 / K2 open it again (chop_unfollow), so the pots cover the whole region.
+constexpr uint32_t follow_view = 5292; // 120 ms, as the project counts frames (44.1 kHz)
+constexpr uint32_t chop_heard_ms = 150; // a moved cut is heard once it has been still this long
+constexpr uint32_t heard_lead = 13230, heard_tail = 44100; // with 300 ms before a start; an end, the slice's last second
+inline void chop_follow(UiState& ui, uint32_t span) {
+    if (ui.chop_zoom && !ui.chop_zoom_auto) return; // a zoom set by Shift + K stays as it is
+    const int z = zoom_for_width(span, follow_view);
+    if (!z || (ui.chop_zoom_auto && ui.chop_zoom == z)) return;
+    ui.chop_zoom = uint8_t(z); ui.chop_zoom_auto = true; ui.chop_view = {};
+}
+inline void chop_unfollow(UiState& ui) {
+    if (!ui.chop_zoom_auto) return;
+    ui.chop_zoom = 0; ui.chop_zoom_auto = false; ui.chop_view = {};
+}
+// Chop's take (model/slice_banks.h): whether it still plays, and the slice whose bank the pads show: the next one's while
+// it plays, and after a take while the newest slice is in hand (the red stays on the next pad); else the slice in hand's.
+inline bool chop_take_playing(const Project& project, const UiState& ui, uint32_t now) {
+    const auto& sl = ui.slices;
+    if (!ui.chop_take_at || !sl.count || ui.chop_sample >= sample_slots) return false;
+    return take_live(ui.chop_take_at, ui.chop_take_from, sl.end(sl.count - 1, project.samples[ui.chop_sample].frames), now);
+}
+inline bool chop_red_shown(const Project& project, const UiState& ui, uint32_t now) {
+    return ui.slices.count < max_slices && (chop_take_playing(project, ui, now) || (ui.chop_more && ui.chop_mode == ChopMode::Manual));
+}
+inline unsigned chop_bank_slice(const Project& project, const UiState& ui, uint32_t now) {
+    const unsigned count = ui.slices.count;
+    const bool next = chop_take_playing(project, ui, now) || (ui.chop_more && ui.chop_mode == ChopMode::Manual && ui.chop_slice + 1u == count);
+    return view_slice(ui.chop_slice, count, next, max_slices);
 }
 // How many times closer than unzoomed, for the screen.
 inline double zoom_factor(uint32_t span, int zoom) { return double(span) / std::max(1u, zoom_width(span, zoom)); }
@@ -130,7 +168,7 @@ inline FrameView chop_view(const Project& project, const UiState& ui) {
     return zoom_now(ui.chop_view, chop_key(ui), frames, sl.start[0], sl.end(sl.count - 1, frames), centre, ui.chop_zoom);
 }
 
-// A handle's pot or zoom touched: it is the one in focus (the view closes in round it; on Chop the wheel edits it).
+// A handle's pot or zoom touched: it is the one in focus (the view closes in round it; the wheel moves it).
 // True when the focus moved, so the cards change.
 inline bool focus_handle(UiState& ui, const Binding& b) {
     using K = Binding::Kind;

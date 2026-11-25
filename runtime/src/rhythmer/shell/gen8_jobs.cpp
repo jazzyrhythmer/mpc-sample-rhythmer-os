@@ -125,7 +125,7 @@ void Context::gen8_action(unsigned action) {
             const unsigned local=t-from;
             std::vector<const GenEngine*> candidates;
             unsigned native_role=fm1->role[local];unsigned slot=native_role==1?0:native_role==2?1:2;
-            for(const auto& e:gen_engines)if(local==0?has(lower(e.folder),"rhythmer - rhythmer kit"):(!e.drums&&!has(lower(e.folder),"monk")&&!(slot==1&&e.mono)&&!(slot!=0&&e.acid)&&(e.programs[slot]>0||e.acid)))candidates.push_back(&e);
+            for(const auto& e:gen_engines)if(local==0?has(lower(e.folder),"rhythmer - rhythmer kit"):(!e.drums&&!has(lower(e.folder),"monk")&&!(slot==1&&e.mono)&&!(slot!=0&&e.acid)&&(e.programs[slot]>=0||e.acid)))candidates.push_back(&e);
             if(local>0){unsigned recipe=fm1->recipe[local]%28;std::vector<const GenEngine*> matched;
                 for(auto* e:candidates)if(e->recipes[recipe]>=0&&(recipe!=1||std::string(e->name)=="Acid Engine"))matched.push_back(e);
                 if(!matched.empty())candidates=std::move(matched);

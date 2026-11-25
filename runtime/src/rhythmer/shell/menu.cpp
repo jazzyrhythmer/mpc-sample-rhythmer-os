@@ -55,9 +55,8 @@ void go(Context& c, unsigned tile) {
         c.open(PageId::StepEdit);
         break;
     case 7: c.open(PageId::Motion); break;
-    case 8: c.open(PageId::Tracks); break;
-    case 9: ui.sends_pads = false; c.open(PageId::Sends); break;
-    case 10: ui.fx_loop = -1; c.open(PageId::Rack); break; // the selected track's chain
+    case 8: c.open(PageId::Mixer); break;
+    case 10: ui.fx_loop = -1; ui.fx_sub = -1; c.open(PageId::Rack); break; // the selected track's chain
     case 11: c.open(PageId::Looper); break;
     case 12: c.open(PageId::Song); break;
     case 13: // Project, as Shift + Pad 16
@@ -69,7 +68,7 @@ void go(Context& c, unsigned tile) {
         break;
     case 14: // Settings, as Shift + Pad 8
         if (ui.page == PageId::SettingsPage) break;
-        ui.midi_editing = false; ui.settings_editing = false; ui.settings_in = false; ui.settings_look = false;
+        ui.settings_in = false; ui.settings_look = false;
         c.open(PageId::SettingsPage);
         break;
     default: break; // LEARN, above
@@ -81,20 +80,20 @@ void run(Context& c, MenuJob job) {
     using J = MenuJob;
     auto& ui = c.ui;
     ui.menu = menu_closed;
-    const unsigned column = c.track().pattern % pattern_count; // the sequence in view: the selected track's pattern's column
+    const unsigned column = c.track().pattern % pattern_count; // the selected track's pattern
+    const unsigned scene = c.project.scene % pattern_count;    // the sequence in hand
     switch (job) {
     case J::Generate: c.open(PageId::Patterns); ui.patterns_cards=0;ui.sheet_open=true;ui.gen8_mode=0;ui.sheet_row=0; break;
     case J::SequenceCapture: ui.scene_capture = true; break; // the next pad picks the sequence
-    case J::SequenceName: c.name_scene(ui.page == PageId::Scenes ? ui.scene : column); break;
+    case J::SequenceName: c.name_scene(scene); break;
     case J::SequenceFollowAll: c.follow_to_column(); break;
-    case J::SequenceLaunch:
-        if (ui.page != PageId::Scenes) ui.scene = uint8_t(column);
-        c.launch_scene(ui.scene);
-        break;
-    case J::SequenceClear: c.clear_scene(ui.scene); break;
+    case J::SequenceLaunch: c.launch_scene(scene); break; // every track back on what the sequence keeps
+    case J::SequenceClear: c.clear_scene(scene); break;
     case J::PatternDouble: c.double_length(); break;
     case J::PatternHalf: c.half_length(); break;
     case J::PatternClear: ask(c, UiState::Ask::ClearPattern, int(column)); break; // asked first, as Seq + Erase + pad
+    case J::TrackSetup: c.open(PageId::TrackActions); break;
+    case J::TrackName: c.name_track(ui.track); break;
     case J::TrackMove: start_track_pick(ui, true); break;  // then the track, then where
     case J::TrackCopy: start_track_pick(ui, false); break;
     case J::TrackClear: { // asked first, as Pad Bank + Erase + pad
@@ -124,6 +123,7 @@ void menu_open(Context& c) {
     if (ui.menu || ui.ask != UiState::Ask::None || ui.name.open() || ui.exit_open || ui.loading || card_owns_controls(ui) || ui.levels_sheet) return;
     ui.stop_copying(); // a copy or a move waiting for its pads gives way
     ui.scene_capture = false;
+    ui.history = false; // the undo list gives way
     ui.menu = here_count(c) ? menu_here_view : menu_go_view;
     ui.menu_row = 0;
     ui.menu_tile = uint8_t(menu_tile_of(ui.page));
@@ -152,11 +152,12 @@ bool menu_button(Context& c, SurfaceButton b) {
     case B::TopMiddle: if (here_count(c)) ui.menu = menu_here_view; return true;       // HERE, when the page lists something
     case B::TopRight: ui.menu = menu_go_view; return true;                             // GO
     case B::WheelPush:
-        if (ui.menu == menu_go_view) { go(c, ui.menu_tile); return true; }
+        if (ui.menu == menu_go_view) { c.usage.menu_go(c.now, ui.menu_tile); go(c, ui.menu_tile); return true; }
         {
             std::array<MenuItem, menu_here_max> items {};
             unsigned n = menu_here(c.project, ui, items);
-            if (n) run(c, items[ui.menu_row % n].job); else ui.menu = menu_closed;
+            if (n) { c.usage.menu_here(c.now, items[ui.menu_row % n].name); run(c, items[ui.menu_row % n].job); }
+            else ui.menu = menu_closed;
         }
         return true;
     case B::Play: case B::Stop: case B::Shift: return false; // the transport and Shift, with the MENU left open
@@ -173,7 +174,7 @@ void menu_wheel(Context& c, int delta) {
 }
 
 void menu_pad(Context& c, unsigned pad) {
-    if (c.ui.menu == menu_go_view) go(c, pad % 16); // HERE: the pads wait
+    if (c.ui.menu == menu_go_view) { c.usage.menu_go(c.now, pad); go(c, pad % 16); } // HERE: the pads wait
 }
 
 } // namespace rhythmer

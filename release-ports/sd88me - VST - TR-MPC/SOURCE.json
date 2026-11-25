@@ -1,0 +1,10 @@
+{
+  "repo": "sd88me/mpc-vst-TR-MPC",
+  "tag": "trmpc-vst-v1.2.1",
+  "asset": "TR-MPC-1.2.1-mpc-aarch64.zip",
+  "url": "https://github.com/sd88me/mpc-vst-TR-MPC/releases/download/trmpc-vst-v1.2.1/TR-MPC-1.2.1-mpc-aarch64.zip",
+  "sha256": "0098a4b459609568d1635c85388bc8cf810d782209175c1b03b5dfe1c5514151",
+  "github_digest": "sha256:0098a4b459609568d1635c85388bc8cf810d782209175c1b03b5dfe1c5514151",
+  "bytes": 30561506,
+  "source_commit": "e511f73f48f6205df804ccc5389374c97257c7df"
+}

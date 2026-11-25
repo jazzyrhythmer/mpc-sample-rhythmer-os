@@ -5,7 +5,7 @@
 // tools/stems/build.py): Spleeter's 4-stem separation as Deezer's own program
 // does it, on SpleeterRT's network and STFT code.
 //
-//   rhythmer-stems <model> <threads> <file.wav>
+//   rhythmer-stems <model> <threads> <file.wav> [best]
 //
 // <model> is Deezer's 4-stem model as tools/stems/convert_model.py writes it.
 // <file.wav> is stereo (or mono) at 44.1 kHz. It writes <file.wav>_Drums.wav,
@@ -19,10 +19,23 @@
 // (vocals, drums, bass, other), each estimates its stem from the whole mix,
 // and every bin of the mix is then shared between the four by the squares of
 // their estimates (the ratio mask), so the stems add up to the mix and a
-// stem's network never has the last word alone. The networks see what they
-// were trained on: 512 frames of 1024 bins (up to 11 kHz) a pass. Above
-// 11 kHz, where they have no estimate, each frame is shared as its top
-// quarter below 11 kHz was.
+// stem's network never has the last word alone. The networks see 512 frames
+// (about 12 s) a pass, as they were trained. Above the highest bin they see,
+// each frame is shared as its top quarter below was.
+//
+// Without "best": 1024 bins (up to 11 kHz, Deezer's 4stems settings), one
+// pass over the sound. With "best", about three times as long:
+//   - the networks see 1536 bins, up to 16 kHz, as Deezer's 4stems-16kHz
+//     settings have them (the same weights: the network is convolutional
+//     along the bins), so the stems' highs between 11 and 16 kHz are their
+//     own, not their share of the band below;
+//   - two passes, the second half a pass (256 frames) after the first, each
+//     frame's estimate the two passes' crossfaded (each counted the less the
+//     nearer its pass's edge), so no seam is left where a pass ends.
+// Tried on TAKE 13 and left out, scored against Demucs v4's stems of it: four
+// passes (no better than two), each network also run with left and right
+// swapped (no better), and one step of the multichannel Wiener filter as
+// Deezer's --mwf does it (0.7 to 1 dB worse on every stem).
 #define _GNU_SOURCE
 #include <math.h>
 #include <pthread.h>
@@ -44,11 +57,16 @@
 
 void openblas_set_num_threads(int threads);
 
-enum { STEMS = 4, FRAMES = 512, BINS = 1024, TOP = 256, RATE = 44100 };
+enum { STEMS = 4, FRAMES = 512, RATE = 44100, MOST_PASSES = 2 };
 static const char MAGIC[4] = {'M', 'L', 'S', 'T'};
 // The files in the order Rhythmer lands them, and the network of the model each is (vocals, drums, bass, other).
 static const char* const stem_file[STEMS] = {"_Drums.wav", "_Bass.wav", "_Music.wav", "_Vocals.wav"};
 static const int stem_net[STEMS] = {1, 2, 3, 0};
+
+// The settings: Deezer's 4stems, or (best) its 4stems-16kHz in two passes.
+static size_t bins = 1024;   // the bins the networks see: 1024 up to 11 kHz, 1536 up to 16 kHz
+static size_t passes = 1;    // 1, or 2 half a pass apart
+static size_t step = FRAMES; // frames from one pass's start to the next one's: FRAMES / passes
 
 static void fail(const char* what) {
     fprintf(stderr, "rhythmer-stems: %s\n", what);
@@ -94,29 +112,66 @@ static float* load_model(const char* path) {
 }
 
 // One job: the mix's spectrum, the networks, and the masks as they are worked out.
+//
+// A run is the four networks on FRAMES frames of the mix; runs start every `step` frames, the first (passes - 1)
+// steps before the sound. A segment is `step` frames of the sound: segment s lies in the runs s to s + passes - 1,
+// and run r holds the segments r - passes + 1 to r. A segment is shared out as soon as all its runs' four networks
+// are in; a run's masks go once all its segments are.
 typedef struct {
     size_t frames;                 // of spectrum
     float *re[2], *im[2];          // the mix: frames x FFTSIZE each, left and right
     const float* model;
-    size_t chunks, next, done;     // a task is one network on one chunk of FRAMES frames: STEMS a chunk
-    float* (*estimates)[STEMS];    // chunk, network: the network's own mask, until the chunk's four are in
-    uint16_t* share[STEMS];        // network: its share of each bin, frames x 2 sides x BINS, 0..65535
+    size_t runs, segments, next, done; // a task is one network on one run: STEMS a run
+    float* (*estimates)[STEMS];    // run, network: the network's own mask, side x FRAMES x bins
+    unsigned char* in;             // run: its networks in so far
+    unsigned char* open;           // run: its segments not yet shared out
+    unsigned char* taken;          // segment: a thread is sharing it out, or has
+    uint16_t* share[STEMS];        // network: its share of each bin, frames x 2 sides x bins, 0..65535
     pthread_mutex_t lock;
 } Job;
 
-// A chunk's four masks into each network's share of every bin: the squares of what each estimates, over their sum.
-static void share_chunk(Job* job, size_t chunk, float* const estimate[STEMS]) {
-    const size_t first = chunk * FRAMES;
-    for (size_t t = 0; t < FRAMES && first + t < job->frames; t++) {
+static long run_start(size_t run) { return (long)(run * step) - (long)((passes - 1) * step); }
+
+// How much a run's estimate counts at `at` frames into it: all of it with one pass; with two, the less the nearer
+// either edge, so the two runs that hold a frame add up to one.
+static float weight(size_t at) {
+    if (passes == 1) return 1.0f;
+    return 1.0f - fabsf(2.0f * (float)at + 1.0f - (float)FRAMES) / (float)FRAMES;
+}
+
+static int segment_ready(const Job* job, size_t segment) {
+    for (size_t r = segment; r < segment + passes; r++)
+        if (job->in[r] != STEMS) return 0;
+    return 1;
+}
+
+// A segment's masks into each network's share of every bin: the squares of what each estimates, over their sum.
+static void share_segment(Job* job, size_t segment) {
+    const size_t first = segment * step;
+    size_t last = first + step;
+    if (last > job->frames) last = job->frames;
+    for (size_t t = first; t < last; t++) {
+        // The runs that hold this frame, where in each it is, and how much each counts.
+        const float* from[MOST_PASSES][STEMS];
+        float part[MOST_PASSES];
+        float total = 0;
+        for (size_t c = 0; c < passes; c++) {
+            const size_t run = segment + c, at = (size_t)((long)t - run_start(run));
+            part[c] = weight(at);
+            total += part[c];
+            for (int n = 0; n < STEMS; n++) from[c][n] = job->estimates[run][n] + at * bins;
+        }
+        for (size_t c = 0; c < passes; c++) part[c] /= total;
         for (int side = 0; side < 2; side++) {
-            const float* re = job->re[side] + (first + t) * FFTSIZE;
-            const float* im = job->im[side] + (first + t) * FFTSIZE;
-            const size_t in = (size_t)side * FRAMES * BINS + t * BINS, out = ((first + t) * 2 + (size_t)side) * BINS;
-            for (size_t bin = 0; bin < BINS; bin++) {
+            const float* re = job->re[side] + t * FFTSIZE;
+            const float* im = job->im[side] + t * FFTSIZE;
+            const size_t in = (size_t)side * FRAMES * bins, out = (t * 2 + (size_t)side) * bins;
+            for (size_t bin = 0; bin < bins; bin++) {
                 const float level = hypotf(re[bin], im[bin]) * (float)FFTSIZE, power = level * level;
                 float each[STEMS], sum = 1e-10f;
                 for (int n = 0; n < STEMS; n++) {
-                    const float mask = estimate[n][in + bin];
+                    float mask = 0;
+                    for (size_t c = 0; c < passes; c++) mask += part[c] * from[c][n][in + bin];
                     each[n] = power * mask * mask + 1e-10f / STEMS;
                     sum += power * mask * mask;
                 }
@@ -128,47 +183,61 @@ static void share_chunk(Job* job, size_t chunk, float* const estimate[STEMS]) {
 
 static void* work(void* given) {
     Job* job = (Job*)given;
-    float* level = (float*)malloc(2 * FRAMES * BINS * sizeof(float));
+    float* level = (float*)malloc(2 * FRAMES * bins * sizeof(float));
     if (!level) fail("out of memory");
     for (;;) {
         pthread_mutex_lock(&job->lock);
         const size_t task = job->next++;
         pthread_mutex_unlock(&job->lock);
-        if (task >= job->chunks * STEMS) break;
-        const size_t chunk = task / STEMS, first = chunk * FRAMES;
+        if (task >= job->runs * STEMS) break;
+        const size_t run = task / STEMS;
+        const long first = run_start(run);
         const int net = (int)(task % STEMS);
-        // The chunk's levels, as the networks were trained on them: side, frame, bin. Past the end: silence.
+        // The run's levels, as the networks were trained on them: side, frame, bin. Outside the sound: silence.
         for (int side = 0; side < 2; side++)
             for (size_t t = 0; t < FRAMES; t++) {
-                float* row = level + (size_t)side * FRAMES * BINS + t * BINS;
-                if (first + t >= job->frames) { memset(row, 0, BINS * sizeof(float)); continue; }
-                const float* re = job->re[side] + (first + t) * FFTSIZE;
-                const float* im = job->im[side] + (first + t) * FFTSIZE;
-                for (size_t bin = 0; bin < BINS; bin++) row[bin] = hypotf(re[bin], im[bin]) * (float)FFTSIZE;
+                float* row = level + (size_t)side * FRAMES * bins + t * bins;
+                const long frame = first + (long)t;
+                if (frame < 0 || (size_t)frame >= job->frames) { memset(row, 0, bins * sizeof(float)); continue; }
+                const float* re = job->re[side] + (size_t)frame * FFTSIZE;
+                const float* im = job->im[side] + (size_t)frame * FFTSIZE;
+                for (size_t bin = 0; bin < bins; bin++) row[bin] = hypotf(re[bin], im[bin]) * (float)FFTSIZE;
             }
         spleeter nn = (spleeter)allocateSpleeterStr();
         float* mask = NULL;
-        float* kept = (float*)malloc(2 * FRAMES * BINS * sizeof(float));
+        float* kept = (float*)malloc(2 * FRAMES * bins * sizeof(float));
         if (!nn || !kept) fail("out of memory");
-        initSpleeter(nn, BINS, FRAMES, 1, (void*)(job->model + (size_t)net * (getCoeffSize() / sizeof(float))));
+        initSpleeter(nn, bins, FRAMES, 1, (void*)(job->model + (size_t)net * (getCoeffSize() / sizeof(float))));
         getMaskPtr(nn, &mask);
         processSpleeter(nn, level, mask);
-        memcpy(kept, mask, 2 * FRAMES * BINS * sizeof(float));
+        memcpy(kept, mask, 2 * FRAMES * bins * sizeof(float));
         freeSpleeter(nn);
         free(nn);
-        float* ready[STEMS];
-        int whole = 1;
+        // The segments this run completes: each is shared out by the thread that completes it, alone.
+        size_t ready[MOST_PASSES], claimed = 0;
         pthread_mutex_lock(&job->lock);
-        job->estimates[chunk][net] = kept;
-        for (int n = 0; n < STEMS; n++) {
-            ready[n] = job->estimates[chunk][n];
-            whole = whole && ready[n];
+        job->estimates[run][net] = kept;
+        if (++job->in[run] == STEMS) {
+            const size_t low = run + 1 >= passes ? run + 1 - passes : 0;
+            for (size_t s = low; s <= run && s < job->segments; s++)
+                if (!job->taken[s] && segment_ready(job, s)) {
+                    job->taken[s] = 1;
+                    ready[claimed++] = s;
+                }
         }
-        progress(8 + (int)(80 * ++job->done / (job->chunks * STEMS)));
+        progress(8 + (int)(80 * ++job->done / (job->runs * STEMS)));
         pthread_mutex_unlock(&job->lock);
-        if (whole) { // the chunk's last network: no other thread touches its four again
-            share_chunk(job, chunk, ready);
-            for (int n = 0; n < STEMS; n++) free(ready[n]);
+        for (size_t c = 0; c < claimed; c++) share_segment(job, ready[c]);
+        if (claimed) {
+            pthread_mutex_lock(&job->lock);
+            for (size_t c = 0; c < claimed; c++)
+                for (size_t r = ready[c]; r < ready[c] + passes; r++)
+                    if (--job->open[r] == 0)
+                        for (int n = 0; n < STEMS; n++) {
+                            free(job->estimates[r][n]);
+                            job->estimates[r][n] = NULL;
+                        }
+            pthread_mutex_unlock(&job->lock);
         }
     }
     free(level);
@@ -194,7 +263,12 @@ static void settle(void) {
 
 int main(int argc, char* argv[]) {
     settle();
-    if (argc != 4) fail("usage: rhythmer-stems <model> <threads> <file.wav>");
+    if (argc != 4 && !(argc == 5 && !strcmp(argv[4], "best"))) fail("usage: rhythmer-stems <model> <threads> <file.wav> [best]");
+    if (argc == 5) {
+        bins = 1536;
+        passes = 2;
+        step = FRAMES / 2;
+    }
     int threads = atoi(argv[2]);
     if (threads < 1) threads = 1;
     if (threads > 8) threads = 8;
@@ -231,13 +305,19 @@ int main(int argc, char* argv[]) {
     progress(8);
 
     job.model = model;
-    job.chunks = (job.frames + FRAMES - 1) / FRAMES;
-    job.estimates = calloc(job.chunks, sizeof *job.estimates);
+    job.segments = (job.frames + step - 1) / step;
+    job.runs = job.segments + passes - 1;
+    job.estimates = calloc(job.runs, sizeof *job.estimates);
+    job.in = (unsigned char*)calloc(job.runs, 1);
+    job.open = (unsigned char*)calloc(job.runs, 1);
+    job.taken = (unsigned char*)calloc(job.segments, 1);
+    if (!job.estimates || !job.in || !job.open || !job.taken) fail("out of memory");
+    for (size_t s = 0; s < job.segments; s++)
+        for (size_t r = s; r < s + passes; r++) job.open[r]++;
     for (int n = 0; n < STEMS; n++) {
-        job.share[n] = (uint16_t*)malloc(job.frames * 2 * BINS * sizeof(uint16_t));
+        job.share[n] = (uint16_t*)malloc(job.frames * 2 * bins * sizeof(uint16_t));
         if (!job.share[n]) fail("out of memory");
     }
-    if (!job.estimates) fail("out of memory");
     pthread_mutex_init(&job.lock, NULL);
     pthread_t workers[8];
     for (int n = 1; n < threads; n++)
@@ -246,6 +326,9 @@ int main(int argc, char* argv[]) {
     for (int n = 1; n < threads; n++) pthread_join(workers[n], NULL);
     free(model);
     free(job.estimates);
+    free(job.in);
+    free(job.open);
+    free(job.taken);
 
     // Each stem: the mix's spectrum with the stem's share of every bin, back to sound, to its file.
     float *re[2], *im[2];
@@ -257,24 +340,25 @@ int main(int argc, char* argv[]) {
     float* joined = (float*)malloc((size_t)length * 2 * sizeof(float));
     char* name = (char*)malloc(strlen(argv[3]) + 16);
     if (!joined || !name) fail("out of memory");
+    const size_t top = bins / 4;
     for (int stem = 0; stem < STEMS; stem++) {
         const uint16_t* share = job.share[stem_net[stem]];
         for (size_t t = 0; t < job.frames; t++)
             for (int s = 0; s < 2; s++) {
-                const uint16_t* row = share + (t * 2 + (size_t)s) * BINS;
+                const uint16_t* row = share + (t * 2 + (size_t)s) * bins;
                 const float *from_re = job.re[s] + t * FFTSIZE, *from_im = job.im[s] + t * FFTSIZE;
                 float *to_re = re[s] + t * FFTSIZE, *to_im = im[s] + t * FFTSIZE;
-                float top = 0;
-                for (size_t bin = 0; bin < BINS; bin++) {
+                float high = 0;
+                for (size_t bin = 0; bin < bins; bin++) {
                     const float gain = (float)row[bin] * (1.0f / 65535.0f);
                     to_re[bin] = from_re[bin] * gain;
                     to_im[bin] = from_im[bin] * gain;
-                    if (bin >= BINS - TOP) top += gain;
+                    if (bin >= bins - top) high += gain;
                 }
-                top /= TOP; // above 11 kHz: the frame's share of its top quarter below
-                for (size_t bin = BINS; bin < HALFWNDLEN; bin++) {
-                    to_re[bin] = from_re[bin] * top;
-                    to_im[bin] = from_im[bin] * top;
+                high /= (float)top; // above the bins the networks see: the frame's share of their top quarter
+                for (size_t bin = bins; bin < HALFWNDLEN; bin++) {
+                    to_re[bin] = from_re[bin] * high;
+                    to_im[bin] = from_im[bin] * high;
                 }
                 memset(to_re + HALFWNDLEN, 0, (FFTSIZE - HALFWNDLEN) * sizeof(float));
                 memset(to_im + HALFWNDLEN, 0, (FFTSIZE - HALFWNDLEN) * sizeof(float));

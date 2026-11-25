@@ -3,6 +3,7 @@
 #include "rhythmer/rhythmer_app.h"
 #include "rhythmer/crash_log.h"
 #include "drivers/card_share.h"
+#include "drivers/direct_monitor.h"
 #include "drivers/mixer.h"
 #include "drivers/platform.h"
 #include "surface/pads.h"
@@ -66,13 +67,15 @@ RhythmerApp::RhythmerApp()
     printer.set_pager(&host.streams()); // freeze plan F2b: prints are read through the instruments' pager
     shell.set_store(&store);
     shell.set_input(&input_route);
+    // MIDI played by hand goes out as the audio thread emits it, not at the MIDI loop's next pass.
+    host.set_hand_waker([](void* app) { static_cast<RhythmerApp*>(app)->session().wake_midi(); }, this);
     // The card's settings now, not first on the service thread: the runtime opens the audio device with
     // audio_format() as it starts, and Settings' rate from that first open spares a reopen moments later
     // (the codec powered down and up again, its mute shut a second, and the USB-C gadget rebound twice).
     const std::string projects = rhythmer::ProjectStore::projects_root(Platform().storage());
     if (!projects.empty()) rhythmer::crash_log::set_folder(std::filesystem::path(projects).parent_path().string() + "/Crashes");
     shell.start_settings(rhythmer::ProjectStore::read_settings_file(projects).settings);
-    host.load(shell.project(), shell.patterns());
+    shell.load_engine();
     // The tracks render on several cores (roadmap P2). Floating: a worker for each core beside the audio thread, every
     // one free to run anywhere. Pinned: the audio thread on core 1 and two workers on cores 2 and 3, the rest of Rhythmer
     // kept on core 0 (keep_rest_off()). $RHYTHMER_RENDER_THREADS: "pinned", or how many floating workers.
@@ -133,7 +136,17 @@ static_assert(usb_stem_count == rhythmer::track_count && usb_stem_frames == rhyt
               "one USB-C stem a track, a block at a time");
 
 void RhythmerApp::render(const AudioBlock& input, AudioBlock& output) {
-    host.render(output.data(), audio_frames, shell.volume(), input.data(), &stem_block.track[0][0], input_route.usb_block(audio_frames));
+    usb_full = shell.usb_full_volume();
+    const bool direct = shell.usb_direct_on();
+    host.set_usb_direct(direct);
+    host.set_usb_submixes(shell.usb_submixes_on());
+    host.render(output.data(), audio_frames, shell.volume(), input.data(), &stem_block.track[0][0], input_route.usb_block(audio_frames),
+                usb_full ? usb_block.data() : nullptr);
+    // Settings' USB-C in Direct: what a computer plays goes straight to the jacks, dry, while something here would
+    // have played it, at the level it would have (before its effects), the direct level and the main volume, eased
+    // (base's drivers/direct_monitor.h).
+    const float gain = shell.volume() * shell.usb_direct_gain();
+    direct_monitor().set(direct && host.usb_heard(), gain * host.usb_gain_left(), gain * host.usb_gain_right());
 }
 
 void RhythmerApp::surface(const SurfaceEvent& event) {
@@ -167,6 +180,14 @@ void RhythmerApp::lights(SurfaceLights& lights, Clock::time_point) {
     while (remote_looper.pop(looper_ask)) shell.looper_ask(looper_ask, now_ms());
     rhythmer::Context::PrintAsk print_ask;
     while (remote_print.pop(print_ask)) shell.print(print_ask);
+    std::array<char, 40> stems_name {};
+    while (remote_stems.pop(stems_name)) { // the song's stems, named, as Song's export makes them
+        auto& context = shell.context();
+        const uint8_t kind = context.ui.export_kind;
+        context.ui.export_kind = rhythmer::export_kinds::stems;
+        context.mixdown(stems_name.data());
+        context.ui.export_kind = kind;
+    }
     Remote remote;
     while (presses.pop(remote)) {
         if (remote.kind == 1) { // the wheel
@@ -234,10 +255,24 @@ void RhythmerApp::lights(SurfaceLights& lights, Clock::time_point) {
 }
 
 std::string RhythmerApp::command(const std::string& action, const std::string& argument, Hardware&) {
+    // USB-C in now, as UsbAudioInput::json(), and the round trip from a Note On played by hand to its sound back on it.
+    if (action == "rhythmer-usb-input") { // and direct monitoring's counters (base's drivers/direct_monitor.h)
+        const auto& d = direct_monitor();
+        return "OK " + input_route.usb_json() + " loop=" + input_route.loop_json() + " direct={\"on\":" + std::to_string(int(d.on())) +
+               ",\"attached\":" + std::to_string(int(d.attached())) + ",\"added\":" + std::to_string(d.added()) +
+               ",\"slips\":" + std::to_string(d.slips()) + ",\"nudges\":" + std::to_string(d.nudges()) + ",\"short\":" + std::to_string(d.short_writes()) +
+               ",\"lead\":" + std::to_string(d.lead()) + "}";
+    }
     if (action == "rhythmer-render") { // rhythmer-render serial|parallel: the render workers left asleep or used again
         if (argument == "serial" || argument == "parallel") host.set_render_parallel(argument == "parallel");
         else if (!argument.empty()) return "ERR rhythmer-render serial|parallel";
         return std::string("OK rhythmer-render ") + (host.render_parallel() ? "parallel" : "serial");
+    }
+    if (action == "rhythmer-stems") { // rhythmer-stems NAME: the song's stems into Rhythmer/Stems/NAME (Song's export)
+        if (argument.empty()) return "ERR rhythmer-stems NAME";
+        std::array<char, 40> name {};
+        std::snprintf(name.data(), name.size(), "%s", argument.c_str());
+        return remote_stems.push(name) ? "OK rhythmer-stems " + argument : "ERR busy";
     }
     if (action == "rhythmer-unfreeze") { // freeze plan F2b: the track plays live again at once (its prints are kept)
         int track = std::atoi(argument.c_str());
@@ -265,10 +300,10 @@ std::string RhythmerApp::command(const std::string& action, const std::string& a
         for (unsigned t = 0; t < rhythmer::track_count; ++t) s += (t ? "," : "") + std::to_string(int(std::lround(host.track_load(t) * 1000)));
         return s + " | " + printer.status();
     }
-    if (action == "rhythmer-autosample") { // the auto sampler: rhythmer-autosample TRACK [LOW-HIGH] [step N] [layers N] [hold S] [tail S] [pre|post] [loop|noloop] [raw] [check|auto]
+    if (action == "rhythmer-autosample") { // the auto sampler: rhythmer-autosample TRACK [LOW-HIGH] [step N] [layers auto|N] [hold S] [tail S] [pre|post] [loop|noloop] [raw] [check|auto]
         std::istringstream words(argument);
         int track = 0;
-        const std::string usage = "ERR rhythmer-autosample TRACK [LOW-HIGH] [step N] [layers 1-4] [hold S] [tail S] [pre|post] [loop|noloop] [raw] [check|auto]";
+        const std::string usage = "ERR rhythmer-autosample TRACK [LOW-HIGH] [step N] [layers auto|1-8] [hold S] [tail S] [pre|post] [loop|noloop] [raw] [check|auto]";
         if (!(words >> track) || track < 1 || track > int(rhythmer::track_count)) return usage;
         rhythmer::Context::PrintAsk ask;
         ask.track = uint8_t(track - 1);
@@ -286,7 +321,7 @@ std::string RhythmerApp::command(const std::string& action, const std::string& a
             std::string value;
             if (!(words >> value)) return usage;
             if (word == "step") set.step = uint8_t(std::clamp(std::atoi(value.c_str()), 1, 24));
-            else if (word == "layers") set.layers = uint8_t(std::clamp(std::atoi(value.c_str()), 1, 4));
+            else if (word == "layers") set.layers = value == "auto" ? 0 : uint8_t(std::clamp(std::atoi(value.c_str()), 1, 8));
             else if (word == "hold") { set.hold_auto = false; set.hold = std::clamp(float(std::atof(value.c_str())), 0.05f, 30.0f); } // else Auto
             else if (word == "tail") set.tail = std::clamp(float(std::atof(value.c_str())), 0.0f, 30.0f);
             else return usage;
@@ -764,8 +799,9 @@ void RhythmerApp::web_service(Hardware& hardware) {
     web.publish(facts);
     std::string note;
     if (web.take_note(note)) link.note(note);
-    if (web.take_files_changed()) { // the Files tab added or deleted something: the browser and projects look again
+    if (web.take_files_changed()) { // the page added or deleted something: the browser, projects and plug-ins look again
         library.rescan();
         store.rescan();
+        plugins.card_changed();
     }
 }

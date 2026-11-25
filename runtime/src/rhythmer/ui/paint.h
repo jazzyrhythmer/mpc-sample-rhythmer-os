@@ -3,6 +3,7 @@
 #pragma once
 #include "rhythmer/ui/tokens.h"
 #include <juce_graphics/juce_graphics.h>
+#include <array>
 #include <vector>
 
 // The drawing primitives every component uses: Rubik text at a weight, with
@@ -63,6 +64,15 @@ struct TextIssue {
 void audit_text(std::vector<TextIssue>* sink);
 // For layouts that find their own text does not fit (pieces that overlap).
 void report_text_issue(const TextIssue& issue);
+// The preview tool's controls audit (shell/controls_rules.h): while a sink is set, the soft-key row and the knob
+// strip say what they drew, the last of each in the frame (a sheet's row over the page's). nullptr stops it.
+struct ControlsSeen {
+    bool keys_drawn = false, knobs_drawn = false;
+    std::array<juce::String, 3> keys, knobs;
+    std::array<bool, 3> back {}; // a key drawn with the Back icon
+};
+void audit_controls(ControlsSeen* sink);
+ControlsSeen* controls_sink();
 
 // Style shorthands that match the boards.
 inline Paint::Text caps_text(juce::Colour c, float size = type::caps) { return {size, Weight::SemiBold, c, true}; }

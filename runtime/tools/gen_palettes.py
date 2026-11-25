@@ -93,31 +93,14 @@ NIGHT = dict(bg=0x17141F, panel=0x1D1926, surf=0x221E2C, raised=0x262033, quiet=
 
 
 def night_shades():
-    # Original Melodee 0.3.0 colour seeds; the default screen and physical
-    # LEDs may be monochrome without destroying the optional colour themes.
-    return [
-        [0xFF7A5C, 0xFF6F93, 0xFF9A3C],
-        [0xFFC145, 0xFF9F5A, 0xE2D94A],
-        [0x46D9B0, 0x4FC7E0, 0x8FDB6A],
-        [0x9D8CFF, 0xC587F2, 0x6FA0FF],
-        [0x4FB8FF, 0x4FFFF4, 0x4F66FF],
-        [0xFF6FA8, 0xFF6FEB, 0xFF796F],
-        [0xA6E04A, 0xE0D44A, 0x60E04A],
-        [0xD77BFF, 0x997BFF, 0xFF7BE9],
-        [0x2FD0D6, 0x2FD68E, 0x2F82D6],
-        [0xE8D94A, 0xE88F4A, 0xADE84A],
-        [0xFF5C7A, 0xFF5CC6, 0xFF8A5C],
-        [0x5FD97A, 0x7DD95F, 0x5FD9B3],
-        [0x6F8CFF, 0x6FCFFF, 0x956FFF],
-        [0xFF9A3C, 0xFF3F3C, 0xFFF53C],
-        [0xF06FD8, 0xCC6FF0, 0xF06F9C],
-        [0xB8C2D6, 0xB8D0D6, 0xBCB8D6]
-    ], [
-        [0x6FD3FF, 0x6FA6FF, 0x6FFFE5],
-        [0xFFA36F, 0xFF7A6F, 0xFFD06F],
-        [0xC09CFF, 0x9C9EFF, 0xE69CFF],
-        [0x7DEBA6, 0x7DEBD9, 0xA4EB7D]
-    ]
+    src = (ROOT / "src/rhythmer/ui/shades.h").read_text()
+    def table(name, rows):
+        body = src[src.index(name):]
+        body = body[:body.index("}};")]
+        vals = [int(x, 16) for x in re.findall(r"0x([0-9A-Fa-f]{6})", body)]
+        return [vals[3 * n:3 * n + 3] for n in range(rows)]
+    return table("track_shades", 16), table("loop_shades", 4), table("sub_shades", 8)
+
 
 # name, BG, SURF, TEXT (FM-1's), chroma scale, lightness shift of the track colours (before the checks)
 PALETTES = [
@@ -165,7 +148,7 @@ def neutral_at(bg, text, start, ground, need):
     return c
 
 
-def build(name, bg, surf, text, chroma, shift, tracks, loops):
+def build(name, bg, surf, text, chroma, shift, tracks, loops, subs):
     light = luminance(bg) > 0.4
     p = dict(bg=bg, surf=surf, text=text)
     p["panel"] = mix(bg, surf, 0.45)
@@ -180,6 +163,7 @@ def build(name, bg, surf, text, chroma, shift, tracks, loops):
         p[key] = fit_colour(hexrgb(NIGHT[key]), grounds, chroma, shift, light)
     p["tracks"] = [[fit_colour(hexrgb(v), grounds, chroma, shift, light) for v in row] for row in tracks]
     p["loops"] = [[fit_colour(hexrgb(v), grounds, chroma, shift, light) for v in row] for row in loops]
+    p["subs"] = [[fit_colour(hexrgb(v), grounds, chroma, shift, light) for v in row] for row in subs]
     p["light"] = light
     return p
 
@@ -199,6 +183,7 @@ def build_lcd(name, bg, surf, text):
         p[key] = text
     p["tracks"] = [list(shades) for _ in range(16)]
     p["loops"] = [list(shades) for _ in range(4)]
+    p["subs"] = [list(shades) for _ in range(8)]
     return p
 
 
@@ -211,16 +196,18 @@ def weakest(p):
 
 
 def main():
-    tracks, loops = night_shades()
+    tracks, loops, subs = night_shades()
     night = {k: hexrgb(v) for k, v in NIGHT.items()}
     night["tracks"] = [[hexrgb(v) for v in row] for row in tracks]
     night["loops"] = [[hexrgb(v) for v in row] for row in loops]
+    night["subs"] = [[hexrgb(v) for v in row] for row in subs]
     night["light"] = False
     # RHYTHMER keeps its monochrome default without dropping upstream palettes.
     night.update({k: hexrgb(v) for k,v in dict(bg=0x000000,panel=0x101010,surf=0x181818,raised=0x252525,quiet=0x0A0A0A,line=0x383838,text=0xEEEEEE,sec=0xCCCCCC,mid=0x999999,dim=0x666666,rec=0xEEEEEE,amber=0xEEEEEE,play=0xEEEEEE,ice=0xEEEEEE).items()})
     night["tracks"] = [[hexrgb(0xEEEEEE)]*3 for _ in range(16)]
     night["loops"] = [[hexrgb(0xEEEEEE)]*3 for _ in range(4)]
-    all_ = [("RHYTHMER", night)] + [(n, build(n, bg, surf, text, c, s, tracks, loops)) for n, bg, surf, text, c, s in PALETTES]
+    night["subs"] = [[hexrgb(0xEEEEEE)]*3 for _ in range(8)]
+    all_ = [("RHYTHMER", night)] + [(n, build(n, bg, surf, text, c, s, tracks, loops, subs)) for n, bg, surf, text, c, s in PALETTES]
     all_.append((LCD[0], build_lcd(*LCD)))
 
     keys = ["bg", "panel", "surf", "raised", "quiet", "line", "text", "sec", "mid", "dim", "rec", "amber", "play", "ice"]
@@ -242,6 +229,7 @@ def main():
              "    uint32_t " + ", ".join(keys) + ";",
              "    std::array<std::array<uint32_t, 3>, 16> tracks;",
              "    std::array<std::array<uint32_t, 3>, 4> loops;",
+             "    std::array<std::array<uint32_t, 3>, 8> subs; // the mixer's submixes",
              "    bool light; // a light ground (DAY, CANDY, LCD)",
              "    int face;   // a face of its own (ui/faces.h), whatever Settings' Font says; -1 none",
              "};",
@@ -251,6 +239,7 @@ def main():
         lines.append(f'    {{"{name}", ' + ", ".join(h(p[k]) for k in keys) + ",")
         lines.append("     {{" + ", ".join("{" + ", ".join(h(c) for c in row) + "}" for row in p["tracks"]) + "}},")
         lines.append("     {{" + ", ".join("{" + ", ".join(h(c) for c in row) + "}" for row in p["loops"]) + "}},")
+        lines.append("     {{" + ", ".join("{" + ", ".join(h(c) for c in row) + "}" for row in p["subs"]) + "}},")
         lines.append(f"     {'true' if p['light'] else 'false'}, {FACE.get(name, -1)}}},")
         (w, which), tr = weakest(p)
         print(f"{name:9} weakest {which} {w:.2f}  tracks min {tr:.2f}")

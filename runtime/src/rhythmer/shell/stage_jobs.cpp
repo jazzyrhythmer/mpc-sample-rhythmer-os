@@ -73,7 +73,7 @@ void Context::stage_new() {
     }
     case StageKind::NewKit:
         load_sound(ui.track, EngineKind::Sampler, 0);
-        t.set_name("KIT");
+        t.name_from("KIT");
         stage_go(ui, 0, 0); // TRIM
         switch (ui.new_source % new_sources) {
         case 0: open(PageId::Samples); if (library) library->rescan(); break; // Sample Select

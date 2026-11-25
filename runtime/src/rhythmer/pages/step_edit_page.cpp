@@ -18,7 +18,9 @@
 // Picture (Steps' drawing round the caret's bar): each step's notes at their pitch, taller for harder, a ratchet as
 // its hits, an accent's dot, a tie's arc, a slide's sign, a lock's square, a condition's ring, where it plays now;
 // the caret's column amber with its mark; the pattern's bars at the foot; and a panel with the pads held (else
-// what the caret's step holds) and the step the caret goes to.
+// what the caret's step holds) and the step the caret goes to. Past the last step the caret walks into the spare
+// steps (shell/spare_bar.h), drawn as outlines; a step written there makes the pattern longer. A + and an arrow at
+// the right edge show it can grow, amber while the caret is in them.
 #include "rhythmer/model/scales.h"
 #include "rhythmer/pages/common.h"
 #include "rhythmer/pages/pages.h"
@@ -101,7 +103,8 @@ void draw_bar(Paint& p, const Snapshot& s, unsigned caret, juce::Colour c) {
     if (hi < 0) lo = hi = index_of(s.track().step_note());
     constexpr int rows = 5;
     int base = (lo + hi) / 2 - rows / 2;
-    constexpr float top = zone::picture_y + 8, ch = 64, colw = 16.5f, stepw = 19.1f, beat_gap = 2.6f;
+    constexpr float top = zone::picture_y + 8, ch = 64, colw = 15.6f, stepw = 18.0f, beat_gap = 2.2f; // room at the right for +▸
+    unsigned spare = spare_end(s.project, pattern); // the steps the caret may walk to, the spare ones past `steps`
     auto x_of = [&](unsigned k) { return zone::pad + k * stepw + float(k / 4) * beat_gap; };
     uint32_t loop = lane >= 0 ? pattern.lane_length(unsigned(lane)) : pattern.length;
     unsigned lane_steps = std::max(1u, (loop + pattern.q() - 1) / pattern.q());
@@ -114,6 +117,7 @@ void draw_bar(Paint& p, const Snapshot& s, unsigned caret, juce::Colour c) {
         float x = x_of(k);
         bool inside = st < steps, here = st == caret, held = int(st) == s.ui.held_step, past = st >= lane_steps;
         p.fill(x, top, colw, ch, here ? colour::amber.withAlpha(0.22f) : inside && !past ? colour::quiet : colour::bg, 2);
+        if (!inside && st < spare) p.ring(x + 0.5f, top + 0.5f, colw - 1, ch - 1, here ? colour::amber : colour::line, 2); // a spare step
         if (int(st) == playing_step) p.fill(x, top - 3, colw, 2, colour::text, 1); // where it plays now
         auto ink = here ? colour::amber : inside && !pattern.step(st).empty() ? colour::sec : colour::dim;
         p.text(juce::String(st + 1), x - 4, top + ch + 2, colw + 8, 13, plain(ink, type::small, here || k % 4 == 0 ? Weight::Bold : Weight::Medium),
@@ -161,22 +165,39 @@ void draw_bar(Paint& p, const Snapshot& s, unsigned caret, juce::Colour c) {
         }
         if (step.flags & step_slide) icon(p, Icon::Slide, x + colw - 9, top + 2, 8, colour::sec, 1.6f); // a slide: its sign
     }
-    // The pattern's bars at the foot, the caret's lit (eight at a time).
-    unsigned bars = bars_of(pattern), bar = caret / bar_steps, shown = std::min(bars, 8u), window = bar / shown * shown;
+    // The +▸ mark at the right edge: the pattern can grow past its last step (amber: the caret is there).
+    if (spare_mark(s.project, s.ui, pattern)) {
+        bool there = in_spare(s.ui, pattern);
+        auto ink = there ? colour::amber : colour::sec;
+        float tx = zone::width - zone::pad - 12;
+        p.fill(tx, top, 12, ch, there ? colour::amber.withAlpha(0.22f) : colour::quiet, 3);
+        icon(p, Icon::Plus, tx + 2, top + ch / 2 - 11, 8, ink, 1.6f);
+        icon(p, Icon::ArrowRight, tx + 1, top + ch / 2 + 2, 10, ink, 1.6f);
+    }
+    // The pattern's bars at the foot, the caret's lit (eight at a time); the spare page after them as an outline.
+    unsigned bars = bars_of(pattern), bar = caret / bar_steps, total = std::max(bars, bar + 1);
+    unsigned shown = std::min(total, 8u), window = bar / shown * shown;
     float bw = (zone::width - 2 * zone::pad - (shown - 1) * 3.0f) / shown, by = top + ch + 24;
-    for (unsigned b = 0; b < shown; ++b) p.fill(zone::pad + b * (bw + 3), by, bw, 3, window + b == bar ? c : colour::line, 1.5f);
+    for (unsigned b = 0; b < shown && window + b < total; ++b) {
+        auto ink = window + b == bar ? (window + b < bars ? c : colour::amber) : colour::line;
+        if (window + b < bars) p.fill(zone::pad + b * (bw + 3), by, bw, 3, ink, 1.5f);
+        else p.ring(zone::pad + b * (bw + 3), by - 0.5f, bw, 4, ink, 1.5f);
+    }
 }
 
 void draw(Paint& p, const Snapshot& s) {
     const auto& pattern = s.pattern;
     auto c = colour_of(s);
-    unsigned steps = pattern.steps(), q = pattern.q(), caret = unsigned(std::max<int>(s.ui.step_cursor, 0)) % steps;
+    unsigned q = pattern.q(), caret = edit_caret(s.ui, pattern);
+    bool spare = in_spare(s.ui, pattern);
     int lane = steps_lane(s.track());
     Header h = header_of(s);
-    juce::String where = "STEP " + juce::String(caret + 1) + juce::String::fromUTF8(" \xc2\xb7 BAR ") + juce::String(caret / bar_steps + 1);
+    // Past the last step: NEW BAR, a step here makes the pattern longer.
+    juce::String bar_name = spare ? juce::String("NEW BAR") : "BAR " + juce::String(caret / bar_steps + 1);
+    juce::String where = "STEP " + juce::String(caret + 1) + juce::String::fromUTF8(" \xc2\xb7 ") + bar_name;
     if (s.ui.step_pads) { // STEPS: the sound the pads step
         int key = lane >= 0 ? lane : int(s.track().step_note());
-        where = "STEPS " + juce::String::fromUTF8("\xc2\xb7 ") + key_name(s, key, true);
+        where = (spare ? bar_name : juce::String("STEPS")) + juce::String::fromUTF8(" \xc2\xb7 ") + key_name(s, key, true);
     }
     if (s.ui.held_step >= 0) where += juce::String::fromUTF8(" \xc2\xb7 LOCK"); // held: the pots lock it
     h.left.push_back(edit_pattern_chip(s));
@@ -216,6 +237,11 @@ void draw(Paint& p, const Snapshot& s) {
             const auto& e = pattern.events[n];
             juce::String name = key_name(s, e.key, true);
             if (e.pitch) name = key_name(s, e.key, false) + " " + (e.pitch > 0 ? "+" : "") + juce::String(int(e.pitch));
+            if (e.slice) { // a slice hit (issue 24): its pad and slice, the pad's name left out where both do not fit
+                const juce::String slice = juce::String::fromUTF8(" \xc2\xb7 ") + juce::String(int(e.slice));
+                name += slice;
+                if (p.width(name, plain(colour::sec, type::body, Weight::SemiBold)) > 82) name = key_name(s, e.key, false) + slice;
+            }
             add(name);
         }
     }
@@ -231,7 +257,8 @@ void draw(Paint& p, const Snapshot& s) {
     if (keys_shown.size() > 3) p.text("+" + juce::String(int(keys_shown.size()) - 3), ix, cy - 9, 30, 18, plain(colour::mid, type::body));
     if (keys_shown.empty()) p.text("Rest", ix, cy - 9, 80, 18, plain(colour::dim, type::body));
     if (s.ui.step_pads) return; // STEPS: the caret goes where a pad is held, not on
-    juce::String next = juce::String((caret + 1) % steps + 1);
+    unsigned end = spare_end(s.project, pattern); // on into the spare steps while it can grow, else round
+    juce::String next = juce::String((caret + 1 >= end ? 0 : caret + 1) + 1);
     auto next_style = plain(colour::amber, type::body, Weight::Bold);
     float nw = p.width(next, next_style) + 14;
     p.fill(px + pw - 8 - nw, cy - 9, nw, 18, colour::raised, 9);
@@ -240,6 +267,16 @@ void draw(Paint& p, const Snapshot& s) {
 }
 
 // ---- STEPS: the pads are the caret's bar (Steps' job)
+// Settings > SEQ > Note preview: step `st`'s notes (on a kit lane, the lane's) heard once; `settle`: once the wheel rests.
+void hear_step(Context& c, unsigned st, int lane, bool settle) {
+    const auto& p = c.pattern();
+    auto in = step_events(p, st);
+    std::vector<Event> notes;
+    for (unsigned n = 0; n < in.count; ++n)
+        if (lane < 0 || int(p.events[in.first + n].key) == lane) notes.push_back(p.events[in.first + n]);
+    c.preview_notes(notes, settle);
+}
+
 void clear_step(Context& c, unsigned st, int lane) {
     if (lane < 0) { c.set_step(c.ui.track, st, Step {}); return; }
     if (clear_lane(c.pattern(), st, lane)) c.sync_pattern(c.ui.track, c.track().pattern);
@@ -248,10 +285,12 @@ void clear_step(Context& c, unsigned st, int lane) {
 void steps_pad(Context& c, unsigned pad, uint8_t velocity, bool down) {
     auto& ui = c.ui;
     auto& pattern = c.pattern();
-    unsigned bar = unsigned(std::max<int>(ui.step_cursor, 0)) % pattern.steps() / bar_steps;
+    unsigned bar = edit_caret(ui, pattern) / bar_steps;
     unsigned st = bar * bar_steps + pad % 16;
-    if (st >= pattern.steps()) return;
     int lane = steps_lane(c.track()); // a kit: the last pad's lane, the other pads' notes left alone
+    if (st >= pattern.steps()) { // a spare step: set, the pattern grows to hold it (shell/spare_bar.h)
+        if (!down || ui.erase || !grow_to_step(c, st)) return;
+    }
     if (down) {
         if (ui.erase) { c.edit_pattern(ui.track, c.track().pattern, "Erase step", [&] { clear_step(c, st, lane); }); return; }
         ui.step_cursor = int16_t(st);
@@ -269,6 +308,7 @@ void steps_pad(Context& c, unsigned pad, uint8_t velocity, bool down) {
                 step.notes[0] = {c.track().step_note(), v};
                 c.set_step(ui.track, st, step);
             }
+            hear_step(c, st, lane, false); // the step set, heard
         }
         return;
     }
@@ -299,6 +339,7 @@ bool held_wheel(Context& c, int delta) {
             t.last_note = uint8_t(to);
             if (kit) t.last_pad = uint8_t(to - int(sampler_first_note));
             c.sync_pattern(ui.track, t.pattern);
+            hear_step(c, st, to, true); // on the pad it moved to, once the wheel rests
         }
         ui.held_edited = true;
         return true;
@@ -307,6 +348,7 @@ bool held_wheel(Context& c, int delta) {
     for (auto& n : step.notes) if (n.velocity) n.key = uint8_t(std::clamp(n.key + delta, 0, 127));
     if (const Note* n = step.first()) t.last_note = n->key;
     c.set_step(ui.track, st, step);
+    hear_step(c, st, -1, true); // at its new pitch, once the wheel rests
     ui.held_edited = true;
     return true;
 }
@@ -314,9 +356,9 @@ bool held_wheel(Context& c, int delta) {
 // ---- Shift + B2 TIE, Shift + B3 INSERT
 void tie(Context& c) {
     auto& ui = c.ui;
-    unsigned caret = unsigned(std::max<int>(ui.step_cursor, 0)) % c.pattern().steps();
+    unsigned caret = edit_caret(ui, c.pattern());
     int lane = steps_lane(c.track());
-    if (c.pattern().step(caret).empty()) { c.notice("Nothing to tie on step " + std::to_string(caret + 1)); return; }
+    if (in_spare(ui, c.pattern()) || c.pattern().step(caret).empty()) { c.notice("Nothing to tie on step " + std::to_string(caret + 1)); return; }
     bool on = false;
     c.edit_pattern(ui.track, c.track().pattern, "Tie", [&] {
         auto& p = c.pattern();
@@ -339,7 +381,8 @@ void tie(Context& c) {
 
 void insert(Context& c) {
     auto& ui = c.ui;
-    unsigned q = c.pattern().q(), caret = unsigned(std::max<int>(ui.step_cursor, 0)) % c.pattern().steps();
+    unsigned q = c.pattern().q(), caret = edit_caret(ui, c.pattern());
+    if (in_spare(ui, c.pattern())) { c.notice("Step " + std::to_string(caret + 1) + " is past the end"); return; }
     uint32_t at = caret * q;
     c.edit_pattern(ui.track, c.track().pattern, "Insert step", [&] {
         auto& p = c.pattern();

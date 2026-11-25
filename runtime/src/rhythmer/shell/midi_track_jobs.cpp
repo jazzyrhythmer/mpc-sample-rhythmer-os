@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "rhythmer/shell/midi_track_jobs.h"
+#include "rhythmer/model/card_folders.h"
 #include "rhythmer/engine/midi_engine.h"
 #include "rhythmer/shell/input_route.h"
 #include "rhythmer/shell/midi_ports.h"
 #include "rhythmer/shell/sample_library.h"
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -17,7 +19,11 @@ using Kind = Binding::Kind;
 using Type = Command::Type;
 using namespace midi_track;
 
-std::string sysex_folder(const Context& c) { return c.library ? c.library->card() + "/SysEx" : std::string(); }
+// Rhythmer/SysEx, then SysEx at the card's top where older builds read them (model/card_folders.h). None: no card.
+std::array<std::string, 2> sysex_folders(const Context& c) {
+    const std::string card = c.library ? c.library->card() : std::string();
+    return {sysex_folder(card), old_sysex_folder(card)};
+}
 } // namespace
 
 void set_midi_port(Context& c, unsigned t, int choice) {
@@ -35,18 +41,20 @@ void set_midi_port(Context& c, unsigned t, int choice) {
 void list_sysex(Context& c) {
     c.ui.sysex_count = 0;
     c.ui.sysex_listed = true;
-    std::string folder = sysex_folder(c);
-    std::error_code e;
-    if (folder.empty() || !fs::is_directory(folder, e)) return;
     std::vector<std::string> names;
-    for (const auto& entry : fs::directory_iterator(folder, e)) {
-        auto name = entry.path().filename().string();
-        auto ext = entry.path().extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
-        if (name.empty() || name[0] == '.' || ext != ".syx" || name.size() >= 32) continue;
-        names.push_back(name);
+    for (const auto& folder : sysex_folders(c)) {
+        std::error_code e;
+        if (folder.empty() || !fs::is_directory(folder, e)) continue;
+        for (const auto& entry : fs::directory_iterator(folder, e)) {
+            auto name = entry.path().filename().string();
+            auto ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+            if (name.empty() || name[0] == '.' || ext != ".syx" || name.size() >= 32) continue;
+            names.push_back(name);
+        }
     }
     std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end()); // one name in both folders: once
     for (const auto& name : names) {
         if (c.ui.sysex_count == c.ui.sysex_names.size()) break;
         std::snprintf(c.ui.sysex_names[c.ui.sysex_count++].data(), 32, "%s", name.c_str());
@@ -63,9 +71,10 @@ void set_sysex(Context& c, unsigned t, int choice) {
 void send_sysex(Context& c, unsigned t) {
     const auto& track = c.project.tracks[t % track_count];
     if (track.engine != EngineKind::Midi || !track.midi.sysex[0]) { c.notice("No SysEx file"); return; }
-    std::string path = sysex_folder(c) + "/" + track.midi.sysex;
-    std::ifstream in(path, std::ios::binary);
-    if (!in) { c.notice("SysEx: no file"); return; }
+    std::ifstream in;
+    for (const auto& folder : sysex_folders(c)) // the one in Rhythmer/SysEx first
+        if (!folder.empty() && !in.is_open()) in.open(folder + "/" + track.midi.sysex, std::ios::binary);
+    if (!in.is_open()) { c.notice("SysEx: no file"); return; }
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (bytes.size() > 65536) { c.notice("SysEx: over 64 KB"); return; }
     if (bytes.empty() || bytes.front() != 0xf0) { c.notice("SysEx: not a .syx"); return; }

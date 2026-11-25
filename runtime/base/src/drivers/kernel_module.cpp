@@ -4,6 +4,7 @@
 #include <spawn.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <cerrno>
@@ -12,7 +13,44 @@
 
 extern char** environ;
 
+std::string kernel_module::built_for(const Image& image) {
+    if (!image.begin || !image.end || image.end <= image.begin) return {};
+    static constexpr char key[] = "vermagic=";
+    const auto* found = static_cast<const unsigned char*>(
+        memmem(image.begin, size_t(image.end - image.begin), key, sizeof(key) - 1));
+    if (!found) return {};
+    const unsigned char* from = found + sizeof(key) - 1;
+    const unsigned char* to = from;
+    while (to < image.end && *to && *to != ' ') ++to;
+    return std::string(from, to);
+}
+
+kernel_module::Image kernel_module::pick(std::initializer_list<Image> images, const std::string& release) {
+    for (const auto& image : images)
+        if (!release.empty() && built_for(image) == release) return image;
+    return {};
+}
+
+std::string kernel_module::running_release() {
+    utsname names {};
+    return uname(&names) == 0 ? names.release : "";
+}
+
 bool kernel_module::loaded(const std::string& name) { return access(("/sys/module/" + name).c_str(), F_OK) == 0; }
+
+bool kernel_module::load(const std::string& name, std::initializer_list<Image> images, std::string* error) {
+    if (loaded(name)) return true;
+    const std::string release = running_release();
+    const Image image = pick(images, release);
+    if (image.begin) return load(name, image.begin, image.end, error);
+    if (error) {
+        std::string built;
+        for (const auto& each : images)
+            if (auto release_of = built_for(each); !release_of.empty()) built += (built.empty() ? "" : ", ") + release_of;
+        *error = name + ": " + (built.empty() ? "not in this build" : "built for " + built + ", not " + release);
+    }
+    return false;
+}
 
 bool kernel_module::load(const std::string& name, const unsigned char* begin, const unsigned char* end, std::string* error) {
     if (loaded(name)) return true;

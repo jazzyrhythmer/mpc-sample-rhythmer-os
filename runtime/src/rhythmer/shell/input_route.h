@@ -3,8 +3,10 @@
 #pragma once
 #include "drivers/usb_audio.h"
 #include "rhythmer/model/input_config.h"
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 struct Hardware;
 
@@ -30,6 +32,17 @@ public:
 
     // What the loops' own hardware inputs need (loop_needs()).
     static constexpr unsigned need_line = 1, need_mic = 2, need_usb = 4;
+    // The ADC's route: the rear inputs when a loop or MIDI track needs them, else the mic when one does, else what
+    // the source needs ("mic", "line" or "off").
+    static const char* adc_route(InputSource source, unsigned needs) {
+        return needs & need_line ? "line" : needs & need_mic ? "mic" : input_route(source);
+    }
+    // Whether the source is on the ADC side the route does not take (the mic while a loop or MIDI track has the rear
+    // inputs, or the other way): it is heard as silence and shown IN USE.
+    static bool adc_taken(InputSource source, unsigned needs) {
+        if (source == InputSource::Mic) return (needs & need_line) != 0;
+        return from_rear(source) && !(needs & need_line) && (needs & need_mic);
+    }
     // MIDI thread: the source, whether monitoring should quiet the speaker, and what the loops need.
     void want(InputSource source, bool mute_speaker, unsigned loops = 0) {
         wanted.store(uint16_t(unsigned(source) | (mute_speaker ? 0x80u : 0u) | (loops & 7u) << 8), std::memory_order_relaxed);
@@ -40,13 +53,20 @@ public:
     // or nullptr while no USB source is chosen.
     const float* usb_block(unsigned frames);
     // Audio thread: the device's rate, which USB-C in is converted to.
-    void set_device_rate(unsigned rate) { usb.set_device_rate(rate); }
+    void set_device_rate(unsigned rate) { usb.set_device_rate(rate); rate_now.store(rate, std::memory_order_relaxed); }
+    // The round trip of a computer's instrument played from here: the MIDI thread marks each Note On played by hand
+    // as it is sent (CLOCK_MONOTONIC ns); usb_block() takes the first frame of USB-C in 18 dB over the 20 ms before,
+    // within half a second of one, as its sound coming back. loop_json(): the last, average, least and most, in us, to
+    // the frame the engine takes it at (the output's latency comes on top), and the level before (dBFS).
+    void note_sent(int64_t ns) { sent_ns.store(ns, std::memory_order_relaxed); }
+    std::string loop_json() const;
 
     // Any thread.
     bool speaker_on() const { return speaker.load(std::memory_order_relaxed) == 1; }
     bool speaker_quieted() const { return quieted.load(std::memory_order_relaxed); } // by the monitored mic
     bool jack_out() const { return plugged_now.load(std::memory_order_relaxed); }   // headphones or line out in
     UsbStreamState usb_state() const { return usb.state(); }
+    std::string usb_json() const { return usb.json(); } // USB-C in's counters: locked or trimmed, pitch, fill
 
 private:
     UsbAudioInput usb;
@@ -55,6 +75,14 @@ private:
     std::atomic<int> speaker {-1}; // as last set: 1 on, 0 off, -1 not touched
     int routed = -1;               // the InputSource and loop needs routed, -1 none yet
     float block[2 * 128] {};
+    std::atomic<int64_t> sent_ns {0};
+    std::atomic<unsigned> rate_now {48000};
+    int64_t loop_from = 0;              // audio thread: the Note On last matched
+    std::array<float, 8> recent {};     // audio thread: the last blocks' peaks
+    unsigned recent_at = 0;
+    std::atomic<float> floor_now {0};   // the loudest of them, for loop_json()
+    std::atomic<unsigned> loops {0}, loop_last {0}, loop_least {0}, loop_most {0};
+    std::atomic<uint64_t> loop_sum {0};
 };
 
 } // namespace rhythmer

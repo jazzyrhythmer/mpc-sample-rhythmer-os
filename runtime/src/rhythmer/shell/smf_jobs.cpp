@@ -51,6 +51,7 @@ void import_midi(Context& c, const std::string& path) {
         auto& pattern = c.patterns.at[t][p];
         pattern.events = laid.events;
         pattern.length = laid.length;
+        pattern.free = false;
         pattern.fit_lanes();
         c.sync_pattern(t, p);
     });

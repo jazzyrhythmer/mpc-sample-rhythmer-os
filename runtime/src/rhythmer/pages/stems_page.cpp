@@ -3,7 +3,9 @@
 // STEMS (shell/stems_jobs.cpp): Shift + B3 on a kit pad's TRIM. The pad's
 // sample separated into DRUMS, BASS, MUSIC and VOCALS, each a tile naming the
 // empty pad it lands on; under them the sample's length and the time the job
-// takes. B3 SEPARATE (or Push) starts it: then the tiles fill as it goes, the
+// takes. B2 BEST (its LED lit while on, a setting) has the job look up to
+// 16 kHz in two passes, about three times as long; off, up to 11 kHz in one.
+// B3 SEPARATE (or Push) starts it: then the tiles fill as it goes, the
 // time left counts down and B1 calls it off. The pads play the kit meanwhile,
 // and the job goes on when the sheet is left. A project holds 64 samples and
 // a job adds four: with fewer free, the samples in use show in amber where
@@ -42,8 +44,10 @@ void draw(Paint& p, const Snapshot& s) {
     else h.left.push_back(chip(Icon::Layers, "STEMS", c));
     h.right.push_back(tag_of(s, t));
     const auto room = stems_room(s.project, t, sheet.pad);
-    SoftKeys keys {{running ? "CANCEL" : "BACK", "", running ? "" : "SEPARATE"}, -1, c, {KeyIcon::Back, KeyIcon::None, KeyIcon::None}};
+    SoftKeys keys {{running ? "CANCEL" : "BACK", running ? "" : "BEST", running ? "" : "SEPARATE"}, -1, c, {KeyIcon::Back, KeyIcon::None, KeyIcon::None}};
     if (!running) {
+        keys.toggles = 2;
+        keys.lit = s.ui.settings.stems_best ? 2 : 0;
         keys.glyphs[2] = Icon::Layers;
         if (!room.enough()) keys.tints[2] = colour::dim; // no four empty pads: B3 says so
     }
@@ -85,11 +89,12 @@ void draw(Paint& p, const Snapshot& s) {
     const float by = ty + th + 10, bw = full / 2;
     block(p, x0, by, bw, "LENGTH", clock(float(sheet.frames) / 44100.0f), colour::text);
     if (running) block(p, x0 + bw, by, bw, "LEFT", job.busy ? clock(float(job.seconds_left)) : juce::String::fromUTF8("\xe2\x80\x94"), c);
-    else block(p, x0 + bw, by, bw, "TAKES", clock(float(stems_seconds(sheet.frames))), colour::text);
+    else block(p, x0 + bw, by, bw, "TAKES", clock(float(stems_seconds(sheet.frames, s.ui.settings.stems_best))), colour::text);
 }
 
 void soft(Context& c, int key) {
     if (key == 0) c.stems_sheet_cancel();
+    if (key == 1) c.stems_sheet_best();
     if (key == 2) c.stems_sheet_go();
 }
 

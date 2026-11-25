@@ -134,6 +134,7 @@ bool Context::record_audio(unsigned track) {
     if (!project.tracks[t].is_audio()) return false;
     if (!printer) { notice("Audio: no card"); return false; }
     if (takes_folder().empty()) { notice("Audio: save the project first"); return false; }
+    if (!input_free(project.tracks[t].audio.source)) return false;
     sync_audio();
     if (audio_take_track >= 0 || audio_tracks->writing()) { notice("Audio: the last take is still being written"); return false; }
     AudioTakeJob job;

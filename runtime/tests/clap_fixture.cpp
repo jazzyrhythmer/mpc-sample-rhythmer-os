@@ -13,8 +13,14 @@
 // for ("gain" Test Gain, "-" no one named; else Test Sine). A file of several
 // gives each its line number as its load key. fixture_preset_reads() counts
 // the files read.
+//
+// Both draw their own screen (sdk/rhythmer-screen/rhythmer_screen.h): a bar as
+// wide as Sine's Level, or half Gain's Gain, in the track's colour over a dark
+// page or strip.
 #include <clap/clap.h>
+#include <rhythmer_screen.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -37,7 +43,9 @@ struct Plugin {
     bool instrument = false;
     double rate = 44100, level = 0.5, wave = 0, gain = 1;
     std::map<int, double> phases; // key: phase of its sine
+    std::atomic<uint32_t> tailFrames {0};
     int outLevel = -1;            // a Level to report as an output event, 0..127, -1 none
+    int drawnBar = -1;            // its screen's bar as last drawn, pixels
 
     void main() { if (threads && !threads->is_main_thread(host)) ++wrongThread; }
     void audio() { if (threads && !threads->is_audio_thread(host)) ++wrongThread; }
@@ -51,14 +59,16 @@ const clap_plugin_descriptor sineDescriptor {CLAP_VERSION_INIT, "org.rhythmer.te
 const clap_plugin_descriptor gainDescriptor {CLAP_VERSION_INIT, "org.rhythmer.test.gain", "Test Gain", "Rhythmer", "", "", "", "1",
                                             "", gainFeatures};
 
-// Parameters: Sine's Level (id 7) and Wave (id 9, stepped 0-2); Gain's Gain (id 3, 0-2).
+// Parameters: Sine's Level (id 7, module "Voice/Amp") and Wave (id 9, stepped 0-2, no module); Gain's Gain (id 3,
+// 0-2, module "Out"). Sine has one remote-controls page, Main: Wave, Level, the rest of its eight unused; its
+// on_main_thread says its pages changed.
 uint32_t paramCount(const clap_plugin* p) { of(p).main(); return of(p).instrument ? 2 : 1; }
 bool paramInfo(const clap_plugin* p, uint32_t i, clap_param_info* info) {
     of(p).main();
     *info = {};
-    if (of(p).instrument && i == 0) { info->id = 7; std::strcpy(info->name, "Level"); info->max_value = 1; info->default_value = 0.5; }
+    if (of(p).instrument && i == 0) { info->id = 7; std::strcpy(info->name, "Level"); std::strcpy(info->module, "Voice/Amp/"); info->max_value = 1; info->default_value = 0.5; }
     else if (of(p).instrument && i == 1) { info->id = 9; std::strcpy(info->name, "Wave"); info->max_value = 2; info->flags = CLAP_PARAM_IS_STEPPED; }
-    else if (!of(p).instrument && i == 0) { info->id = 3; std::strcpy(info->name, "Gain"); info->max_value = 2; info->default_value = 1; }
+    else if (!of(p).instrument && i == 0) { info->id = 3; std::strcpy(info->name, "Gain"); std::strcpy(info->module, "Out"); info->max_value = 2; info->default_value = 1; }
     else return false;
     info->flags |= CLAP_PARAM_IS_AUTOMATABLE;
     return true;
@@ -230,6 +240,15 @@ clap_process_status process(const clap_plugin* p, const clap_process* proc) {
     auto& s = of(p);
     s.audio();
     for (uint32_t i = 0, n = proc->in_events->size(proc->in_events); i < n; ++i) event(s, proc->in_events->get(proc->in_events, i));
+    if (!s.instrument) {
+        // The Loud preset gains a two-second tail, applied on the audio thread.
+        const uint32_t frames = s.gain > 1 ? uint32_t(2 * s.rate) : 0;
+        if (frames != s.tailFrames.load()) {
+            s.tailFrames.store(frames);
+            if (auto* tail = static_cast<const clap_host_tail*>(s.host->get_extension(s.host, CLAP_EXT_TAIL)))
+                tail->changed(s.host);
+        }
+    }
     if (s.outLevel >= 0) {
         clap_event_param_value v {};
         v.header = {sizeof(v), 0, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0};
@@ -255,13 +274,68 @@ clap_process_status process(const clap_plugin* p, const clap_process* proc) {
     return CLAP_PROCESS_CONTINUE;
 }
 
-const void* extension(const clap_plugin*, const char* id) {
+uint32_t remoteCount(const clap_plugin* p) { of(p).main(); return 1; }
+bool remotePage(const clap_plugin* p, uint32_t i, clap_remote_controls_page* page) {
+    of(p).main();
+    if (i != 0) return false;
+    *page = {};
+    std::strcpy(page->section_name, "Sound");
+    std::strcpy(page->page_name, "Main");
+    page->page_id = 1;
+    for (auto& id : page->param_ids) id = CLAP_INVALID_ID;
+    page->param_ids[0] = 9;
+    page->param_ids[1] = 7;
+    return true;
+}
+const clap_plugin_remote_controls remoteControls {remoteCount, remotePage};
+
+// Its own screen: the bar; the wheel turns Level (Gain: Gain) a hundredth of its range a detent (it asks for a draw
+// and a block, and says its values moved), Push steps Wave, Minus / Plus are not its; Sine's K1 Level, K2 Wave, K3
+// nothing; Gain's K1 Gain.
+bool screenDraw(const void* p, const rhythmer_screen_frame_t* frame) {
+    auto& s = of(static_cast<const clap_plugin*>(p));
+    s.main();
+    int bar = int(std::lround((s.instrument ? s.level : s.gain / 2) * frame->width));
+    if (!frame->redraw_all && bar == s.drawnBar) return false;
+    for (uint32_t y = 0; y < frame->height; ++y)
+        for (uint32_t x = 0; x < frame->width; ++x)
+            frame->pixels[y * frame->stride + x] = y < 10 && int(x) < bar ? frame->colour : 0x101010u;
+    s.drawnBar = bar;
+    return true;
+}
+bool screenInput(const void* p, const rhythmer_screen_input_t* in) {
+    auto& s = of(static_cast<const clap_plugin*>(p));
+    s.main();
+    if (in->kind == RHYTHMER_SCREEN_WHEEL && s.instrument) s.level = std::clamp(s.level + in->value * 0.01, 0.0, 1.0);
+    else if (in->kind == RHYTHMER_SCREEN_WHEEL) s.gain = std::clamp(s.gain + in->value * 0.02, 0.0, 2.0);
+    else if (in->kind == RHYTHMER_SCREEN_PUSH && s.instrument) s.wave = std::fmod(s.wave + 1, 3);
+    else return false;
+    if (auto* told = static_cast<const rhythmer_screen_host_t*>(s.host->get_extension(s.host, RHYTHMER_SCREEN_CLAP_HOST)))
+        told->redraw(s.host, RHYTHMER_SCREEN_RUN);
+    if (auto* hp = static_cast<const clap_host_params*>(s.host->get_extension(s.host, CLAP_EXT_PARAMS)))
+        hp->rescan(s.host, CLAP_PARAM_RESCAN_VALUES);
+    return true;
+}
+void screenControls(const void* p, uint32_t ids[3]) {
+    auto& s = of(static_cast<const clap_plugin*>(p));
+    s.main();
+    ids[0] = s.instrument ? 7 : 3;
+    ids[1] = s.instrument ? 9 : RHYTHMER_SCREEN_NO_CONTROL;
+    ids[2] = RHYTHMER_SCREEN_NO_CONTROL;
+}
+const rhythmer_screen_t screen {screenDraw, screenInput, screenControls};
+
+const void* extension(const clap_plugin* p, const char* id) {
+    if (!std::strcmp(id, RHYTHMER_SCREEN_CLAP)) return &screen;
     if (!std::strcmp(id, CLAP_EXT_PARAMS)) return &params;
     if (!std::strcmp(id, CLAP_EXT_STATE)) return &state;
     if (!std::strcmp(id, CLAP_EXT_AUDIO_PORTS)) return &audioPorts;
     if (!std::strcmp(id, CLAP_EXT_NOTE_PORTS)) return &notePorts;
+    static const clap_plugin_tail tail {[](const clap_plugin* plug) { return of(plug).tailFrames.load(); }};
+    if (!std::strcmp(id, CLAP_EXT_TAIL) && !of(p).instrument) return &tail;
     if (!std::strcmp(id, CLAP_EXT_LATENCY)) return &latencyExt;
     if (!std::strcmp(id, CLAP_EXT_PRESET_LOAD)) return &presetLoad;
+    if (!std::strcmp(id, CLAP_EXT_REMOTE_CONTROLS) && of(p).instrument) return &remoteControls;
     return nullptr;
 }
 
@@ -289,7 +363,15 @@ const clap_plugin* create(const clap_plugin_factory*, const clap_host* host, con
     p.reset = [](const clap_plugin* p) { of(p).phases.clear(); };
     p.process = process;
     p.get_extension = extension;
-    p.on_main_thread = [](const clap_plugin* p) { of(p).main(); ++mainCallbacks; };
+    // Then asks to be run, as a plug-in does when its main thread has something for its audio side.
+    p.on_main_thread = [](const clap_plugin* p) {
+        auto& s = of(p);
+        s.main();
+        ++mainCallbacks;
+        s.host->request_process(s.host);
+        if (auto* remote = static_cast<const clap_host_remote_controls*>(s.host->get_extension(s.host, CLAP_EXT_REMOTE_CONTROLS)))
+            remote->changed(s.host);
+    };
     return &p;
 }
 

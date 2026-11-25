@@ -121,6 +121,28 @@ class MpcProject(unittest.TestCase):
         self.assertIn("pattern 0 1 length=768 notes=2 first=0:36:127", out)
         self.assertIn("pattern 0 0 length=768 notes=1 first=0:37:127", out)
 
+    def test_song(self):
+        # The first song with steps becomes Song: a clip a step on tracks with notes, a marker a step, and the tempo
+        # lane where the sequences' own tempos change; the second song is left out.
+        document = project([instrument()])
+        data = document["data"]
+        data["sequences"][1]["value"]["name"] = "Hook Part Two"
+        data["songs"] = [{"name": "(unnamed)", "ignoreTempo": False, "items": []},
+                         {"name": "(unnamed)", "ignoreTempo": False,
+                          "items": [{"item.sequenceIndex": 0, "item.repeats": 2}, {"item.sequenceIndex": 1, "item.repeats": 1},
+                                    {"item.sequenceIndex": 5, "item.repeats": 1}]},
+                         {"name": "(unnamed)", "ignoreTempo": False, "items": [{"item.sequenceIndex": 1, "item.repeats": 1}]}]
+        with tempfile.TemporaryDirectory() as folder:
+            out = self.run_tool(write(folder, "Song", document)).stdout
+            data["songs"][1]["ignoreTempo"] = True
+            ignored = self.run_tool(write(folder, "Song", document)).stdout
+        self.assertIn("scene 0 name=Hook Part\n", out)
+        self.assertIn("song steps=2 steps_left_out=1 songs_left_out=1 clips=2 markers=2 tempo_points=2 bars=9", out)
+        self.assertIn("clip track=0 pattern=0 bar=0 bars=6\nclip track=0 pattern=1 bar=6 bars=3", out)
+        self.assertIn("marker bar=0 name=Hook Part\nmarker bar=6 name=SEQ 2", out)
+        self.assertIn("tempo bar=0 tempo=1050 ramp=0\ntempo bar=6 tempo=725 ramp=0", out)
+        self.assertIn("clips=2 markers=2 tempo_points=0", ignored)
+
     def test_keygroup_track(self):
         # An MPC 3 keygroup track: a KEYGROUP track playing it from the project ("#k<track>"), its zones read from
         # the data folder, its notes MIDI notes.

@@ -4,6 +4,7 @@
 #include "rhythmer/model/project.h"
 #include "rhythmer/model/scales.h"
 #include "rhythmer/shell/ui_state.h"
+#include "rhythmer/shell/spare_bar.h"
 #include <algorithm>
 #include <cstddef>
 #include <string>
@@ -18,8 +19,9 @@ namespace rhythmer {
 
 class Context;
 
-// The selected event's index in pattern.events, or -1 when the step holds none.
+// The selected event's index in pattern.events, or -1 when the step holds none (or the caret is past the end).
 inline int selected_event(const Pattern& pattern, const UiState& ui) {
+    if (in_spare(ui, pattern)) return -1;
     auto in = step_events(pattern, unsigned(std::max<int>(ui.step_cursor, 0)) % pattern.steps());
     if (!in.count) return -1;
     return int(in.first + std::min<unsigned>(ui.step_event, in.count - 1));
@@ -62,6 +64,9 @@ void set_event_pitch_ramp(Context& c, int semitones);
 void set_event_condition(Context& c, int condition); // a trig condition (model/trig.h)
 // B3: the selected event goes (one undo, or part of a take).
 void erase_event(Context& c);
+// A step written past the pattern's end: the pattern grows to the end of that step's bar and the caret stands on it
+// (shell/spare_bar.h). False when it cannot grow there.
+bool grow_to_step(Context& c, unsigned step);
 // Step entry (round 2, step-edit2 C; pages/step_edit_page.cpp). A pad down writes its key at the caret
 // (UiState::step_cursor) with the entry's length, velocity and chance, heard as it goes in (a chord: each pad held,
 // one undo for the step); when the last pad held lets go the caret moves on a step of Q. REST moves it on without

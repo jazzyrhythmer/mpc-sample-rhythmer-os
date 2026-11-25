@@ -50,7 +50,8 @@ void record_screen(ScreenStats& screen, const Display::Stats& stats, std::chrono
 void render(void* context, const AudioBlock& input, AudioBlock& output) {
     auto& route = *static_cast<AudioRoute*>(context);
     route.app.render(input, output);
-    route.usb.push(output.data(), audio_frames, route.app.stems());
+    const AudioBlock* mix = route.app.usb_mix();
+    route.usb.push((mix ? *mix : output).data(), audio_frames, route.app.stems());
 }
 
 // The app's format, or the default when the device refuses it. Throws only

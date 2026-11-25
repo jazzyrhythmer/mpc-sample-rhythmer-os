@@ -26,11 +26,16 @@
 #include <thread>
 #include <vector>
 
-// Weak: a build without the modules (base.mk) has no Screen Mirror.
+// Weak: a build without the modules (base.mk) has no Screen Mirror. One build of each for each
+// firmware's kernel: 1.3.0.12 (6.12) and 1.4 (6.18).
 extern "C" const unsigned char sample_base_uvc_module[] __attribute__((weak));
 extern "C" const unsigned char sample_base_uvc_module_end[] __attribute__((weak));
 extern "C" const unsigned char sample_base_vepu_module[] __attribute__((weak));
 extern "C" const unsigned char sample_base_vepu_module_end[] __attribute__((weak));
+extern "C" const unsigned char sample_base_uvc_6_18_module[] __attribute__((weak));
+extern "C" const unsigned char sample_base_uvc_6_18_module_end[] __attribute__((weak));
+extern "C" const unsigned char sample_base_vepu_6_18_module[] __attribute__((weak));
+extern "C" const unsigned char sample_base_vepu_6_18_module_end[] __attribute__((weak));
 
 const char* mirror_state_name(MirrorState state) {
     switch (state) {
@@ -140,11 +145,14 @@ struct ScreenMirror::Worker {
         if (kernel_module::loaded("sample_base_uvc")) return true;
         // The module was built without the kernel's symbol list: its videobuf2 dependencies go in first.
         if (!kernel_module::probe({"videobuf2-v4l2", "videobuf2-vmalloc", "videobuf2-dma-sg"}, &error)) return false;
-        return kernel_module::load("sample_base_uvc", sample_base_uvc_module, sample_base_uvc_module_end, &error);
+        return kernel_module::load("sample_base_uvc", {{sample_base_uvc_module, sample_base_uvc_module_end},
+                                                       {sample_base_uvc_6_18_module, sample_base_uvc_6_18_module_end}}, &error);
     }
 
     bool start_encoder(std::string& error) {
-        if (!kernel_module::load("sample_base_vepu", sample_base_vepu_module, sample_base_vepu_module_end, &error)) return false;
+        if (!kernel_module::load("sample_base_vepu", {{sample_base_vepu_module, sample_base_vepu_module_end},
+                                                      {sample_base_vepu_6_18_module, sample_base_vepu_6_18_module_end}}, &error))
+            return false;
         if (!kernel_module::loaded("hantro_vpu") && !kernel_module::probe({"hantro-vpu"}, &error)) return false;
         // hantro registers its device a moment after it loads.
         for (int attempt = 0; attempt < 20 && running.load(); ++attempt) {

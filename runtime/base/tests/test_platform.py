@@ -28,6 +28,13 @@ class PlatformTests(unittest.TestCase):
             compile_fixture(binary, "tests/system.cpp", "src/drivers/platform.cpp")
             subprocess.run([str(binary)], check=True, timeout=5)
 
+    @unittest.skipUnless(sys.platform == "linux", "kernel_module.cpp uses Linux system calls")
+    def test_kernel_modules_picked_for_the_running_kernel(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "kernel-module"
+            compile_fixture(binary, "tests/kernel_module.cpp", "src/drivers/kernel_module.cpp")
+            subprocess.run([str(binary), str(ROOT)], check=True, timeout=5)
+
     def test_codec_link_power_clock_and_immediate_power_down(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "codec-power"

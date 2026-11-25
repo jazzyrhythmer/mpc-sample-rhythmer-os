@@ -81,6 +81,11 @@ unsigned roll_marks_erase(Pattern& pattern, UiState& ui);
 bool roll_marks_mute(Pattern& pattern, const UiState& ui);
 // Note Repeat on the marked notes: their ratchet the next of 1, 2, 3, 4, 6, 8 after the first's; the hits set.
 unsigned roll_marks_ratchet(Pattern& pattern, const UiState& ui);
+// K2 on the marked notes: their lowest and highest velocity; false with none marked.
+bool roll_marks_span(const Pattern& pattern, const UiState& ui, int& low, int& high);
+// K2 on the marked notes: every velocity moved by as much, the lowest to `low` (60, 85, 100 to 70: 70, 95, 110).
+// `low` is held to 1 .. 127 - (high - low), so no note stops at 1 or 127 and the spacing stays. True when one changed.
+bool roll_marks_velocity(Pattern& pattern, const UiState& ui, int low);
 
 // Minus / Plus: to the next note up (or down) starting in the cursor's step; past the last, a semitone.
 void roll_pitch(const Pattern& pattern, UiState& ui, int way, int lane = -1);
@@ -100,5 +105,8 @@ bool roll_selection_wheel(Context& c, int way);
 void roll_shift_up(Context& c);
 bool roll_selection_mute(Context& c);
 bool roll_selection_repeat(Context& c);
+// Settings > SEQ > Note preview: the marked notes in the cursor's step heard once (none there: the first marked);
+// `settle`: once the wheel rests.
+void roll_hear_marks(Context& c, bool settle);
 
 } // namespace rhythmer

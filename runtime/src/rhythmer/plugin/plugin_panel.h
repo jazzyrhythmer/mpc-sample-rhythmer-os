@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 // What the page in view shows of one plug-in: its state, the row of three
@@ -46,20 +47,53 @@ struct PluginPanel {
     uint8_t design_half=0;
     std::array<PluginDesignPage,plugin_design_max_pages> design_pages {};
     bool qlinks = false;           // the rows follow an Open MPC skin's Q-Link pages
+    // Its own screen (plugin/plugin_screen.h): `has_screen` it offers one; `screen` the page in view is that screen,
+    // drawn at least once, and `params` hold the three it puts on K1-K3 (bound as plugin_screen_slot + k).
+    bool has_screen = false;
+    bool screen = false;
     char name[32] {};
     char preset[128] {};
     char format[8] {};             // VST3, VST2, ARMV7
     char error[64] {};             // why it failed
-    uint16_t row = 0, rows = 0;    // rows of three parameters
+    uint16_t row = 0, rows = 0;    // rows of three parameters, every page's in turn (plugin/plugin_pages.h)
+    uint16_t page = 0, pages = 0;  // the page `row` is on, and how many there are
+    uint16_t page_row = 0, page_rows = 0; // `row` within its page, and the page's rows
+    uint16_t prev_page = 0, next_page = 0; // the first rows of the pages before and after (Minus / Plus); `row`'s own page's at the ends
+    char page_name[32] {};         // its name ("" the plug-in's one list)
+    // The page's picture (plugin/plugin_pages.h PagePictureSlots): its parts' parameters in the kind's order
+    // (envelope: attack, decay, sustain, release; filter: cutoff, resonance; values: up to three; EQ: bands of
+    // frequency, gain, Q), each with where it is in the rows (`picture_slots`, row * 3 + k; -1 not on the page).
+    uint8_t picture = 0;           // PagePicture
+    std::array<PluginPanelParam, 12> picture_params {};
+    std::array<int16_t, 12> picture_slots {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+    // The skin page for this page (plugin/plugin_skin.h; the skin itself is the snapshot's `plugin_skin`, shell/
+    // snapshot.h): `skin_page` an index into its pages, -2 its strip (an effect in a chain), -1 none. The parameters
+    // its controls show, in the order of those controls that have one, each with where it is in the rows
+    // (`skin_slots`, -1 not on this page).
+    int16_t skin_page = -1;
+    std::array<PluginPanelParam, 24> skin_params {};
+    std::array<int16_t, 24> skin_slots {};
+    // An effect's sound as it plays, measured here for the plug-in in view (pages/fx_drawing.cpp): one block's lowest
+    // and highest sample per entry, oldest first (low byte left, then right; each a signed byte as min, max), and the
+    // levels in and out, 0..1000. `measured`: there is something to show.
+    bool measured = false;
+    std::array<uint32_t, 64> scope {};
+    uint16_t level_in = 0, level_out = 0;
     uint16_t load = 0;             // the share of a block it takes, in tenths of a percent
     uint16_t programs = 0;         // its named programs (presets), for PRESETS
     std::array<PluginPanelParam, 3> params {};
     std::array<PluginPanelParam, 3> quick {}; // source-authoritative PRESETS mirrors
-    // The six parameters around the row in hand, its own three among them (the row before, or at the top the row
-    // after), for the page's list; `window_first` the first one's place in the list of shown ones.
+    // Two rows of the row in hand's page, its own among them (the row after, or on the page's last row the one
+    // before; one row alone on a page of one), for the page's arcs and list; `window_first` the first one's slot
+    // (row * 3), `window_rows` how many rows it holds.
     std::array<PluginPanelParam, 6> window {};
     uint16_t window_first = 0;
+    uint8_t window_rows = 0;
 };
+
+// The panel lives in UiState, which the shell copies and compares byte for byte (shell/shell.cpp usage marks): plain
+// values only, no owning pointers.
+static_assert(std::is_trivially_copyable_v<PluginPanel>, "PluginPanel must stay plain values");
 
 // A plug-in's programs as PRESETS lists them: the named ones, each with its
 // number in the plug-in, and the one picked last (-1: none picked here yet).
@@ -120,6 +154,18 @@ constexpr int plugin_param_max = 1000; // a card's range for a plug-in parameter
 constexpr int32_t plugin_binding(unsigned entry, unsigned shown) { return int32_t(entry << 16 | shown); }
 constexpr unsigned plugin_binding_entry(int32_t id) { return unsigned(id) >> 16; }
 constexpr unsigned plugin_binding_shown(int32_t id) { return unsigned(id) & 0xffff; }
+// A plug-in's own screen names its three (PluginPanel::screen): K`k` is bound as plugin_screen_slot + k.
+constexpr unsigned plugin_screen_slot = 0x8000;
+// A companion screen's own edit (plugin/companion_screen.h): the parameter by its index in the plug-in, as
+// plugin_index_slot + index (below plugin_screen_slot: indices up to 16383).
+constexpr unsigned plugin_index_slot = 0x4000;
+constexpr bool plugin_binding_indexed(int32_t id) {
+    return plugin_binding_shown(id) >= plugin_index_slot && plugin_binding_shown(id) < plugin_screen_slot;
+}
+// Which of K1-K3 a binding id is on.
+constexpr unsigned plugin_binding_k(int32_t id) {
+    return plugin_binding_shown(id) >= plugin_screen_slot ? (plugin_binding_shown(id) - plugin_screen_slot) % 3 : plugin_binding_shown(id) % 3;
+}
 // The panel's card for a binding id, null when that parameter is not on K1-K3 now.
 inline const PluginPanelParam* plugin_card(const PluginPanel& panel, int32_t id) {
     if(panel.entry==plugin_binding_entry(id))for(const auto& card:panel.quick)if(card.used&&card.shown==int(plugin_binding_shown(id)))return &card;
@@ -129,7 +175,13 @@ inline const PluginPanelParam* plugin_card(const PluginPanel& panel, int32_t id)
         for(const auto& card:panel.params)if(card.used&&card.shown==int(shown))return &card;
         return nullptr;
     }
-    if (panel.entry != plugin_binding_entry(id) || shown < panel.row * 3u || shown >= panel.row * 3u + 3) return nullptr;
+    if (panel.entry != plugin_binding_entry(id) || plugin_binding_indexed(id)) return nullptr;
+    if (shown >= plugin_screen_slot) {
+        if (!panel.screen || shown - plugin_screen_slot >= 3) return nullptr;
+        const auto& card = panel.params[shown - plugin_screen_slot];
+        return card.used ? &card : nullptr;
+    }
+    if (panel.screen || shown < panel.row * 3u || shown >= panel.row * 3u + 3) return nullptr;
     const auto& card = panel.params[shown - panel.row * 3u];
     return card.used ? &card : nullptr;
 }

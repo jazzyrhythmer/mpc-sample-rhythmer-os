@@ -11,19 +11,24 @@
 // track or slot that already has one keeps its entry for the new plug-in; a
 // new one takes an entry nothing uses. The rack loads what is used and lets go
 // of the rest, so undo, a project switch or a removed effect need nothing more.
+#include "rhythmer/shell/mixer_channels.h"
 #include "rhythmer/shell/context.h"
 #include "rhythmer/shell/ask.h"
 #include "rhythmer/shell/delete_jobs.h"
 #include "rhythmer/engine/effect_info.h"
+#include "rhythmer/engine/engine_host.h"
 #include "rhythmer/model/scales.h"
 #include "rhythmer/plugin/plugin_files.h"
 #include "rhythmer/plugin/plugin_rack.h"
 #include "rhythmer/plugin/preset_rows.h"
 #include "rhythmer/shell/sample_library.h"
+#include "rhythmer/shell/screen_view.h"
 #include "rhythmer/shell/stage_map.h"
 #include "rhythmer/shell/track_copy.h"
+#include "rhythmer/ui/tokens.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
@@ -40,7 +45,6 @@ int free_entry(const Project& project) {
     return -1;
 }
 
-bool chain_page(PageId page) { return page == PageId::Rack || page == PageId::Bus || page == PageId::Master; }
 } // namespace
 
 // One instance plays one place: a track copy (or a copied chain) leaves two users on an entry, and the second and
@@ -65,7 +69,7 @@ void Context::split_shared_plugins() {
         tr.plugin = uint8_t(copy);
         send({Type::TrackPlugin, uint8_t(t), 0, 0, int16_t(copy)});
     }
-    for (unsigned n = 0; n < chain_count; ++n)
+    for (unsigned n = 0; n < mix_chain_count; ++n) // every chain but the kit pads' (no plug-ins there)
         for (unsigned k = 0; k < project.chain(n).size; ++k) {
             const auto& s = project.chain(n).slots[k];
             if (s.kind != plugin_effect_kind) continue;
@@ -110,7 +114,7 @@ void Context::choose_plugin(const PluginFile& file) {
         const auto& t = track();
         if (t.engine == EngineKind::Plugin && t.plugin < max_plugins) entry = t.plugin;
     } else {
-        if (n >= chain_count || k >= project.chain(n).size) return;
+        if (n >= mix_chain_count || k >= project.chain(n).size) return;
         const auto& s = project.chain(n).slots[k];
         if (s.kind == plugin_effect_kind && unsigned(s.params[0]) < max_plugins) entry = s.params[0];
     }
@@ -118,7 +122,7 @@ void Context::choose_plugin(const PluginFile& file) {
     ui.plugin_replace = false;
     if (entry >= 0 && project.plugins[size_t(entry)].used() && !replace_asked
         && !(file.path == project.plugins[size_t(entry)].path && file.id == project.plugins[size_t(entry)].id)) {
-        // Another plug-in over one in use: its sound and settings would go, and undo can't keep them; ask first
+        // Another plug-in over one in use: its sound and settings go (undo brings them back); ask first
         std::snprintf(ui.ask_name.data(), ui.ask_name.size(), "%s", project.plugins[size_t(entry)].name);
         ask(*this, UiState::Ask::ReplacePlugin, int(ui.plugins_cursor));
         return;
@@ -141,6 +145,17 @@ void Context::choose_plugin(const PluginFile& file) {
     }
     auto& ref = project.plugins[size_t(entry)];
     bool same = file.path == ref.path && file.id == ref.id && (!instrument || track().engine==EngineKind::Plugin);
+    // Another plug-in over one in use: one undo step, the old plug-in back with its state (swap_plugin); on a
+    // track, its name and pads too.
+    if (!made && !same && ref.used()) {
+        made = std::make_unique<Edit>(begin_edit((std::string("Replace ") + ref.name).c_str(), ui.track, -1, false));
+        made->motion_before.reset();
+        made->plugin = std::make_unique<PluginSwap>();
+        made->plugin->entry = uint8_t(entry);
+        made->plugin->before = ref;
+        made->plugin->state_before = plugins->state(unsigned(entry));
+        if (instrument) made->track_before = std::make_unique<TrackState>(track_state(*this, ui.track));
+    }
     std::snprintf(ref.path, plugin_path_length, "%s", file.path.c_str());
     std::snprintf(ref.name, sizeof(ref.name), "%s", file.name.c_str());
     ref.id = file.id;
@@ -162,13 +177,13 @@ void Context::choose_plugin(const PluginFile& file) {
         if(file.single_drum){tr.octave=4;tr.last_note=uint8_t(std::clamp(pad_note(project,tr,0).key,0,127));}
         std::string name = file.name;
         std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) { return char(std::toupper(ch)); });
-        tr.set_name(name.c_str());
+        tr.name_from(name.c_str());
         if (made) {
-            stage_go(ui, 0, 0); // B1: its PRESETS (or its face), as a new kit's TRIM
+            if (!made->plugin) stage_go(ui, 0, 0); // a new track: B1, its PRESETS (or its face), as a new kit's TRIM
             made->track_after = std::make_unique<TrackState>(track_state(*this, t));
             restore_track(*this,t,*made->track_after);
             made->gen_plugins_after.push_back({unsigned(entry),ref,same?made->gen_plugins_before.front().state:std::vector<uint8_t>{}});
-            edits.push(std::move(*made));
+            // Commit once below, after both the track and plug-in snapshots are complete.
         }
     } else {
         unsigned count = project.chain(n).count();
@@ -179,12 +194,29 @@ void Context::choose_plugin(const PluginFile& file) {
         ui.fx_row[UiState::cursor_of(n)] = 0;
     }
     if(instrument){ui.plugin_panel={};plugin_panel_at=0;ui.preset_due=0;}
+    if (made) {
+        if (made->plugin) made->plugin->after = ref;
+        edits.push(std::move(*made));
+    }
     ui.plugin_row[size_t(entry)] = 0;
     dirty = true;
     plugins->sync(project, plugins_asleep());
     notice("Loading " + file.name);
     if(instrument) {ui.new_for=-1;ui.new_back=PageId::Stage;open(PageId::Stage);ui.back_depth=0;}
-    else open(ui.plugin_back);
+    else { open(ui.plugin_back); picker_done(); }
+}
+
+void Context::swap_plugin(Edit& e, bool after) {
+    if (!e.plugin) return;
+    auto& swap = *e.plugin;
+    const unsigned entry = swap.entry % max_plugins;
+    if (plugins) (after ? swap.state_before : swap.state_after) = plugins->state(entry); // the side left, as heard now
+    project.plugins[entry] = after ? swap.after : swap.before;
+    ui.plugin_row[entry] = 0;
+    dirty = true;
+    if (!plugins) return;
+    plugins->restore(entry, after ? swap.state_after : swap.state_before);
+    plugins->sync(project, plugins_asleep());
 }
 
 void Context::refresh_plugin_panel(unsigned entry){
@@ -202,6 +234,19 @@ void Context::refresh_plugin_panel(unsigned entry){
 void Context::set_plugin_param(int32_t id, int value) {
     if (!plugins) return;
     unsigned entry = plugin_binding_entry(id), shown = plugin_binding_shown(id);
+    auto& panel = ui.plugin_panel;
+    if (plugin_binding_indexed(id)) { // a companion screen's own edit (plugin/companion_screen.h), by its index
+        plugins->set_param_index(entry, plugins->live_generation(entry), int(shown - plugin_index_slot), value);
+        dirty = true; // K1-K3's cards read it back at the panel's next tick
+        return;
+    }
+    if (shown >= plugin_screen_slot) { // one of the three its own screen names
+        unsigned k = shown - plugin_screen_slot;
+        plugins->set_screen_param(entry, k, value);
+        if (panel.entry == entry && panel.screen && k < 3) panel.params[k].value = int16_t(std::clamp(value, 0, plugin_param_max));
+        dirty = true;
+        return;
+    }
     plugins->set_param(entry,shown,value,ui.plugin_panel.entry==entry?ui.plugin_panel.layout_revision:0);
     if(ui.plugin_panel.entry==entry)refresh_plugin_panel(entry);
     if(shown==0&&ui.plugin_panel.entry==entry&&ui.plugin_panel.focused_pad>=0){for(auto& t:project.tracks)if(t.engine==EngineKind::Plugin&&t.plugin==entry){t.last_pad=uint8_t(ui.plugin_panel.focused_pad);t.bank=uint8_t(ui.plugin_panel.focused_pad/16);t.last_note=uint8_t(36+ui.plugin_panel.focused_pad);}}
@@ -303,13 +348,50 @@ void Context::back_plugin_presets() {
     ui.presets_rows_count=uint16_t(std::min<size_t>(65535,preset_rows(programs.list,presets_folder(ui),programs.current).size()));
 }
 
+void Context::pick_plugin_program(unsigned entry, int program) {
+    if (!plugins || entry >= max_plugins) return;
+    const auto programs = plugins->programs(entry);
+    for (const auto& p : programs.list) {
+        if (p.index != program) continue;
+        plugins->select_program(entry, p.index);
+        std::snprintf(project.plugins[entry].preset, sizeof(project.plugins[0].preset), "%s", program_key(p).c_str());
+        dirty = true;
+        return;
+    }
+}
+
+// Companion screens (plugin/companion_screen.h) ask; the shell makes the change as a pot turn on the plug-in's card
+// makes it (apply(): a frozen track's question, one undo step per control) or as PRESETS picks a program. One asked of
+// a plug-in replaced since is dropped. And why a screen stopped, said once.
+void Context::companion_requests() {
+    static std::vector<ScreenRequest> asked; // the MIDI thread's, its room kept
+    asked.clear();
+    plugins->take_screen_requests(asked);
+    for (const auto& r : asked) {
+        if (r.entry >= max_plugins || r.generation != plugins->live_generation(r.entry)) continue;
+        if (r.program) { pick_plugin_program(r.entry, r.index); continue; }
+        if (r.index < 0 || unsigned(r.index) >= plugin_screen_slot - plugin_index_slot) continue;
+        Binding b {Binding::Kind::PluginParam, plugin_binding(r.entry, plugin_index_slot + unsigned(r.index)), 0, plugin_param_max, 0};
+        apply(b, int(std::lround(std::clamp(r.value, 0.0f, 1.0f) * plugin_param_max)));
+    }
+    if (const auto why = plugins->screen_notice(); !why.empty()) notice(why);
+}
+
+// An input on a plug-in's own screen: handed to it. False when the page in view is not one (the page's own job then).
+bool Context::plugin_screen_input(ScreenKey key, int value) {
+    const auto at = plugin_screen_place(project, ui);
+    if (at.entry < 0 || !plugins || !ui.plugin_panel.screen) return false;
+    plugins->screen_input(unsigned(at.entry), {key, int32_t(value), ui.shift});
+    return true;
+}
+
 int Context::plugin_in_focus() const {
     const auto& t = project.tracks[ui.track % track_count];
     if (ui.page == PageId::PluginPresets && ui.presets_entry < max_plugins) return ui.presets_entry;
-    if (ui.page == PageId::Edit && t.engine == EngineKind::Plugin && t.plugin < max_plugins) return t.plugin;
     if (ui.page == PageId::Stage && t.engine == EngineKind::Plugin && t.plugin < max_plugins) return t.plugin; // B1 PRESETS, EDIT
-    if (chain_page(ui.page) && !ui.picker_open) {
-        unsigned n = page_chain(project, ui), k = ui.fx_cursor[UiState::cursor_of(n)];
+    const bool mixer_fx = mixer_fx_lit(ui) && channel_chain(mixer_strip(ui)) >= 0; // the mixer's FX block: its lit effect
+    if ((fx_chain_page(ui.page) && !ui.picker_open) || mixer_fx) {
+        unsigned n = mixer_fx ? unsigned(channel_chain(mixer_strip(ui))) : page_chain(project, ui), k = ui.fx_cursor[UiState::cursor_of(n)];
         const auto& chain = project.chain(n);
         if (k < chain.count() && chain.slots[k].kind == plugin_effect_kind && unsigned(chain.slots[k].params[0]) < max_plugins)
             return chain.slots[k].params[0];
@@ -319,10 +401,7 @@ int Context::plugin_in_focus() const {
 
 void Context::plugins_tick(uint32_t at) {
     if (!plugins) return;
-    if (library) { // the card's top folder, from the sample library's Samples folder beside Plugins
-        auto root = library->root();
-        plugins->set_card(root.empty() ? std::string() : std::filesystem::path(root).parent_path().string());
-    }
+    if (library) plugins->set_card(library->card()); // the card's top folder, as the sample library found it
     for(auto& t:project.tracks) if(t.engine==EngineKind::Plugin&&t.plugin<max_plugins) {
         const std::string path=project.plugins[t.plugin].path;
         if(path.find("RHYTHMER - Rhythmer Kit")!=std::string::npos||path.find("GROOVE - Groove Kit")!=std::string::npos){use_drum_pads(t);auto& ref=project.plugins[t.plugin];if(std::string(ref.name)=="Groove Kit")std::snprintf(ref.name,sizeof(ref.name),"Rhythmer Kit");if(std::string(t.name)=="GROOVE KIT")t.set_name("RHYTHMER KIT");}
@@ -331,6 +410,16 @@ void Context::plugins_tick(uint32_t at) {
     split_shared_plugins();
     plugins->sync(project, plugins_asleep());
     delete_tick(*this); // the picker listed again once a plug-in is deleted (shell/delete_jobs.h)
+    // The web page installed or deleted a plug-in: an open picker lists again, its cursor on the plug-in it was on.
+    if (plugins->card_changes() != plugin_card_seen) {
+        plugin_card_seen = plugins->card_changes();
+        if (ui.page == PageId::Plugins) {
+            auto view = plugins->view();
+            const PluginFile on = ui.plugins_cursor < view.files.size() ? view.files[ui.plugins_cursor] : PluginFile {};
+            plugin_came_back = false;
+            plugins->browse(view.folder, on.path, on.id);
+        }
+    }
     if (ui.page == PageId::Plugins && plugins->changes() != plugin_view_seen) { // the picker's rows, and where going up lands
         plugin_view_seen = plugins->changes();
         auto view = plugins->view();
@@ -338,6 +427,19 @@ void Context::plugins_tick(uint32_t at) {
         if (view.came_from >= 0 && !plugin_came_back) { ui.plugins_cursor = uint16_t(view.came_from); plugin_came_back = true; }
         if (ui.plugins_cursor >= ui.plugins_count) ui.plugins_cursor = uint16_t(ui.plugins_count ? ui.plugins_count - 1 : 0);
     }
+    { // A plug-in's own screen in view: what it is told, each tick, so a pot reaches its picture at once.
+        ScreenView view;
+        if (const auto at = plugin_screen_place(project, ui); at.entry >= 0) {
+            view.entry = uint8_t(at.entry);
+            view.area = at.area;
+            view.shift = ui.shift;
+            view.playing = host.playing();
+            view.colour = ui::track_colour(ui.track).getARGB() & 0xffffffu;
+            for (unsigned k = 0; k < 3; ++k) { view.pots[k] = ui.pots[k].position; view.live[k] = ui.pots[k].engaged ? 1 : 0; }
+        }
+        plugins->screen_view(view);
+    }
+    companion_requests();
     if (at - plugin_panel_at < 50) return; // the cards' texts twenty times a second
     plugin_panel_at = at;
     { // the selected track's drum voices, for Keys and the pad lights (loaded after the pick, so asked each time)

@@ -8,23 +8,50 @@ Press **SHIFT** + **Pad 16**.
 
 ![Project](../images/rhythmer/020-project.png)
 
-- **B1 SAVE** keeps the current project. Its first save opens folder selection, then name entry; subsequent saves update the existing file.
-- **SHIFT + B1 SAVE AS** chooses another folder/name for a separate project.
-- **B2 OPEN** browses projects.
-- **B3 NEW** offers a normal project or an EMPTY project. Unsaved changes first require SAVE, DISCARD or CANCEL.
-- **SHIFT + B3 RECOVERY** browses the separate autosave checkpoints.
+- **B1** (**SAVE AS**): save the project under a new name. The old file
+  stays as it was.
+- **B2** (**OPEN**): the list of projects.
+- **B3** (**NEW**): start a new project (asks first). The question says
+  whether the open project is saved first or its changes are lost.
+  **B3** (**NEW**) starts it with no tracks and opens the track types on
+  track 1. **B2** (**KIT**) starts it with one of the MPC's factory kits on
+  track 1, so the pads play at once. **B1** cancels.
 
 ### Saving and recovery
 
 First SAVE: choose a writable SD folder with the encoder, push to enter it, and press **B3 USE FOLDER**. Enter a name and press **B3 SAVE**. An existing name asks before REPLACE. **B2 NEW FOLDER** creates a folder in the displayed writable location. SHIFT + encoder push goes up a folder; B1 CANCEL exits saving. INTERNAL and stock/system folders are read only.
 
-Autosave waits for about three seconds of idle time while playback, recording, printing and loading are stopped. It updates one recovery entry per project in `Rhythmer/Autosave`; it never writes numbered projects into your normal project folder or overwrites the last manual SAVE. New unsaved sessions also have one recovery entry. The first manual SAVE retains that identity; SAVE AS creates a new project identity.
+Rhythmer saves the project in the background, as the stock app does. Three
+seconds after you last used a control it writes the project to its file, as
+long as nothing plays, records or prints. A new project gets a file of its
+own the first time: **Project 1**, **Project 2** and so on.
 
-**UNSAVED** refers to your manual save. **Recovery saved HH:MM** is a separate checkpoint confirmation. After a crash or restart, RECOVER opens the available last-work checkpoint as an unsaved copy. You can also open it from RECOVERY; use SAVE to keep it in a chosen folder. Declining/discarding does not delete existing recovery entries, but discarded work is not automatically offered on startup.
+- The Project page shows **SAVED**, or **UNSAVED** until the next save.
+- While the sequencer plays, nothing is saved. Stop, and the save follows.
+- An MPC project you open is not saved in the background. Press **B1**
+  (**SAVE AS**) to give it a file of its own.
+- The Exit screen saves before it powers off or leaves.
+- Undo and redo are not saved with the project.
+- To keep an earlier state, press **B1** (**SAVE AS**) before you go on.
 
-The Exit screen checkpoints changed work to recovery before leaving or powering off. It does not create a manual Project N file. Source samples remain referenced, and Undo/Redo history is not saved. Keep separate backups of original samples and your SD card.
+To save only when you choose, turn **Autosave** off in
+[Settings](settings.md) (**SEQ**). Then:
 
-![The project list](../images/rhythmer/020-projectlist.png)
+- **B1** reads **SAVE** and writes the project to its file. A project
+  with no file yet still gets **SAVE AS**.
+- To go back to what was last saved, open the list, push the open project
+  and pick **REVERT** (**TO SAVED**). Push it again to confirm.
+- **NEW**, **LOAD** of another project and the Exit screen don't save.
+  While the project has changes they say **DISCARDS** (**LOAD**: **CHANGES
+  LOST**), and **LOAD** asks once more.
+
+The header shows **UNSAVED** in amber while the project has changes.
+
+A sample's chop is saved in the sample's WAV file, as the MPC saves slices:
+the slices, the chop type and the cuts made by hand. The chop comes back
+with the sample in any project.
+
+![The project list](../images/screens/projectlist.png)
 
 In the list:
 
@@ -38,7 +65,8 @@ In the list:
   **Autosave**, and the factory **Demos** and **Kits**. It is read only:
   its projects have Load and Load kit.
 - The list opens on the open project the first time, then where you left
-  it. Each drive keeps its own folder and row.
+  it. A project not yet saved on the card opens it at the card's top. Each
+  drive keeps its own folder and row.
 - Push the encoder or press **B3** on a project to open its sheet. Its jobs
   are cards. The open project has Save, Save as new, Rename, Duplicate,
   Move to folder, New folder here, Open at start and Delete. Another
@@ -47,6 +75,8 @@ In the list:
 - Save (or Load) is picked when the sheet opens. Turn the encoder to pick
   another card and push it. **B1** closes the sheet. Delete says **PRESS
   AGAIN**: push once more to delete.
+- **ERASE** on a project opens its sheet on Delete. Press **ERASE** again
+  to delete it. **SHIFT** + **ERASE** duplicates it.
 
 ![A project's sheet](../images/screens/filesheetscroll.png)
 
@@ -55,8 +85,8 @@ out and back in.
 
 ## Naming
 
-The Name sheet opens when you save or rename a project, sample, bank or
-marker.
+The Name sheet opens when you save or rename a project, sample, sound, bank,
+marker, sequence or track.
 
 ![The Name sheet](../images/rhythmer/020-nameproject.png)
 
@@ -77,14 +107,31 @@ project list shows it as the **MPC Sample** folder. Press **B2**
 factory demos and kits.
 
 Their sheet has Load and Load kit. Load opens a copy. The stock project is
-not changed. Save makes a Rhythmer
-project (`.mldp`) that plays the samples from where they are.
+not changed. **SAVE AS** on the Project page makes a Rhythmer project
+(`.mldp`) that plays the samples from where they are.
 
 - Each Drum track becomes a kit track. Each sequence becomes that numbered
-  pattern, with its tempo.
+  pattern, with its tempo. A sequence's name becomes its name on
+  **Sequences** (a default name, such as *Sequence 01*, stays blank).
+- The song becomes **Song** (see [Song](song.md)):
+  - Each step becomes a clip on each track that has notes in its sequence.
+    A track with no notes in that sequence gets no clip there.
+  - A clip is as long as the sequence times its repeats. The steps follow
+    one another from bar 1.
+  - Each step has a marker with its sequence's name, or **SEQ** and its
+    number.
+  - When the sequences have their own tempos, the tempo lane changes the
+    tempo where a step's tempo differs from the step before. With one
+    global tempo, or **Ignore Tempo** on, the song has no tempo lane.
+  - Rhythmer has one song. When the project has more than one song with
+    steps, the first opens. The message after loading says when something
+    was left out.
+- MPC 3 projects open the same way. Their Keygroup tracks become keygroup
+  tracks, and their Audio tracks become audio tracks (see
+  [Audio tracks](audio-tracks.md)).
 - Carried over: pad regions, tune, volume, pan, play type, mono, mute
   group, envelope, loop, Warp, filter, and pads with several layers.
-- Not carried over: Pad FX, insert effects, sends and songs.
+- Not carried over: Pad FX, insert effects and sends.
 
 ## SD card access
 
@@ -100,29 +147,37 @@ taking it out.
 
 ![SD card access](../images/screens/cardaccess.png)
 
-While the card is mounted on the computer, the pads still play the selected track.
-USB audio and USB MIDI keep working. If you press **B1** before you eject
-the drive, Rhythmer asks whether to eject anyway.
+While the card is mounted on the computer, the pads still play the selected
+track, and **PLAY**, **STOP** and **MAIN VOLUME** still work. The other
+controls wait. USB audio and USB MIDI keep working. If you press **B1**
+before you eject the drive, the page shows **STILL MOUNTED**. Press **B1**
+again and Rhythmer asks whether to eject anyway.
 
 ## Files on the card
 
 | Folder | Contents |
 | --- | --- |
 | `autorun/` | Rhythmer itself. Do not change it. |
+| `Rhythmer/Samples/` | Your samples. Rhythmer writes `Recorded/`, `Edits/`, `Banks/`, `Looper/`, `Expansions/`, `Keygroups/` (auto sampled programs) and `Stems/` (a sample's stems) here. |
 | `Rhythmer/Projects/` | Projects (`.mldp`), and each project's `Loops`, `Prints` and `Audio` folders |
 | `Rhythmer/Mixdowns/` | Song mixdowns |
 | `Rhythmer/Stems/` | A song's stems |
 | `Rhythmer/MIDI/` | Exported MIDI files |
 | `Rhythmer/MPC 3/` | MPC 3 projects exported from Song |
+| `Rhythmer/Ableton/` | Ableton Live Sets exported from Song, a folder each |
 | `Rhythmer/Progressions/` | Chord progressions you make |
 | `Rhythmer/Sounds/` | Sounds you save |
 | `Rhythmer/Cache/` | Decoded instrument samples, and long MP3, FLAC, Ogg and AIFF samples as WAV. Safe to delete: Rhythmer makes them again. |
 | `Rhythmer/Plugins/` | VST3, LV2, CLAP and VST2 plug-ins |
 | `Rhythmer/Plugin Data/` | Plug-in settings and presets |
 | `Rhythmer/Crashes/` | Crash reports, one file a crash (see [Troubleshooting](exit-and-troubleshooting.md#troubleshooting)) |
+| `Rhythmer/SysEx/` | `.syx` files for MIDI tracks |
 | `Rhythmer/settings` | Rhythmer's settings |
-| `Samples/` | Your samples. Rhythmer writes `Recorded/`, `Edits/`, `Banks/`, `Looper/`, `Expansions/`, `Keygroups/` (auto sampled programs) and `Stems/` (a sample's stems) here. |
-| `SysEx/` | `.syx` files for MIDI tracks |
+
+Rhythmer makes no other folders at the top of the card. `Samples/` and
+`SysEx/` there, where older versions kept them, are still read. Move what
+is in `Samples/` into `Rhythmer/Samples`, and projects find their samples in
+the new place.
 
 ## The web page
 
@@ -138,8 +193,8 @@ four tabs:
 - **Files**: the folders on the card. Play audio files in the browser,
   download files, upload files (with **Upload** or by dropping them on the
   list), make folders and delete files or folders. The browser asks before
-  it deletes. An upload never replaces a file of the same name.
-  `autorun` and `sample-base` are not shown.
+  it deletes. An upload never replaces a file of the same name. The
+  `autorun` folder is not shown.
 - **Quickstart** and **Manual**: the quickstart and this guide. They work
   without an internet connection.
 

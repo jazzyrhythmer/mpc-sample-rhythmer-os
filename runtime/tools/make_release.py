@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Make a Rhythmer release zip: one autorun folder and nothing else, to unzip
-or copy to the top of the MPC Sample's microSD card. The README, licences
-and source note ride inside it, in autorun/rhythmer/.
+"""Make a Rhythmer release zip: one autorun folder and an autorun.sh beside
+it, to unzip or copy to the top of the MPC Sample's microSD card. The
+README, licences and source note ride inside it, in autorun/rhythmer/.
 
-At boot the stock app runs autorun/autorun.sh (signed in autorun.check, the
-firmware's salted digest). It hands autorun/rhythmer/ to the base's SD boot
+At boot the stock app runs autorun/autorun.sh: firmware 1.3.0.12 by itself
+(signed in autorun.check, the firmware's salted digest), firmware 1.4 once
+asked, through the autorun.sh at the card's top (base/install/top-autorun.sh;
+it needs Developer Mode). It hands autorun/rhythmer/ to the base's SD boot
 scripts (base/install/sd-boot.sh, sd-worker.sh): they check the stock
 firmware and the files, copy Rhythmer into RAM, run its self-test and start
 it in place of the stock app, which comes back on exit or any failure.
@@ -36,9 +38,12 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = ROOT / "base"
 PACKAGE = "autorun/rhythmer"
 SETUP_LOG = "/run/rhythmer-sd.log"
-SOURCE_URL = "https://github.com/keremimo/melodee-sample"
+SOURCE_URL = "https://github.com/jazzyrhythmer/mpc-sample-rhythmer-os"
 SIGNING_KEY = Path(os.environ.get("RHYTHMER_SIGNING_KEY", Path.home() / ".config/rhythmer/release-signing.pem"))
 LIST = f"{PACKAGE}/RELEASE.sha256"
+# Firmware 1.4's autorun, at the card's top. Out of the signed list: the update installer of releases before it
+# (base/install/sd-update.sh) refuses a listed path outside autorun/, and an update never needs it.
+TOP = "autorun.sh"
 VERSION = re.compile(r"v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?")
 # Nothing personal or private may ship: home or temp paths, keys, tokens.
 FORBIDDEN = (re.compile(rb"/Use" rb"rs/|/ho" rb"me/[a-z]|/private/tmp/|/var/folders/"),
@@ -103,6 +108,7 @@ def collect(binary, version, commit, stems=ROOT / "build/stems"):
     licenses = f"{PACKAGE}/licenses"
     files[f"{licenses}/LICENSE-AGPL-3.0.txt"] = (ROOT / "LICENSE").read_bytes()
     files[f"{licenses}/THIRD_PARTY.md"] = (ROOT / "THIRD_PARTY.md").read_bytes()
+    files[f"{licenses}/ellic-core-LICENSE.txt"] = (ROOT / "core/LICENSE").read_bytes() # the core/ submodule, MIT
     files[f"{licenses}/Rubik-OFL.txt"] = (ROOT / "build/deps/rubik/OFL.txt").read_bytes()
     for face in sorted((ROOT / "build/deps/fonts").glob("*/OFL.txt")): # Settings > SCREEN > Font (src/rhythmer/dependencies.py FACES)
         files[f"{licenses}/fonts/{face.parent.name}-OFL.txt"] = face.read_bytes()
@@ -122,15 +128,16 @@ def collect(binary, version, commit, stems=ROOT / "build/stems"):
     files[f"{PACKAGE}/stems/spleeter-4stems.f16"] = (stems / "spleeter-4stems.f16").read_bytes()
     for path in sorted((stems / "licenses").glob("*")):
         files[f"{licenses}/stems/{path.name}"] = path.read_bytes()
-    assert all(name.startswith("autorun/") for name in files), "the zip is the autorun folder alone"
+    files[TOP] = (BASE / "install/top-autorun.sh").read_bytes()
+    assert all(name.startswith("autorun/") or name == TOP for name in files), "the zip is the autorun folder and its top autorun.sh"
     return files
 
 
 def release_list(files):
-    """RELEASE.sha256: the SHA-256 of every file in the zip except the list
-    and its signature, sorted by path."""
+    """RELEASE.sha256: the SHA-256 of every file in the zip except the list,
+    its signature and the top autorun.sh, sorted by path."""
     return "".join(hashlib.sha256(files[name]).hexdigest() + "  " + name + "\n"
-                   for name in sorted(files) if name not in (LIST, LIST + ".sig")).encode()
+                   for name in sorted(files) if name not in (LIST, LIST + ".sig", TOP)).encode()
 
 
 def public_key():

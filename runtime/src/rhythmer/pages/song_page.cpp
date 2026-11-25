@@ -8,7 +8,8 @@
 // The wheel moves the cursor by the bar, pads pick the lane. Every clip job
 // is on a button of its own, no menu: B3 places the pattern on K2 for the
 // length on K3 (on a clip, duplicates it after itself), B2 mutes the clip,
-// Shift + B2 its motion, Shift + B3 gives it its own pattern, Push opens its
+// Shift + B2 its motion, Shift + B3 gives it its own pattern (Shift + B1 opens JAMS, the jams to lay after the
+// song's end: shell/jam_jobs.cpp; the foot counts them), Push opens its
 // notes (on empty time, places as B3 does), Chop splits it at the cursor,
 // Erase deletes it, Note Repeat repeats it to the next marker, Loop loops
 // its bars. K1 zoom. Minus / Plus jump between markers (or clip edges while
@@ -24,7 +25,9 @@
 #include "rhythmer/ui/widgets.h"
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <cstdio>
+#include <vector>
 
 namespace rhythmer {
 namespace {
@@ -99,12 +102,120 @@ void draw_clip(Paint& p, const Snapshot& s, const Clip& clip, float y, unsigned 
 
 // B1-B3 follow what is under the cursor; with Shift, the clip's second jobs.
 SoftKeys keys_of(const Snapshot& s, const Clip* clip, juce::Colour c) {
-    if (s.ui.shift) return {{"", clip ? "MOTION" : "", clip ? "OWN PATTERN" : ""}, -1, c};
+    if (s.ui.shift) return {{s.ui.jam_count || s.ui.jam_logging ? "JAMS" : "", clip ? "MOTION" : "", clip ? "OWN PATTERN" : ""}, -1, c};
     if (clip) return {{"EXPORT", clip->muted ? "UNMUTE" : "MUTE", "DUPLICATE"}, -1, c};
     return {{"EXPORT", "", s.project.tracks[s.ui.track].used() ? "PLACE" : ""}, -1, c};
 }
 
+// JAMS (jam capture, shell/jam_jobs.cpp): the picked jam large (its sequences' markers, bars, each track that played
+// with its patterns; what FROM-TO leaves out dimmed; the place while B2 plays it), and under it the jams, newest
+// first, each a row with a small picture and its length.
+bool jam_heard(const Snapshot& s, unsigned t, uint8_t p) { // a pattern with something to play (TAKE gives it a clip)
+    if (p == jam_silent) return false;
+    const auto& sk = s.sketches[t % track_count][p % pattern_count];
+    return sk.notes || sk.audio.used();
+}
+std::vector<unsigned> jam_tracks(const Snapshot& s, const JamLog& jam) { // the tracks that played in it, in order
+    std::vector<unsigned> out;
+    for (unsigned t = 0; t < track_count; ++t) {
+        bool played = false;
+        for (const auto& b : jam.bars) if (jam_heard(s, t, b.pattern[t])) { played = true; break; }
+        if (played) out.push_back(t);
+    }
+    return out;
+}
+void draw_jam_lanes(Paint& p, const Snapshot& s, const JamLog& jam, float x, float y, float w, float h, bool labels) {
+    const auto tracks = jam_tracks(s, jam);
+    if (tracks.empty() || jam.bars.empty()) return;
+    const unsigned bars = unsigned(jam.bars.size());
+    const float bw = w / float(bars), lh = std::min(h / float(tracks.size()), 13.0f);
+    for (size_t k = 0; k < tracks.size(); ++k) {
+        const unsigned t = tracks[k];
+        const float ly = y + float(k) * lh;
+        const auto c = track_colour(t);
+        p.fill(x, ly + 0.25f, w, std::max(lh - 0.5f, 0.5f), colour::quiet, 1);
+        for (unsigned b = 0; b < bars;) {
+            const uint8_t pat = jam.bars[b].pattern[t];
+            const bool muted = jam.bars[b].muted >> t & 1;
+            unsigned e = b + 1;
+            while (e < bars && jam.bars[e].pattern[t] == pat && bool(jam.bars[e].muted >> t & 1) == muted) ++e;
+            if (jam_heard(s, t, pat)) {
+                const float bx = x + float(b) * bw, bwid = float(e - b) * bw;
+                if (muted) p.ring(bx + 0.5f, ly + 0.25f, std::max(bwid - 1, 1.0f), std::max(lh - 0.5f, 0.5f), c.withAlpha(0.6f), 1.5f, 0.8f);
+                else p.fill(bx + 0.5f, ly + 0.25f, std::max(bwid - 1, 1.0f), std::max(lh - 0.5f, 0.5f), c.withAlpha(0.55f), 1.5f);
+                if (labels && !muted && lh >= 11 && bwid >= 18)
+                    p.text("P" + juce::String(pat % pattern_count + 1), bx + 3, ly, bwid - 4, lh, plain(colour::bg, type::small, Weight::Bold));
+            }
+            b = e;
+        }
+    }
+}
+void draw_jams(Paint& p, const Snapshot& s) {
+    const JamList* list = s.jams.get();
+    const unsigned count = list ? unsigned(list->jams.size()) : 0;
+    const unsigned pick = count ? std::min<unsigned>(s.ui.jam_pick, count - 1) : 0;
+    SoftKeys keys {{"BACK", s.playing || s.ui.jam_audition ? "STOP" : "PLAY", "TAKE"}, -1, colour::text, {KeyIcon::Back, KeyIcon::None, KeyIcon::None}};
+    Header h = header_of(s);
+    h.left.push_back(pill("JAMS", colour::text));
+    if (count) h.left.push_back(pill("JAM " + juce::String(list->jams[pick].number)));
+    h.right.push_back(tag_of(s, s.ui.track));
+    frame(p, s, keys, h);
+    if (!count) return;
+    const JamLog& jam = list->jams[pick];
+    const unsigned bars = std::max<unsigned>(unsigned(jam.bars.size()), 1);
+    const float x = zone::pad, w = x1 - x, bw = w / float(bars);
+    const float marks_y = zone::picture_y, ruler_y = marks_y + 12, lanes_y = ruler_y + 14, lanes_h = 60;
+    // The sequences that took over, named as Song's markers will be (only where the name fits before the next).
+    std::vector<std::pair<unsigned, juce::String>> marks;
+    for (unsigned b = 0; b < jam.bars.size(); ++b) {
+        const int n = jam.bars[b].scene;
+        if (n < 0) continue;
+        const auto& scene = s.project.scenes[unsigned(n) % pattern_count];
+        marks.emplace_back(b, scene.name[0] ? juce::String(scene.name) : "SEQ " + juce::String(n % int(pattern_count) + 1));
+    }
+    for (size_t m = 0; m < marks.size(); ++m) {
+        const float mx = x + float(marks[m].first) * bw;
+        const float room = (m + 1 < marks.size() ? x + float(marks[m + 1].first) * bw : x1) - mx - 3;
+        p.fill(mx, marks_y, 0.5f, lanes_y + lanes_h - marks_y, colour::line);
+        if (p.width(marks[m].second.toUpperCase(), caps_text(colour::mid)) <= room)
+            p.text(marks[m].second, mx + 2, marks_y, room, 11, caps_text(colour::mid));
+    }
+    unsigned every = 1; // bar numbers at least 24 px apart
+    while (float(every) * bw < 24) every *= 2;
+    for (unsigned b = 0; b < jam.bars.size(); b += every)
+        p.text(juce::String(b + 1), x + float(b) * bw + 2, ruler_y, 30, 11, plain(colour::mid, type::small, Weight::SemiBold));
+    draw_jam_lanes(p, s, jam, x, lanes_y, w, lanes_h, true);
+    // FROM-TO: the rest dimmed, a line over the part.
+    const unsigned from = std::min<unsigned>(s.ui.jam_from, bars - 1), to = std::clamp<unsigned>(s.ui.jam_to, from + 1, bars);
+    if (from > 0) p.fill(x, lanes_y, float(from) * bw, lanes_h, colour::bg.withAlpha(0.72f));
+    if (to < bars) p.fill(x + float(to) * bw, lanes_y, float(bars - to) * bw, lanes_h, colour::bg.withAlpha(0.72f));
+    p.fill(x + float(from) * bw, lanes_y - 2.5f, float(to - from) * bw, 1.5f, colour::text);
+    if (s.ui.jam_audition && s.song_playing) { // where B2's playing is
+        const unsigned bar = std::max(1u, s.project.bar_ticks());
+        const float at = float(from) + float(s.song_bar) + float(s.ticks % bar) / float(bar);
+        if (at < float(to)) p.fill(x + at * bw, lanes_y - 3, 1, lanes_h + 3, colour::text);
+    }
+    // The jams, newest first: three rows, the picked one among them.
+    constexpr unsigned rows = 3;
+    constexpr float row_h = 17, row_gap = 1;
+    const float rows_y = lanes_y + lanes_h + 4;
+    const unsigned picked_row = count - 1 - pick;
+    const unsigned first = std::min(picked_row > 0 ? picked_row - 1 : 0, count > rows ? count - rows : 0);
+    for (unsigned r = first; r < std::min(first + rows, count); ++r) {
+        const JamLog& row = list->jams[count - 1 - r];
+        const float ry = rows_y + float(r - first) * (row_h + row_gap);
+        const bool on = r == picked_row;
+        if (on) { p.fill(zone::pad - 2, ry, w + 4, row_h, colour::surf, 3); p.fill(zone::pad - 2, ry + 3, 2, row_h - 6, colour::text, 1); }
+        p.text(juce::String(row.number), zone::pad, ry, 20, row_h, plain(on ? colour::text : colour::sec, type::body, Weight::SemiBold), juce::Justification::centred);
+        juce::String length = juce::String(row.bars.size()) + (row.bars.size() == 1 ? " BAR" : " BARS");
+        const float lw = p.width(length, caps_text(colour::sec)) + 1;
+        p.text(length, x1 - lw, ry, lw, row_h, caps_text(on ? colour::text : colour::sec));
+        draw_jam_lanes(p, s, row, zone::pad + 24, ry + 3, x1 - lw - 8 - (zone::pad + 24), row_h - 6, false);
+    }
+}
+
 void draw(Paint& p, const Snapshot& s) {
+    if (s.ui.jam_sheet) { draw_jams(p, s); return; }
     const auto& song = s.project.song;
     auto c = colour_of(s);
     unsigned zoom = zoom_of(s.ui), view = view_of(s.ui), cursor = s.ui.song_cursor;
@@ -119,18 +230,21 @@ void draw(Paint& p, const Snapshot& s) {
 
     if (s.ui.song_export) {
         // Export (B1), as on the MPC: B2 an audio mixdown, B3 a new pattern; a tile under each says what it makes.
-        // Roadmap P4: the wheel picks what B2 makes: the mixdown as float, 24 or 16 bits, the stems, a MIDI file, or
-        // an MPC 3 project.
-        static const char* const b2[] {"MIXDOWN", "MIXDOWN", "MIXDOWN", "STEMS", "MIDI FILE", "MPC 3"};
-        unsigned kind = s.ui.export_kind % 6;
+        // Roadmap P4: the wheel picks what B2 makes: the mixdown as float, 24 or 16 bits, the stems, a MIDI file, an
+        // MPC 3 project or an Ableton Live Set.
+        static const char* const b2[] {"MIXDOWN", "MIXDOWN", "MIXDOWN", "STEMS", "MIDI FILE", "MPC 3", "LIVE SET"};
+        static_assert(std::size(b2) == export_kinds::count);
+        unsigned kind = s.ui.export_kind % export_kinds::count;
+        const bool project_file = kind == export_kinds::mpc3 || kind == export_kinds::live; // a project of files: its tracks
         SoftKeys keys {{"CANCEL", b2[kind], "PATTERN"}, -1, colour::text, {KeyIcon::Back, KeyIcon::None, KeyIcon::None}};
-        const Icon made = kind == 5 ? Icon::Mpc : kind == 4 ? Icon::Note : kind == 3 ? Icon::Layers : Icon::Wav;
+        const Icon made = kind == export_kinds::live ? Icon::Laptop : kind == export_kinds::mpc3 ? Icon::Mpc
+                          : kind == export_kinds::midi ? Icon::Note : kind == export_kinds::stems ? Icon::Layers : Icon::Wav;
         keys.glyphs = {Icon::None, made, Icon::Pattern};
         frame(p, s, keys, h);
         p.dim_zone(zone::picture_y, zone::picture_h, 0.86f);
         p.dim_zone(zone::knobs_y, zone::knobs_h);
         unsigned bars = song.length(), seconds = unsigned(song.tempo.seconds(bars, double(s.project.bar_ticks()) / ticks_per_quarter, std::max(300u, unsigned(s.project.tempo))) + 0.5);
-        if (!bars && kind < 4) { // nothing to export yet (a MIDI file and an MPC 3 project take the patterns)
+        if (!bars && kind < export_kinds::midi) { // nothing to export yet (a MIDI file and the projects take the patterns)
             icon(p, Icon::Pattern, zone::width / 2.0f - 14, zone::picture_y + 44, 28, colour::amber, 1.4f);
             p.text("EMPTY SONG", 0, zone::picture_y + 80, zone::width, 14, caps_text(colour::amber), juce::Justification::centred);
             return;
@@ -144,9 +258,9 @@ void draw(Paint& p, const Snapshot& s) {
         juce::String length = juce::String(seconds / 60) + ":" + juce::String(seconds % 60).paddedLeft('0', 2);
         unsigned stems = 0;
         for (const auto& tr : s.project.tracks) stems += tr.used();
-        static const char* const formats[] {"32-BIT FLOAT", "24-BIT DITHER", "16-BIT DITHER", "", "SMF 96 PPQ", "PROJECT"};
-        juce::String sub = kind == 3 ? juce::String(stems) + " STEMS" : juce::String(formats[kind]);
-        juce::String value = kind == 5 ? juce::String(stems) + (stems == 1 ? " TRACK" : " TRACKS") : bars ? length : juce::String("P");
+        static const char* const formats[] {"32-BIT FLOAT", "24-BIT DITHER", "16-BIT DITHER", "", "SMF 96 PPQ", "PROJECT", "ABLETON LIVE"};
+        juce::String sub = kind == export_kinds::stems ? juce::String(stems) + " STEMS" : juce::String(formats[kind]);
+        juce::String value = project_file ? juce::String(stems) + (stems == 1 ? " TRACK" : " TRACKS") : bars ? length : juce::String("P");
         key_tiles(p, {KeyTile {}, value_tile(made, value, sub, true), // the wheel picks
                       value_tile(Icon::Pattern, free < pattern_count ? "P" + juce::String(free + 1) : juce::String("FULL"),
                                  juce::String(bars) + (bars == 1 ? " BAR" : " BARS"))});
@@ -270,6 +384,13 @@ void draw(Paint& p, const Snapshot& s) {
     auto length_style = caps_text(colour::dim);
     float oy = bottom + (song.punch_count ? 13 : 6), lw = p.width(length, length_style) + 1, sx = zone::pad + lw + 6, ow = x1 - sx;
     p.text(length, zone::pad, oy - 5.5f, lw, 11, length_style);
+    if (s.ui.jam_count || s.ui.jam_logging) { // jam capture: the jams kept (JAMS, Shift + B1), a red dot while one is logged
+        juce::String jam = juce::String(s.ui.jam_count) + (s.ui.jam_count == 1 ? " JAM" : " JAMS");
+        float jw = p.width(jam, length_style) + 1, jx = x1 - jw;
+        p.text(jam, jx, oy - 5.5f, jw, 11, caps_text(colour::sec));
+        if (s.ui.jam_logging) { jx -= 8; p.circle(jx + 2.5f, oy + 1, 2.5f, colour::rec); }
+        ow = jx - 8 - sx;
+    }
     p.fill(sx, oy, ow, 2, colour::line, 1);
     p.fill(sx + ow * view / total, oy - 1, std::max(4.0f, ow * zoom / total), 4, colour::mid, 2);
 }
@@ -319,18 +440,20 @@ void open_clip(Context& c, int index, bool motion) {
 }
 
 void pad(Context& c, unsigned pad, uint8_t, bool down) {
-    if (!down) return;
+    if (!down || c.ui.jam_sheet) return; // JAMS: no lanes to pick
     c.select_track(pad); // pads pick the lane
     offer_new_track(c);  // an empty one: its doors, then back here
 }
 
 void wheel(Context& c, int delta) {
-    if (c.ui.song_export) { c.ui.export_kind = uint8_t(std::clamp(int(c.ui.export_kind) + delta, 0, 5)); return; } // what B2 makes (roadmap P4)
+    if (c.ui.jam_sheet) { c.pick_jam(delta); return; } // JAMS: an older (+) or newer (-) jam
+    if (c.ui.song_export) { c.ui.export_kind = uint8_t(std::clamp(int(c.ui.export_kind) + delta, 0, export_kinds::count - 1)); return; } // what B2 makes (roadmap P4)
     c.ui.song_cursor = uint16_t(std::clamp<int>(c.ui.song_cursor + delta, 0, int(song_bars) - 1));
     c.ui.song_view = uint16_t(view_of(c.ui));
 }
 
 void push(Context& c) {
+    if (c.ui.jam_sheet) { c.take_jam(); return; } // JAMS: as B3
     if (c.ui.song_export) return;
     int index = clip_index(c);
     if (index >= 0) open_clip(c, index, false);
@@ -339,8 +462,15 @@ void push(Context& c) {
 
 void soft(Context& c, int key) {
     if (c.ui.song_export) { c.song_export_soft(key); return; } // B1 Cancel, B2 Audio mixdown, B3 New pattern
+    if (c.ui.jam_sheet) { // JAMS: B1 back to Song, B2 play the jam (or stop), B3 take it
+        if (key == 0 && !c.ui.shift) c.open_jams(false);
+        if (key == 1 && !c.ui.shift) c.audition_jam();
+        if (key == 2 && !c.ui.shift) c.take_jam();
+        return;
+    }
     int index = clip_index(c);
     if (c.ui.shift) {
+        if (key == 0) { c.open_jams(true); return; } // jam capture: the jams (shell/jam_jobs.cpp)
         if (index < 0) return;
         if (key == 1) open_clip(c, index, true);
         if (key == 2) own_pattern(c, index);
@@ -357,6 +487,7 @@ void soft(Context& c, int key) {
 
 // Minus / Plus: the previous or next marker, or clip edge while there are no markers.
 void nudge(Context& c, int way) {
+    if (c.ui.jam_sheet) { c.pick_jam(way); return; } // JAMS: as the wheel
     const auto& song = c.project.song;
     int cursor = c.ui.song_cursor, best = -1;
     auto consider = [&](int bar) {
@@ -374,12 +505,14 @@ void nudge(Context& c, int way) {
 // Shift + Push: a marker at the cursor with the next ready name, or on a
 // marker the Name sheet to type its name (K1 there still steps the ready ones).
 void song_marker(Context& c) {
+    if (c.ui.jam_sheet) return; // JAMS: the song is not in view
     if (c.project.song.marker_at(c.ui.song_cursor) >= 0) c.name_marker(c.ui.song_cursor);
     else c.project.song.step_marker(c.ui.song_cursor);
 }
 
 // Chop: the clip in two at the cursor.
 void song_chop(Context& c) {
+    if (c.ui.jam_sheet) return; // JAMS: the song is not in view
     auto& song = c.project.song;
     int index = clip_index(c);
     if (index < 0 || c.ui.song_cursor <= song.clips[size_t(index)].bar) { c.notice("Chop: cursor inside a clip"); return; }
@@ -395,11 +528,13 @@ void song_chop(Context& c) {
 
 // Shift + Erase: the clip under the cursor again after itself, as DUPLICATE.
 void song_copy(Context& c) {
+    if (c.ui.jam_sheet) return; // JAMS: the song is not in view
     int index = clip_index(c);
     if (index >= 0) duplicate(c, index);
 }
 
 void song_erase(Context& c) {
+    if (c.ui.jam_sheet) { c.erase_jam(); return; } // JAMS: the picked jam goes (one undo)
     int index = clip_index(c);
     if (index < 0) return;
     c.project.song.erase(unsigned(index));
@@ -408,6 +543,7 @@ void song_erase(Context& c) {
 
 // Note Repeat: the clip again and again up to the next marker.
 void song_repeat(Context& c) {
+    if (c.ui.jam_sheet) return; // JAMS: the song is not in view
     auto& song = c.project.song;
     int index = clip_index(c);
     if (index < 0) return;
@@ -425,6 +561,7 @@ void song_repeat(Context& c) {
 
 // Loop: the brace on the clip's bars; again, or on empty time, off.
 bool song_loop(Context& c) {
+    if (c.ui.jam_sheet) return true; // JAMS: the song is not in view
     auto& song = c.project.song;
     int index = clip_index(c);
     if (index < 0 && !song.looping()) return false;

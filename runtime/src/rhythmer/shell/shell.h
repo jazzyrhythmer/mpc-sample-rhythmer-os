@@ -5,6 +5,8 @@
 #include "rhythmer/model/project.h"
 #include "rhythmer/shell/tap_hold.h"
 #include "rhythmer/shell/menu.h"
+#include "rhythmer/shell/history_list.h"
+#include "rhythmer/shell/mixer_channels.h"
 #include "rhythmer/shell/card_access.h"
 #include "rhythmer/shell/update.h"
 #include "rhythmer/shell/context.h"
@@ -20,6 +22,7 @@
 #include "rhythmer/shell/zoom_view.h"
 #include "rhythmer/shell/snapshot.h"
 #include "rhythmer/shell/tempo_display.h"
+#include "rhythmer/shell/spectrum_view.h"
 #include "rhythmer/shell/ui_state.h"
 #include "runtime/app.h"
 #include "surface/leds.h"
@@ -42,6 +45,7 @@ class Shell {
 public:
     // Starts with starting_project(); the engine host is loaded from it before audio runs.
     explicit Shell(EngineHost& host);
+    void load_engine(); // load the starting state before audio runs
 
     // MIDI thread.
     void surface(const SurfaceEvent& event, uint32_t now_ms);
@@ -55,6 +59,12 @@ public:
     void midi_panic(uint32_t now_ms); // `rhythmer-midi panic`, as MIDI Config's row
     void looper_ask(const LooperAsk& ask, uint32_t now_ms); // `rhythmer-looper` (shell/looper_jobs.h)
     float volume() const { return main_volume.load(std::memory_order_relaxed); }
+    // Any thread: Settings' USB volume, Full: USB-C's main mix at full main volume, the knob left out.
+    bool usb_full_volume() const { return usb_full.load(std::memory_order_relaxed); }
+    // Any thread: Settings' USB-C in (Direct) and its direct level as a gain.
+    bool usb_direct_on() const { return usb_direct.load(std::memory_order_relaxed); }
+    bool usb_submixes_on() const { return usb_submixes.load(std::memory_order_relaxed); } // Settings' USB out
+    float usb_direct_gain() const { return direct_gain.load(std::memory_order_relaxed); }
     unsigned screen() const { return screen_wanted.load(std::memory_order_relaxed); } // brightness %, 0: leave it
     // Any thread: Settings' sample rate and buffer (periods): the card's from start_settings(), else the default.
     unsigned audio_rate() const { return audio_wanted.load(std::memory_order_relaxed) & 0xfffff; }
@@ -81,9 +91,14 @@ public:
     // Screen thread: a copy of what the page needs, taken under a short lock.
     void snapshot(Snapshot& out, uint32_t now_ms);
 
-    // Host previews: the state to draw from, without the hardware.
-    Project& project() { return *project_; }
-    PatternBank& patterns() { return *patterns_; }
+    // Preview writers must serialize their edits with snapshots. They can keep either reference between frames.
+    // From then on this shell takes whole snapshots. The live app loads its engine without borrowing either.
+    Project& project() { preview_editable_.store(true, std::memory_order_relaxed); return *project_; }
+    PatternBank& patterns() { preview_editable_.store(true, std::memory_order_relaxed); return *patterns_; }
+    // The screen's snapshot: snapshot_light off forces every snapshot whole. snapshot_verify (monkey, tests)
+    // checks every light snapshot against a whole one, counting any drift in snapshot_stale() and repairing it.
+    static inline bool snapshot_light = true, snapshot_verify = false;
+    unsigned snapshot_stale() const { return stale_.load(std::memory_order_relaxed); }
     UiState& ui() { return ui_; }
     Context& context() { return context_; }
     // The app's sample library (service thread); the shell follows its changes.
@@ -92,7 +107,11 @@ public:
     void set_input(InputRoute* input) { input_ = input; context_.input = input; }
     void set_plugins(PluginRack* plugins) { context_.plugins = plugins; } // the app's plug-in rack (plugin/plugin_rack.h)
     void set_printer(PrintEngine* printer) { context_.printer = printer; } // the app's print engine (shell/print_engine.h)
-    void print(const Context::PrintAsk& ask) { context_.print(ask); }     // MIDI thread: `rhythmer-print`
+    void print(const Context::PrintAsk& ask) { // MIDI thread: `rhythmer-print`
+        std::lock_guard<std::mutex> guard(lock);
+        ++context_.heavy_serial;
+        context_.print(ask);
+    }
     // SD card access (parity phase 10b): the MIDI thread asks, the service thread lends.
     CardLink& card() { return card_link; }
     // Updates from the card (shell/update.h): written by the service thread, read by the MIDI thread.
@@ -131,6 +150,7 @@ private:
     uint32_t show_pads_seen = 0;
     std::array<uint32_t, TrackTaps::voices> show_voices_seen {};
     PadFacts pad_facts() const;             // what pad_context() asks of the shell (shell/pad_context.h)
+    MeterReads meter_reads; // the meter lights beside the screen as last read (shell/meter_lights.h)
     std::atomic<uint32_t> meter_bits {0}; // their LEDs (left, right << 8) and the input shown (<< 16), for `status`
     bool record_track_keys() const; // Record: a synth track source plays the pads (Minus / Plus: its octave)
     bool kit_pads() const; // the pads play the kit here: Erase + pad deletes, Shift + Erase copies
@@ -144,36 +164,59 @@ private:
     UiState ui_;
     Context context_;
     std::mutex lock; // MIDI thread while it changes state; screen thread while it copies
+    std::atomic<bool> preview_editable_ {false};
+    std::atomic<unsigned> stale_ {0};  // snapshot_stale()
     // Presses the Loading sheet took (ui.loading): their releases are taken too, even after it has gone.
     std::array<bool, 256> eaten_buttons {};
     std::array<bool, 128> eaten_pads {};
     TempoDisplay tempo_display; // screen-thread number presentation; no MIDI/audio feedback
     CompTrail comp_trail; // the screen thread's, in snapshot(): the Compressor page's picture over time
+    CompTrail strip_trail; // and the mixer's COMP block's: the selected track's strip
+    SpectrumView spectrum_view; // the mixer's EQ picture (draw thread), of the strip the engine taps
+    int spectrum_tapped = -1;
     CompBar comp_bar;     // and over one bar of the song (round 2, compressor B)
     HeadTrail trail; // the screen thread's, in snapshot(): heads kept while their wakes fade
     std::atomic<float> main_volume {0.7f};
     std::atomic<unsigned> screen_wanted {0}; // 0 until the settings say; then 20..100 %
     std::atomic<uint32_t> audio_wanted {44100u | 3u << 20}; // rate | periods << 20
     std::atomic<uint32_t> mirror_wanted {3u << 1}; // on | size << 1 | 60 fps << 4: off, 1280 x 960, 30 fps
+    std::atomic<bool> usb_full {true}, usb_direct {true}, usb_submixes {false};
+    std::atomic<float> direct_gain {1.0f};
     void want_audio_format() {
         audio_wanted.store(ui_.settings.audio_rate | uint32_t(ui_.settings.audio_periods) << 20, std::memory_order_relaxed);
         mirror_wanted.store(uint32_t(ui_.settings.mirror) | uint32_t(ui_.settings.mirror_size & 7) << 1 | uint32_t(ui_.settings.mirror_fps == 60) << 4,
                             std::memory_order_relaxed);
+        usb_full.store(ui_.settings.usb_full, std::memory_order_relaxed);
+        usb_direct.store(ui_.settings.usb_direct, std::memory_order_relaxed);
+        usb_submixes.store(ui_.settings.usb_submixes, std::memory_order_relaxed);
+        direct_gain.store(ui_.settings.direct_gain(), std::memory_order_relaxed);
     }
     std::atomic<unsigned> power {0};
     unsigned power_seen = 0;
     std::atomic<bool> leave {false}, power_off {false};
     SampleLibrary* library_ = nullptr;
     unsigned library_seen = ~0u;
+    std::array<int16_t, track_count> keyed_roots_sent = [] { std::array<int16_t, track_count> a {}; a.fill(60); return a; }(); // as the sampler starts
     uint32_t holds_at = 0;      // when the long samples' held chunks were last looked at (lights.cpp)
     FrameView zoomed_view() const; // Trim's or Chop's view zoomed in, in 44.1 kHz frames; none when not zoomed
     StreamHolds holds_sent;     // what the library was last asked to hold
     unsigned format_seen = 0; // the engine's format_changes() the project was last sent again for
     EncoderHold enc; // the encoder's push: a tap is the page's, a hold opens the MENU (shell/menu.h)
     TapHold tap; // Tap Tempo held: the tempo on the encoder, or the Tempo page (shell/tap_hold.h)
+    HistoryHold history_hold; // Shift + Minus: a tap undoes, a hold opens the undo list (shell/history_list.h)
+    MixerViewHold mixer_view; // the mixer's Minus / Plus: a tap nudges, a hold shows the card or the strips (shell/mixer_channels.h)
     // Background save (shell/autosave.h): when a control or a note last came in, and the last save that found no card.
     uint32_t last_input_ = 0, autosave_try_ = 0;
     bool autosave_failed_ = false;
+    // The usage log (shell/usage_log.h, on in Settings): the state as a button went down, held until its release
+    // to tell whether the press (or anything while it was down) changed something; one for the wheel's turns.
+    struct UsageMark { UiState ui; uint32_t pushes = 0, sent = 0; bool dirty = false; };
+    std::array<std::unique_ptr<UsageMark>, size_t(SurfaceButton::Count)> usage_marks;
+    std::unique_ptr<UsageMark> wheel_mark;
+    uint32_t usage_pushes_ = 0;
+    void usage_mark(UsageMark& mark) const;
+    bool usage_changed(const UsageMark& mark) const;
+    void usage_tick(uint32_t now); // MIDI thread, from lights(): the page, the lesson, edits kept, the lines to the card
     void autosave_tick(uint32_t now); // MIDI thread, from lights()
     ProjectStore* store_ = nullptr;
     InputRoute* input_ = nullptr;
@@ -210,12 +253,15 @@ private:
     std::atomic<uint32_t> fader_bits {0}, fader_value {0};                 // phase 8: the fader
     std::atomic<int> fader_at {-1};                                        // and where it sits
     std::atomic<uint32_t> chop_bits {0}, pad_start_now {0}, pad_end_now {0}, files_bits {0};
+    std::atomic<int> pad_root_now {root_none}; // the last pad's sample's note (SampleRef::root), for `status`
     mutable std::mutex text_lock;
     std::string pad_name_text, folder_text; // under text_lock
     // Phase 10: undo depth, Seq held / the sampler map / a gesture open, the last step's name (under text_lock).
     std::atomic<uint32_t> phase10_bits {0};
+    std::atomic<uint32_t> jam_bits {0}; // jam capture: the run's bars, logging (<< 10), jams kept (<< 11), JAMS open (<< 15), the song's markers (<< 16), tempo points (<< 21)
     std::string undo_text;
     std::string phase10_summary() const;
+    std::string jam_summary() const;
     std::string input_summary() const;  // phase 6: Input Config, takes, Recall, renders
     std::string fx_summary() const;     // phase 7: Knob FX, the master compressor
     std::string padfx_summary() const;  // phase 7b: Pad FX, Flex Beat

@@ -34,6 +34,7 @@ public:
     void audio_opened(const AudioFormat& format) override;              // audio thread
     ScreenMirrorMode screen_mirror() const override { return shell.screen_mirror(); } // any thread: Settings' Screen Mirror
     const UsbStems* stems() const override { return &stem_block; }    // audio thread
+    const AudioBlock* usb_mix() const override { return usb_full ? &usb_block : nullptr; } // audio thread: Settings' USB volume
     void surface(const SurfaceEvent& event) override;                   // MIDI thread
     void lights(SurfaceLights& lights, Clock::time_point now) override; // MIDI thread
     void midi(const MidiPortInfo& port, const MidiPacket& packet) override; // MIDI thread: external MIDI in (parity phase 9)
@@ -43,7 +44,7 @@ public:
     void service(Hardware& hardware) override;                          // service thread
     void jack(const JackEvent& event, Hardware& hardware) override;     // service thread
     std::string command(const std::string& action, const std::string& argument, Hardware&) override;
-    std::string command_names() const override { return "rhythmer-press, rhythmer-midi, rhythmer-update, rhythmer-print, rhythmer-freeze, rhythmer-unfreeze, rhythmer-autosample"; }
+    std::string command_names() const override { return "rhythmer-press, rhythmer-midi, rhythmer-update, rhythmer-print, rhythmer-freeze, rhythmer-unfreeze, rhythmer-autosample, rhythmer-usb-input"; }
     std::string status() const override;
     bool claims_wheel_push() const override { return true; }
     bool finished() const override { return shell.leaving() || power_off_failed.load(); }
@@ -54,6 +55,8 @@ private:
     Clock::time_point started = Clock::now();
     rhythmer::EngineHost host;
     UsbStems stem_block {}; // audio thread: each track's mono stem for USB-C
+    AudioBlock usb_block {}; // audio thread: the main mix for USB-C at full main volume
+    bool usb_full = false;   // audio thread: usb_block written this block
     rhythmer::Shell shell;
     rhythmer::SampleLibrary library; // service thread: files on the card
     rhythmer::ProjectStore store;    // service thread: projects on the card
@@ -97,6 +100,7 @@ private:
     // same words (freeze plan F2b; alone or `status`: what is frozen now) and `rhythmer-unfreeze TRACK`: parsed on
     // arrival, asked on the MIDI thread.
     MidiQueue<4, rhythmer::Context::PrintAsk> remote_print;
+    MidiQueue<2, std::array<char, 40>> remote_stems; // `rhythmer-stems NAME`: STEMS from Song's export, as B2 there
     std::atomic<bool> panic_asked {false}; // `rhythmer-midi panic`
     bool power_known = false;
     bool power_off_asked = false;             // service thread: systemd asked to turn the MPC off

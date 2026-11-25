@@ -1,0 +1,14 @@
+# Build outputs
+build/
+dist/
+
+# macOS
+.DS_Store
+*.dSYM/
+
+# IDE
+.vscode/
+.idea/
+*.tar.gz
+
+.worktrees

@@ -1,0 +1,69 @@
+# Exit and troubleshooting
+
+Previous: [Settings](settings.md) · [Contents](../GUIDE.md) · Next: [Shortcut tables](shortcut-tables.md)
+
+## Exit
+
+Press **POWER** briefly. The Exit screen opens.
+
+![Exit](../images/screens/exitcard.png)
+
+- **B1** (**STAY**), or **POWER** again: go back to Rhythmer.
+- **B2** (**POWER OFF**): save the project and switch the MPC off.
+- **B3** (**MPC APP**): save the project and run the stock app until the
+  next time the MPC is switched on.
+
+Or turn the encoder to pick one and push it. **STAY** is picked when the
+screen opens. The header shows **UNSAVED** while the project has changes,
+and **SAVED** once they are kept. With **Autosave** off in Settings,
+**POWER OFF** and **MPC APP** don't save: they say **DISCARDS** while
+the project has changes.
+
+The next time Rhythmer starts, it opens the project set to open at start,
+or else the last project you opened or saved.
+
+## Troubleshooting
+
+**Rhythmer does not start.** Check that the MPC has firmware 1.3.0.12,
+1.4.0.7 or 1.4.0.8, and that the `autorun` folder and `autorun.sh` are at the top
+level of the card, with their files unchanged. On firmware 1.4, Developer
+Mode must be on (stock app Settings, **DEV ENHANCEMENTS (BETA)**), and the
+stock app asks before it runs the card's autorun script: press Yes.
+
+**The stock app came back.** If Rhythmer crashes or fails to start, the
+stock app starts instead. Switch the MPC off and on to start Rhythmer again.
+On firmware 1.4 the stock app asks to run the card's autorun script each
+time it starts: press Yes to start Rhythmer again.
+A crash writes a report to `Rhythmer/Crashes` on the card, one file a crash,
+with the last buttons pressed and the pages they were on. Add it when you
+report the problem.
+
+**A page or key in this guide is not there.** Rhythmer is on Basic. Press
+**SHIFT** + **Pad 8** and turn **K1** (**FEATURES**) to **Full** (see
+[Basic and Full](settings.md#basic-and-full)).
+
+**Crackles or dropouts.** Open Settings, **ABOUT**. It shows the processor
+load per core, the audio dropouts and card read problems, each in amber
+with a count once it happens. Use a larger
+audio buffer in **AUDIO**, or remove effects or plug-ins from the busiest
+track (the Menu's header shows the CPU and the selected track's load).
+
+![About with dropouts and card read problems](../images/screens/abouttrouble.png)
+
+**A plug-in does not load.** The picker shows the reason, for example
+"Windows and Mac builds only". Rhythmer runs only Linux ARM builds. A
+plug-in that loads but cannot open shows **WON'T OPEN** or **MISSING
+LIBRARY** on Stage's **EDIT** page. If a 32-bit plug-in crashes, its page says
+**STOPPED**: pick it again to reopen it.
+
+**An instrument or a long sample loads slowly.** An instrument's FLAC,
+Ogg, AIFF and SoundFont samples, and long MP3, FLAC, Ogg and AIFF samples,
+are decoded into `Rhythmer/Cache` the first time. Later loads are fast. WAV
+samples need no decoding.
+
+When you report a problem, say what you pressed, what you saw, and the
+version (press **B3** on the **ABOUT** page).
+
+---
+
+Previous: [Settings](settings.md) · [Contents](../GUIDE.md) · Next: [Shortcut tables](shortcut-tables.md)

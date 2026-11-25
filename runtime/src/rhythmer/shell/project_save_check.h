@@ -45,6 +45,13 @@ struct ProjectSavingChecks {
         for(unsigned i=0;i<12;++i){c.project.tempo=1270+i;c.dirty=true;SAVE_CHECK(c.autosave(),"repeated checkpoint accepted");pump();}
         SAVE_CHECK(recovery_count()==1&&load(recovery)->tempo==1281,"updates replace one recovery manifest");
         auto writes=store.saves();c.autosave();pump();SAVE_CHECK(store.saves()==writes,"unchanged state does not rewrite recovery");
+        // New upstream JAMS must survive Rhythmer's queued recovery and manual save paths.
+        JamLog run;run.bars.resize(2);run.bars[0].tempo=1281;run.bars[1].tempo=1290;
+        run.bars[0].pattern[0]=3;run.bars[1].pattern[0]=7;
+        SAVE_CHECK(c.jams.keep(std::move(run)),"two-bar JAM fixture kept");c.dirty=true;
+        SAVE_CHECK(c.autosave(),"JAMS-only change queues a new checkpoint");pump();
+        JamList recovered_jams;
+        SAVE_CHECK(read_jams(read(recovery),recovered_jams)&&recovered_jams==c.jams,"JAMS survives recovery serialization");
         // First SAVE uses the real Project-page click and folder picker.
         c.open(PageId::Project);c.ui.project_list=false;c.ui.project_pick=0;if(capture)capture(*shell,"01-project");tap(SurfaceButton::TopLeft);
         SAVE_CHECK(c.ui.project_save_picker&&c.ui.page==PageId::Project,"first SAVE opens folder browser");
@@ -58,6 +65,8 @@ struct ProjectSavingChecks {
         SAVE_CHECK(c.project_path==manual&&!c.dirty&&fs::exists(manual),"SAVE honors selected SD folder and commits only on success");
         SAVE_CHECK(first_id==c.project.recovery_id,"first manual SAVE keeps session identity");
         if(capture){c.ui.project_list=false;capture(*shell,"04-saved");c.ui.project_list=true;c.ui.project_cursor=1;capture(*shell,"04-project-list");}
+        JamList manual_jams;
+        SAVE_CHECK(read_jams(read(manual),manual_jams)&&manual_jams==c.jams,"JAMS survives manual folder SAVE");
         const auto original=read(manual);
         c.project.tempo=1450;c.dirty=true;c.autosave();pump();
         SAVE_CHECK(read(manual)==original&&load(recovery)->tempo==1450,"autosave preserves manual file byte for byte");

@@ -5,6 +5,7 @@
 // rates, the Shift + K cards while Shift is held, and the Exit sheet after a
 // short press of Power; and over all of them the place bar.
 #include "rhythmer/pages/pages.h"
+#include "rhythmer/shell/screen_view.h"
 #include "rhythmer/shell/levels_keys.h"
 #include "rhythmer/shell/lesson.h"
 #include "rhythmer/shell/sample_mode.h"
@@ -83,6 +84,7 @@ void draw_overlays(Paint& p, const Snapshot& s) {
     }
     draw_notice(p, s); // over the fader's line: a copy in hand or what an undo did comes first
     if (!sheet && s.ui.menu && s.ui.ask == UiState::Ask::None) draw_menu(p, s); // the MENU over the page (shell/menu.h)
+    else if (!sheet && s.ui.history && s.ui.ask == UiState::Ask::None) draw_history(p, s); // the undo list (shell/history_list.h)
     else if (!sheet && !tracks && !seq && !sound && s.ui.ask == UiState::Ask::None && !s.ui.shift && s.now - s.ui.key_list_at < key_list_ms) draw_key_list(p, s);
     if (s.ui.name.open()) draw_name_sheet(p, s);
     if (s.ui.exit_open) draw_exit_sheet(p, s);
@@ -130,6 +132,8 @@ void draw_shift_layer(Paint& p, const Snapshot& s) {
     // The Shift jobs are printed on the MPC: the page stays as it is, and
     // the knob strip shows the cards Shift turns (Shift + K), or dims when
     // there are none.
+    if (plugin_screen_shown(s) || plugin_screen_shown(s, 1) || (fx_chain_page(s.ui.page) && plugin_strip_shown(s, s.ui.plugin_panel.entry)))
+        return; // a plug-in's own screen or strip, or a skin's strip down to the bottom: nothing over it
     auto cards = cards_of(s);
     bool any = false;
     for (auto& card : cards) { if (card.shift == 2) any = true; else card.state = KnobCard::State::Idle; }
@@ -213,7 +217,7 @@ void draw_notice(Paint& p, const Snapshot& s) {
     } else if (s.ui.mute_mode() && !tracks_on_pads(s.ui)) { // mute mode: what the pads mute here
         const auto& t = s.track();
         bool kit = mute_on_kit(s.ui, (t.engine == EngineKind::Sampler && !t.levels && pad_job(s.ui) == play_pad) || rhythmer_kit_mute(s.project,s.ui,pad_job(s.ui)==play_pad));
-        text = kit ? "Mute: pads" : "Mute: tracks";
+        text = kit ? "Mute: pads" : mute_on_others(s.ui) ? "Mute: submixes, buses" : "Mute: tracks";
         copying = true; // in the track's colour, as a mode
     } else {
         return;
@@ -271,19 +275,23 @@ void draw_exit_sheet(Paint& p, const Snapshot& s) {
 
     // The header says what happens to the project: saved (a check), or no card to save it on.
     bool card = !s.projects.root.empty();
+    bool lost = card && !s.ui.settings.autosave && s.dirty; // Autosave Off (issue 18): leaving never saves
     Header h = header_of(s);
     h.playing = false; h.recording = false;
     if (!card) h.left.push_back(pill(Icon::Card, "NO CARD", colour::amber));
+    else if (lost) h.left.push_back(pill(Icon::Rec, "UNSAVED", colour::amber));
     else if (s.ui.exit_off && !s.ui.exit_saved) h.left.push_back(pill(Icon::Rec, "SAVING", colour::amber));
     else if (!s.ui.exit_off && s.dirty) h.left.push_back(pill(Icon::Rec, "UNSAVED", colour::amber)); // as Project says it: OFF and MPC APP save it first
     else h.left.push_back(pill(Icon::Check, s.dirty ? "RECOVERY SAVED" : s.project_path.empty() ? "NO CHANGES" : "SAVED", colour::play));
     h.right.push_back(label(s.project.name));
     header(p, h);
     if (s.ui.exit_off) { // POWER OFF chosen: the save on its way, then the MPC goes dark
-        key_tiles(p, {KeyTile {}, word_tile(Icon::Power, s.ui.exit_saved || !card ? "TURNING OFF" : "SAVING", true), KeyTile {}});
+        key_tiles(p, {KeyTile {}, word_tile(Icon::Power, s.ui.exit_saved || !card || !s.ui.settings.autosave ? "TURNING OFF" : "SAVING", true), KeyTile {}});
         return;
     }
     unsigned pick = s.ui.exit_pick % 3; // the wheel's tile, raised; Push presses its key
+    if (lost) { key_tiles(p, {word_tile(Icon::Back, "STAY", pick == 0), word_sub_tile(Icon::Power, "POWER OFF", "DISCARDS", pick == 1),
+                              word_sub_tile(Icon::Mpc, "MPC APP", "DISCARDS", pick == 2)}); return; }
     key_tiles(p, {word_tile(Icon::Back, "STAY", pick == 0), word_tile(Icon::Power, "POWER OFF", pick == 1), word_tile(Icon::Mpc, "MPC APP", pick == 2)});
 }
 

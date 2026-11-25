@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // The Sequence sheet (Seq held a moment, shell/seq_layer.h): over any page,
-// the sequences of the bank in view (shell/sequences.h; on the Patterns page, with Erase held and while patterns
-// freeze: the selected track's patterns), Pad Bank steps the bank, the
+// the selected track's patterns of the bank in view (with Shift held: the sequences, shell/sequences.h), Pad Bank
+// steps the bank, the
 // header names it, laid out as the pads are (pad 1 bottom left), the one playing filled, the one waiting for the bar
 // blinking, those with notes tinted; beside them NOW and NEXT, then a track on a pattern of its own (OWN) or the chain (round 2,
 // seq-sheet2 B): what plays now, over what comes next, over what follows
@@ -60,14 +60,22 @@ void draw_seq_sheet(Paint& p, const Snapshot& s) {
         unsigned n = s.ui.pad_pattern(k), row = 3 - k / 4, column = k % 4;
         float x = gx + column * (cell + gap), y = gy + row * (cell + gap);
         bool notes = s.sketches[t][n].notes, playing = n == live, waiting = int(n) == queued;
-        if (every) { // a sequence: white, brighter the more tracks hold notes there; its chain place as a pattern's
+        if (every) { // a sequence (model/scene_links.h): the one in hand white, the rest brighter the more tracks play
+                     // notes there, plain when it keeps nothing; its chain place as a pattern's
             unsigned with = 0;
-            for (unsigned o = 0; o < track_count; ++o) with += s.project.tracks[o].used() && s.sketches[o][n].notes;
-            juce::Colour ink = with ? colour::sec : colour::dim;
-            if (playing) { p.fill(x, y, cell, cell, colour::text, 5); ink = colour::bg; }
-            else if (waiting) { p.fill(x, y, cell, cell, colour::text.withAlpha(blink ? 0.4f : 0.12f), 5); p.ring(x, y, cell, cell, colour::text, 5, 1.5f); ink = colour::text; }
-            else if (with) p.fill(x, y, cell, cell, colour::text.withAlpha(0.06f + 0.02f * float(std::min(with, 8u))), 5);
+            bool kept = false;
+            for (unsigned o = 0; o < track_count; ++o) {
+                const auto& other = s.project.tracks[o];
+                const int target = other.used() ? scene_target(other, n) : scene_plays_on;
+                kept |= target != scene_plays_on;
+                if (target >= 0) with += s.sketches[o][unsigned(target)].notes;
+            }
+            playing = n == s.project.scene % pattern_count;
+            juce::Colour ink = kept ? colour::sec : colour::dim;
+            if (playing && kept) { p.fill(x, y, cell, cell, colour::text, 5); ink = colour::bg; }
+            else if (kept) p.fill(x, y, cell, cell, colour::text.withAlpha(0.10f + 0.02f * float(std::min(with, 8u))), 5);
             else p.fill(x, y, cell, cell, colour::quiet, 5);
+            if (playing && !kept) p.ring(x, y, cell, cell, colour::text, 5, 1.5f); // in hand, keeping nothing
             p.text(juce::String(n + 1), x, y, cell, cell, plain(ink, type::body, Weight::SemiBold), juce::Justification::centred);
             if (s.project.scenes[n].tempo) p.fill(x + cell - 7, y + 5, 3, 3, playing ? colour::bg : colour::amber, 1.5f); // a tempo of its own
             if (track.chained())
@@ -116,9 +124,12 @@ void draw_seq_sheet(Paint& p, const Snapshot& s) {
     }
     // Beside them, the chain: what plays now, what comes next, what follows; the tempo under them.
     const juce::String word = every ? "SEQ " : "P"; // a sequence's number, or a pattern's
-    block(p, x, y, w, "NOW", word + juce::String(live + 1), bars_text(s, s.sketches[t][live].length), every ? colour::text : c);
+    const unsigned hand = s.project.scene % pattern_count;
+    if (every) block(p, x, y, w, "NOW", word + juce::String(hand + 1), juce::String(), colour::text);
+    else if (track.off) block(p, x, y, w, "NOW", "OFF", "SEQ " + juce::String(hand + 1), c); // off in the sequence in hand
+    else block(p, x, y, w, "NOW", word + juce::String(live + 1), bars_text(s, s.sketches[t][live].length), c);
     auto dash = juce::String::fromUTF8("\xe2\x80\x94");
-    int next = queued, after = -1;
+    int next = every ? -1 : queued, after = -1;
     if (track.chained()) { next = track.chain_ahead(1); after = track.chain_ahead(2); }
     auto row = [&](float ry, const char* caps, int pattern, const juce::String& sub) {
         p.text(caps, x, ry, 44, 18, caps_text(colour::mid));

@@ -4,11 +4,13 @@
 of the MPC Sample's microSD card, plus a README and the licences. No SSH,
 network or computer is needed on the MPC side.
 
-At boot the stock app runs autorun/autorun.sh (signed in autorun.check, the
-firmware's salted digest). It hands autorun/sample-base/ to the SD boot
-scripts (install/sd-boot.sh, sd-worker.sh): they check the stock firmware
-and the files, copy the demos into RAM, run their self-test and start them
-in place of the stock app, which comes back on exit or any failure.
+At boot the stock app runs autorun/autorun.sh: firmware 1.3.0.12 by itself
+(signed in autorun.check, the firmware's salted digest), firmware 1.4 once
+asked, through autorun.sh at the card's top (install/top-autorun.sh; it
+needs Developer Mode). It hands autorun/sample-base/ to the SD boot scripts
+(install/sd-boot.sh, sd-worker.sh): they check the stock firmware and the
+files, copy the demos into RAM, run their self-test and start them in place
+of the stock app, which comes back on exit or any failure.
 
 Run ./release.sh VERSION, which builds, strips and then calls this.
 """
@@ -85,6 +87,7 @@ def collect(binary, version, commit):
     files["autorun/autorun.sh"] = script.encode()
     files["autorun/autorun.json"] = manifest.encode()
     files["autorun/autorun.check"] = base.autorun_check(manifest, script).encode()
+    files["autorun.sh"] = base.TOP_AUTORUN.read_bytes()
     files["README.txt"] = readme(version, commit)
     files["licenses/LICENSE-AGPL-3.0.txt"] = (ROOT / "LICENSE").read_bytes()
     files["licenses/THIRD_PARTY.md"] = (ROOT / "THIRD_PARTY.md").read_bytes()

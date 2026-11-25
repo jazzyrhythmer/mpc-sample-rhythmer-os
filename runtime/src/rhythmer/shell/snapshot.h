@@ -4,7 +4,9 @@
 #include "rhythmer/engine/looper.h"
 #include "rhythmer/model/project.h"
 #include "rhythmer/shell/comp_trail.h"
+#include "rhythmer/shell/spectrum_view.h"
 #include "rhythmer/shell/context.h"
+#include "rhythmer/shell/history_list.h"
 #include "rhythmer/shell/playheads.h"
 #include "rhythmer/shell/print_engine.h"
 #include "rhythmer/shell/project_store.h"
@@ -32,7 +34,14 @@ struct PatternSketch {
 };
 
 struct Snapshot {
+    // Shell::snapshot()'s own, kept from frame to frame: what the kits and pattern sketches below were last copied
+    // at, so a frame in which neither can have changed leaves them as they are. A new Snapshot is always filled
+    // whole. `whole`: this frame was.
+    uint64_t heavy_serial = 0;
+    uint32_t sent_seen = 0, whole_at = 0;
+    bool whole = true;
     std::shared_ptr<const TakePeaks> audio_peaks; // freeze plan F3: the takes' overviews (Context::audio_peaks)
+    std::shared_ptr<const JamList> jams;         // jam capture: the jams kept (Context::jam_view), for JAMS
     UiState ui;
     Project project;
     Pattern pattern;                         // the selected track's pattern playing
@@ -61,6 +70,12 @@ struct Snapshot {
     std::array<GrainPlace, GrainTrail::size> grains {}; // a cloud's grains heard now, and the marks of those just gone
     float compression = 0;                   // dB the master compressor takes off now (parity phase 7)
     std::array<CompColumn, comp_columns> comp_trail {}; // what it heard and took off, a column every comp_column_ms, oldest first
+    // The mixer (docs/MIXER_PLAN.md): each strip's meter by strip number (each side's peak after its level, pan and
+    // mute; its compressor's gain reduction, dB), and the selected track's strip's level and reduction over time.
+    struct StripShown { float left = 0, right = 0, reduction = 0; };
+    std::array<StripShown, strip_channels> strips {};
+    std::array<CompColumn, comp_columns> strip_trail {};
+    std::array<float, spectrum_bands> spectrum {}; // the mixer's EQ picture: the channel in hand's bands, dB (shell/spectrum_view.h)
     std::array<CompBarColumn, comp_bar_columns> comp_bar {}, comp_ghost {}; // compressor B: this bar, and the one before
     int comp_bar_at = -1;                                                   // the column the transport is at; -1 stopped
     unsigned flex_playing = 0;               // Flex Beat's pad playing, 0 Empty (parity phase 7b)
@@ -86,12 +101,16 @@ struct Snapshot {
     uint32_t recall_frames = 0;
     bool monitoring = false, speaker_quieted = false;
     uint8_t usb_state = 0;             // UsbStreamState
+    std::vector<HistoryRow> history;   // the undo list's rows, top down, while it is open (shell/history_list.h)
+    uint8_t history_redos = 0;         // how many of them are undone: the row of the state in hand
     std::vector<SampleFile> files;     // Samples: the folder listed
-    std::string sample_root;           // the card's Samples folder; empty: no card
+    std::string sample_root;           // the card's Samples folder, Rhythmer/Samples; empty: no card
     std::string files_folder;          // the folder listed (empty: the internal drive's categories)
     bool files_top = true;             // nothing above it (B1 has no job)
     PluginRack::View plugins;          // the PLUG-INS picker: the folder listed
     PluginPrograms presets;            // PRESETS: the plug-in's programs
+    std::shared_ptr<const PluginSkin> plugin_skin; // the plug-in in the panel's skin (plugin/plugin_skin.h), null none
+    ScreenPicturePtr plugin_picture; // its own screen's newest picture (plugin/plugin_screen.h), null none
     ProjectStore::View projects;       // Project page and Exit
     std::string project_path, project_folder;
     bool saving = false;

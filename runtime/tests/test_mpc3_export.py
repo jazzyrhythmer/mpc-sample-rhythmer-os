@@ -45,6 +45,28 @@ class Mpc3Export(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result.stdout, out
 
+    def test_submix_routes(self):
+        # The mixer: a track sent to a submix plays into MPC 3's (destination 1, the submix's index; 2 is Out 1/2), that
+        # submix gets its level, pan and mute on its bus track and in the mixer's list; a drum pad goes into its program
+        # (destination 0), as MPC 3's own kits' pads.
+        with tempfile.TemporaryDirectory() as folder:
+            _, out = self.export(folder, "O:0=3", "U:2=64,-20,1")
+            _, data = read(out / "Beat.xpj")
+            drums = [t for t in data["tracks"] if t["program"]["type"] == 0]
+            self.assertTrue(drums)
+            route = drums[0]["program"]["mixable"]["audioRoute"]
+            self.assertEqual((route["destination"], route["audioRouteSubIndex"]), (1, 2))
+            pads = drums[0]["program"]["drum"]["instruments"]
+            self.assertTrue(all(p["mixable"]["audioRoute"]["destination"] == 0 for p in pads))
+            bus = next(t for t in data["tracks"] if t["name"] == "Submix 3")
+            self.assertTrue(bus["mute"] and bus["program"]["mixable"]["mute"])
+            self.assertLess(bus["program"]["mixable"]["pan"], 0.5)
+            listed = data["mixer"]["submixes"][2]["mixable"]
+            self.assertEqual(listed["volume"], bus["program"]["mixable"]["volume"])
+            self.assertLess(listed["volume"], next(t for t in data["tracks"] if t["name"] == "Submix 1")["program"]["mixable"]["volume"])
+            other = next(t for t in data["tracks"] if t["name"] == "Submix 1")
+            self.assertEqual(other["program"]["mixable"]["audioRoute"]["destination"], 2)
+
     def test_wav_slices(self):
         # A file's chop goes into the copied WAV as the MPC keeps slices ("atem" and "slic"), its key kept, and reads
         # back as the same slices.
@@ -294,6 +316,39 @@ class Mpc3Export(unittest.TestCase):
             elsewhere = self.run_tool("--mpc-track", data / "Pluck.xpm", Path(folder) / "Other.xty")
             self.assertIn("error=", elsewhere.stdout)
             self.assertFalse((Path(folder) / "Other.xty").exists())
+
+    def test_track_file_eight_layers(self):
+        # The auto sampler's program with eight velocity layers (written whole for this, an .xpm for MPC 2 keeps four):
+        # MPC 3's track file holds all eight in the keygroup, each with its velocities; read back, it is the program.
+        tops = [24, 40, 56, 64, 80, 96, 112, 127]
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder) / "Keys_[TrackData]"
+            data.mkdir()
+            layers = ""
+            for n, top in enumerate(tops):
+                name = f"Keys-C4-V{top}"
+                (data / f"{name}.wav").write_bytes(wav(44100))
+                layers += (f"<Layer number=\"{n + 1}\"><Active>True</Active><Volume>1.0</Volume><Pan>0.5</Pan>"
+                           f"<VelStart>{tops[n - 1] + 1 if n else 0}</VelStart><VelEnd>{top}</VelEnd><RootNote>61</RootNote>"
+                           f"<SampleName>{name}</SampleName><SliceStart>0</SliceStart><SliceEnd>40000</SliceEnd></Layer>")
+            (data / "Keys.all.xpm").write_text(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?><MPCVObject><Program type=\"Keygroup\"><ProgramName>Keys</ProgramName>"
+                "<Mono>False</Mono><MonoRetrigger>False</MonoRetrigger><KeygroupNumKeygroups>1</KeygroupNumKeygroups><Instruments><Instrument number=\"1\"><LowNote>0</LowNote>"
+                "<HighNote>127</HighNote><TriggerMode>2</TriggerMode><VelocitySensitivity>0.5</VelocitySensitivity><Layers>"
+                + layers + "</Layers></Instrument></Instruments></Program></MPCVObject>")
+            track_file = Path(folder) / "Keys.xty"
+            result = self.run_tool("--mpc-track", data / "Keys.all.xpm", track_file)
+            self.assertEqual(result.stdout.strip(), "written", result.stdout + result.stderr)
+            _, track = read(track_file)
+            first = track["program"]["drum"]["instruments"][0]
+            written = [layer for layer in first["layersv"] if layer.get("active") and layer.get("sampleFile")]
+            self.assertEqual([layer["sampleName"] for layer in written], [f"Keys-C4-V{top}" for top in tops])
+            self.assertEqual([layer["velocityEnd"] for layer in written], tops)
+            self.assertEqual([layer["velocityStart"] for layer in written], [0] + [top + 1 for top in tops[:-1]])
+            from_xpm = self.run_tool("--instrument-read", data / "Keys.all.xpm").stdout
+            from_track = self.run_tool("--instrument-read", track_file).stdout
+            same = [re.sub(r"release=[0-9.]+", "", text).replace("Keys_[TrackData]/", "").lower() for text in (from_xpm, from_track)]
+            self.assertEqual(same[0], same[1])
 
     def test_keygroup_split(self):
         # A split's mono side (a program that is not Mono, the side's keygroups Mono in one mute group) and each side's

@@ -31,7 +31,7 @@ void draw_ask_sheet(Paint& p, const Snapshot& s) {
     const auto& t = s.track();
     unsigned track = s.ui.track % track_count, playing = t.pattern % pattern_count;
     ConfirmSheet sheet;
-    juce::String verb = "ERASE", cancel = "CANCEL", middle; // middle: B2, a second way to do it (New project's EMPTY)
+    juce::String verb = "ERASE", cancel = "CANCEL", middle; // middle: B2, a second way to do it (New project's KIT)
     Icon verb_glyph = Icon::Trash;
     juce::Colour accent = colour::rec; // the verb's: red for a loss
     const juce::String undo_line = "Undo brings them back.";
@@ -130,7 +130,7 @@ void draw_ask_sheet(Paint& p, const Snapshot& s) {
         sheet.name = s.project.name;
         sheet.lines = {"The current project will close.", "NEW loads a kit. EMPTY starts blank."};
         verb = "NEW"; verb_glyph = Icon::Check;
-        middle = "EMPTY"; // B3: with the MPC's factory kit on track 1; B2: an empty kit
+        middle = "KIT"; // B3: no tracks, the track types on track 1; B2: the MPC's factory kit on track 1
         break;
     }
     case Ask::TakeCardBack:
@@ -177,29 +177,28 @@ void draw_ask_sheet(Paint& p, const Snapshot& s) {
         verb = "DELETE";
         break;
     }
-    case Ask::CaptureScene: { // Scenes' CAPTURE onto a column with notes (shell/scene_jobs.cpp)
-        unsigned column = unsigned(s.ui.ask_target) % pattern_count, replaced = 0;
-        for (unsigned t = 0; t < track_count; ++t) {
-            if (!s.project.tracks[t].used() || s.playing_patterns[t] % pattern_count == column) continue;
-            if (s.sketches[t][column].notes || s.sketches[t][column].moves) ++replaced;
-        }
-        sheet.icon = Icon::Pattern;
-        sheet.title = "Replace " + count_of(replaced, "pattern", "patterns") + " in SEQ " + juce::String(column + 1) + "?";
-        sheet.lines = {"They get the patterns playing now.", undo_line};
-        sheet.chip = "SEQ " + juce::String(column + 1);
-        sheet.chip_colour = colour_of(s);
-        sheet.undo = true;
-        verb = "REPLACE"; verb_glyph = Icon::Swap;
-        break;
-    }
     case Ask::ReplacePlugin: { // a picked plug-in over one in use (shell/plugin_jobs.cpp)
         sheet.icon = Icon::Plug;
         sheet.title = "Replace " + juce::String::fromUTF8(s.ui.ask_name.data()) + "?";
+        sheet.lines = {"Its sound and settings go.", undo_line};
+        sheet.undo = true;
         bool instrument = s.ui.plugin_target == UiState::PluginTarget::Instrument;
         sheet.lines = instrument ? std::array<juce::String,2>{"Patterns stay.", "Undo restores the previous sound."} : std::array<juce::String,2>{"Its sound and settings go.", "Undo can't bring them back."};
         sheet.chip = instrument ? "TRACK " + juce::String(track + 1) : juce::String("EFFECT");
         sheet.chip_colour = colour_of(s);
         verb = "REPLACE"; verb_glyph = Icon::Swap;
+        break;
+    }
+    case Ask::Rechop: { // issue 24 (3b): Chop renumbers slices that slice hits play (Context::chop_change)
+        unsigned hits = unsigned(std::max(0, int(s.ui.ask_target)));
+        sheet.icon = Icon::Scissors;
+        const juce::String name = s.ui.chop_sample < sample_slots ? juce::String::fromUTF8(s.project.samples[s.ui.chop_sample].name) : juce::String();
+        sheet.title = "Rechop " + name + "?";
+        sheet.lines = {count_of(hits, "slice hit changes", "slice hits change") + " sound.", hits == 1 ? juce::String("Undo brings it back.") : undo_line};
+        sheet.chip = "TRACK " + juce::String(track + 1);
+        sheet.chip_colour = colour_of(s);
+        sheet.undo = true;
+        verb = "RECHOP"; verb_glyph = Icon::Scissors;
         break;
     }
     case Ask::Unfreeze: { // freeze plan F2c: an edit of a frozen track

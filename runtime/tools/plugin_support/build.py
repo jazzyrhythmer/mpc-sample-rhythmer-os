@@ -38,6 +38,7 @@ def bridge(out):
         raise SystemExit("no arm-linux-gnueabihf-g++: build in Rhythmer's image (tools/plugin_support/Dockerfile)")
     (out / "armhf").mkdir(parents=True, exist_ok=True)
     subprocess.run([compiler, "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror", f"-I{ROOT / 'src'}",
+                    f"-I{ROOT / 'sdk/rhythmer-screen'}", "-pthread",
                     "-o", str(out / "vst2_bridge32"), str(ROOT / "src/rhythmer/plugin/bridge32/vst2_bridge32.cpp"), "-ldl"],
                    check=True)
     for name in RUNTIME:

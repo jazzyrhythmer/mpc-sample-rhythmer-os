@@ -6,8 +6,8 @@ Rhythmer keeps the MPC Sample's printed controls. If you know the stock app,
 most of what you do still works. This chapter lists what is the same, what
 is different, and how to change your habits.
 
-A new install starts on **Basic**: the stock app's pages plus tracks,
-plug-ins, the mixer and Song. **Full** shows every page (see
+Rhythmer starts on **Full**, which shows every page. **Basic** shows the
+stock app's pages plus tracks, plug-ins, the mixer and Song (see
 [Basic and Full](settings.md#basic-and-full)).
 
 ## What stays the same
@@ -46,23 +46,24 @@ plug-ins, the mixer and Song. **Full** shows every page (see
 - Autosave updates a separate recovery copy. **SHIFT + Pad 16 → B1 SAVE** keeps the project; the first save chooses its folder/name. On the Project page, **SHIFT + B1 SAVE AS** makes another project, and **SHIFT + B3 RECOVERY** opens recovery copies.
 - Knob FX, Pad FX, Flex Beat and the master compressor work as on the stock
   app, with the stock effects in the stock order.
+- The level meters light at the stock app's levels.
 
 ## What is different
 
 | On the stock app | In Rhythmer |
 | --- | --- |
-| A project is one kit. | A project has 16 tracks. Track 1 starts as a kit, with one of the MPC's factory kits on it. The other tracks can be kits, keygroups, plug-in instruments, MIDI tracks or audio tracks. |
+| A project is one kit. | A project has 16 tracks. Each track can be a kit, a keygroup, a plug-in instrument, a MIDI track or an audio track. A new project has none: it opens on track 1 with the track types. To start with the MPC's factory kit on track 1, press **B3** (**NEW**) on the Project page, then **B2** (**KIT**). |
 | **PAD BANK** held + Pads 1–8 jumps to bank A–H. | **PAD BANK** held + pad selects track 1–16. To jump banks, hold **PAD BANK** and turn the encoder or press **−** / **+**. |
 | **SAMPLE** opens Sample mode. | **SAMPLE** opens **Stage**, the selected track's sound pages, from any page. On a kit, Stage has the Sample mode pages. On Stage, **SAMPLE** goes back to **B1**'s first page. Hold **SAMPLE** to see the track's pads: **Pads** on a kit, **Keys** on an instrument. |
-| In Sequence mode the pads select sequences. | The same: **SEQ** opens **Sequences**, and the pads launch a sequence on every track. You can also hold **SEQ** and press a pad on any page. **B2** and **B3** open **Roll** and **Motion**. |
-| A sequence plays every pad of the kit. | A sequence is one number on every track. Each track has its own 128 patterns, in banks A–H. To put one track on a different pattern, press **B1** again for **Patterns**. |
-| Song mode is a list of sequences. | **Song** is a timeline with a lane per track. You place pattern clips on it, add markers and tempo changes. |
+| In Sequence mode the pads select sequences. | The same: **SEQ** opens **Sequences**, and the pads launch a sequence on every track. **B2** and **B3** open **Roll** and **Motion**. Hold **SEQ** on any page for the selected track's patterns; **SHIFT** + pad then launches a sequence. |
+| A sequence plays every pad of the kit. | A sequence keeps one pattern for each track. Each track has its own 128 patterns, in banks A–H. To put one track on a different pattern in the sequence, press **B1** again for **Patterns**, or hold **SEQ** and press a pad. |
+| Song mode is a list of sequences. | **Song** is a timeline with a lane per track. You place pattern clips on it, add markers and tempo changes. A stock project's song opens as clips, one marker a step. |
 | Projects are on the internal drive. | Rhythmer's projects are on the card in `Rhythmer/Projects`. On the project list, **B2** (**INTERNAL**) shows the internal drive. Stock projects open as copies (see [MPC Sample projects](projects-and-files.md#mpc-sample-projects)). |
 | **SHIFT** + **KNOB FX** (FX Select) picks pad effects. | **SHIFT** + **KNOB FX** opens the effect chains: Track, Bus, Master and, on a kit, Pad. |
 | **SHIFT** + **SEQ RECORD** brings the last loop into the sequence. | **SHIFT** + **SEQ RECORD** (Recall) puts the last phrase you played on every track into each track's next empty pattern. |
-| **SAMPLE RECORD** records a sample. | On a kit, the same. On a plug-in or MIDI track, **SAMPLE RECORD** opens the **PRINT** sheet, which freezes the track to audio (see [Freeze a track](tracks.md#freeze-a-track)). On an audio track it opens the track's **INPUT**. |
-| No looper. | Press **LOOP** and **16 LEVELS** together to open the **Looper**. |
-| No mixer. | Press **PAD FX** and **KNOB FX** together to open the mixer: **Tracks**, **Sends** and the effect chains. |
+| **SAMPLE RECORD** records a sample. | On a kit, the same. On a keygroup, plug-in or MIDI track, **SAMPLE RECORD** opens the **PRINT** sheet, which freezes the track to audio (see [Freeze a track](tracks.md#freeze-a-track)). On an audio track it opens the track's **INPUT**. |
+| No looper. | Press **LOOP** and **16 LEVELS** together to open the **Looper** (in Full). |
+| No mixer. | Press **PAD FX** and **KNOB FX** together to open the [mixer](mixer-and-effects.md#the-mixer): every track, submix, bus, the input and the master, with sends, effects, EQ and a compressor. |
 | Power off with **POWER**. | A short press of **POWER** opens the Exit screen: stay, power off, or go back to the stock app. |
 
 ![Stage on a kit: AMP ENV, as in Sample mode](../images/screens/stagekitampenv.png)
@@ -74,13 +75,15 @@ These are the actions stock users look for first.
 1. **Pick a track before you play.** The pads play the selected track. Hold
    **PAD BANK** and press a pad to choose one. The header shows the selected
    track on the right.
-2. **Use the kit as before.** Track 1 is a kit. **SAMPLE SELECT**, **SAMPLE**,
-   **CHOP**, **SAMPLE RECORD** and **16 LEVELS** work on the kit as on the
-   stock app.
-3. **Hold SEQ to change sequences.** A tap of **SEQ** opens **Sequences** (or
-   Roll or Motion, if one of them was open last on the track). Holding
-   **SEQ** turns the pads into the sequences, from any page. Every track
-   changes at the next bar, or at once when stopped.
+2. **Make a kit and use it as before.** In a new project, track 1 shows the
+   track types: push the encoder on **Drum**, then on a source. **SAMPLE
+   SELECT**, **SAMPLE**, **CHOP**, **SAMPLE RECORD** and **16 LEVELS** work on
+   the kit as on the stock app.
+3. **Tap SEQ for sequences, hold it for patterns.** A tap of **SEQ** opens
+   **Sequences** (or Patterns, Roll or Motion, if one of them was open last on
+   the track). Holding **SEQ** turns the pads into the selected track's
+   patterns, from any page; **SHIFT** + pad launches a sequence on every
+   track. A change comes at the next bar, or at once when stopped.
 
    ![SEQ held: the sheet](../images/screens/seqsheet.png)
 

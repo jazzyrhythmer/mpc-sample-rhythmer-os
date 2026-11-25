@@ -44,6 +44,9 @@ int fader_card(const Snapshot& s);
 void midi_route(ui::Paint& p, const Snapshot& s, float x, float y, float w, float h);
 ui::SoftKeys sound_keys(const Snapshot& s); // Stage's B1-B3 for the track (pages/stage_page.cpp): Pads and Keys, Sample held
 juce::Colour colour_of(const Snapshot& s);              // the selected track's colour
+// A mixer channel's knob shade by strip number (shell/mixer_channels.h): a track's, a submix's own, a bus's (the
+// Looper's); the input ice and the master white on all three.
+juce::Colour channel_shade(unsigned strip, unsigned knob);
 juce::Colour load_colour(float load);                   // a load's: green, amber from 60 %, red from 85 % (of a block, a core)
 // A kit pad's name: its sample's, or for pads sharing one sample (a chop),
 // the last word of it and which slice: "Break 5" in full, "Brk 5" on a pad.
@@ -56,6 +59,8 @@ void instrument_picture(ui::Paint& p, const Snapshot& s, StageKind kind);
 // The input source as Record and Input Config name it: "Rear", or a track's "Track 3 Prophet" (with_tap: "Track 3 Post").
 juce::String input_name(const Snapshot& s, bool with_tap);
 juce::String engine_word(EngineKind kind); // "Prophet", "FM6"
+// The mic or the rear inputs while a loop or MIDI track has the ADC on the other one: silent, shown IN USE.
+bool source_in_use(const Snapshot& s, InputSource source);
 // Record: a take of Rhythmer's own sound runs, so the pads play the instrument (Context::record_keys()).
 bool record_keys_shown(const Snapshot& s);
 
@@ -91,11 +96,27 @@ void effect_drawing(ui::Paint& p, const EffectSlot& slot, float x, float y, floa
 
 // Draws soft keys, header and knob strip; the page draws the picture.
 void frame(ui::Paint& p, const Snapshot& s, const ui::SoftKeys& keys, const ui::Header& header);
+void frame_keys(ui::Paint& p, const Snapshot& s, const ui::SoftKeys& keys); // B1-B3 alone (Pad Bank's and 16 Levels' held keys as frame() draws them)
 // A plug-in over the cards (pages/plugin_view.cpp): its name and format, then loading, why it failed, or its row of
 // parameters out of how many; Edit for a PLUGIN track, the chain pages for a plug-in effect.
 void draw_plugin_view(ui::Paint& p, const Snapshot& s, unsigned entry, float top);
+// A plug-in's page under B1-B3 (docs/PLUGIN_PAGES_PLAN.md, picks 3 c and 4 a): the page line, then its rows of three
+// as arcs over the pots, an envelope or filter on top where the page holds one; no header, no cards. Shown while the
+// plug-in is open and the pots are its own (not Knob FX's): plugin_page_shown().
+bool plugin_page_shown(const Snapshot& s, unsigned entry);
+void draw_plugin_page(ui::Paint& p, const Snapshot& s, unsigned entry, const ui::SoftKeys& keys);
+// A plug-in's own picture (plugin/plugin_screen.h) at x, y: its page, or an effect's strip.
+// plugin_screen_shown(): the page in view is a plug-in's own screen (Edit on its track, Stage's EDIT), which Rhythmer
+// draws nothing over but its MENU, notices and questions.
+bool plugin_screen_shown(const Snapshot& s, uint8_t area = 0); // area 1: an effect's strip under its chain's slots
+void draw_screen_picture(ui::Paint& p, const ScreenPicture& picture, float x, float y);
+// An effect plug-in in a chain (pages/fx_drawing.cpp): its page line and its sound as it plays, from x, y over w x h.
+void draw_plugin_sound(ui::Paint& p, const Snapshot& s, float x, float y, float w, float h);
+// An effect's skin strip (docs/PLUGIN_PAGES.md, Skins) under the chain row, at x, y (320 x 92), where it has one and
+// Settings > SCREEN > Plug-in screens is on.
+bool plugin_strip_shown(const Snapshot& s, unsigned entry);
+void draw_plugin_strip(ui::Paint& p, const Snapshot& s, float x, float y);
 juce::String plugin_name(const Snapshot& s, unsigned entry); // its own name once open, else its file's
-void plugin_rows(Context& c, int delta); // a PLUGIN track's rows of parameters: the wheel on Edit and Stage EDIT
 
 // Defaults: pads play the selected track, Minus / Plus move its octave.
 void play_pad(Context& c, unsigned pad, uint8_t velocity, bool down);

@@ -116,6 +116,8 @@ struct PrintProgress {
     bool is_failed(unsigned p) const { p %= pattern_count; return (failed[p / 64] >> (p % 64)) & 1; }
 };
 
+struct NoteSource; // where the auto sampler's notes are played and heard (print_engine.cpp)
+
 class PrintEngine {
 public:
     explicit PrintEngine(SampleLibrary* library);
@@ -154,8 +156,12 @@ public:
 private:
     void run();
     PrintResult print_one(const PrintJob& job, unsigned pattern, const std::array<const SampleData*, sample_slots>& samples);
-    AutoSampleResult sample_track(const PrintJob& job, const std::array<const SampleData*, sample_slots>& samples);
-    AutoProbeResult probe_track(const PrintJob& job, const std::array<const SampleData*, sample_slots>& samples);
+    // `heard_by`: the check's own notes, opened already (an instrument outside, checked in the same job); none: opened here.
+    AutoSampleResult sample_track(const PrintJob& job, const std::array<const SampleData*, sample_slots>& samples,
+                                  std::unique_ptr<NoteSource> heard_by = nullptr);
+    // `keep`: where its notes are left once it is through, for sample_track() to go on with.
+    AutoProbeResult probe_track(const PrintJob& job, const std::array<const SampleData*, sample_slots>& samples,
+                                std::unique_ptr<NoteSource>* keep = nullptr);
     FreezeReady freeze_pack(const PrintJob& job, const PrintTable& known);
     void empty_trash(); // print thread: the packs discarded, freed
     SampleLibrary* library;

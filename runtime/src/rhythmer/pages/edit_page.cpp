@@ -335,11 +335,8 @@ void push(Context& c) {
     }
 }
 
-// Minus / Plus: the octave, or on a PLUGIN track its rows as the wheel.
-void nudge(Context& c, int way) {
-    if (c.track().engine == EngineKind::Plugin) plugin_rows(c, way);
-    else octave(c, way);
-}
+// Minus / Plus: the octave.
+void nudge(Context& c, int way) { octave(c, way); }
 } // namespace
 
 const PageSpec edit_page {draw, break_pad, wheel, push, soft, nudge};

@@ -63,8 +63,8 @@ bool ask_button(Context& c, SurfaceButton button) {
         if (ui.lesson) { c.notice("Finish lesson to use Sends"); return true; }
         if (!same_page) return true; // an old question cannot act on another page
         c.apply(Binding {Binding::Kind::Features, 0, 0, 1, int(ui.settings.full_features)}, 1);
-        ui.sends_pads = false;
-        c.open(PageId::Sends);
+        ui.mixer_block = ui.mixer_b1 = ui.mixer_row = 0;
+        c.open(PageId::Mixer);
         return true;
     }
     if (button == B::TopLeft) { // Cancel (LATER on the update question: asked again when the card is returned)
@@ -73,12 +73,13 @@ bool ask_button(Context& c, SurfaceButton button) {
         if (ui.ask == UiState::Ask::RecoverProject && c.store) c.store->dismiss_recovery();
         if (ui.ask == UiState::Ask::InstallUpdate && c.updates) c.updates->decline();
         if(ui.ask==UiState::Ask::BreakLength){ui.break_pending=-1;ui.break_job_track=-1;}
+        if (ui.ask == UiState::Ask::Rechop) c.chop_pending = nullptr; // the slices stay as they are
         ui.ask = UiState::Ask::None;
         return true;
     }
-    if (button == B::TopMiddle && ui.ask == UiState::Ask::NewProject) { // EMPTY: a new project without the factory kit
+    if (button == B::TopMiddle && ui.ask == UiState::Ask::NewProject) { // KIT: a new project with the factory kit on track 1
         ui.ask = UiState::Ask::None;
-        c.start_new_project(false);
+        c.start_new_project(true);
         return true;
     }
     if (button != B::TopRight) return true;                                  // the rest wait
@@ -97,7 +98,6 @@ bool ask_button(Context& c, SurfaceButton button) {
     } else if (kind == UiState::Ask::ErasePunches) c.erase_punches(); // Erase + KEEP on Pad FX (pad-fx C)
     else if (kind == UiState::Ask::ClearTrack) clear_track(c, unsigned(ui.ask_target)); // Pad Bank held + Erase + pad
     else if (kind == UiState::Ask::DeleteFile) delete_asked(c);    // shell/delete_jobs.h: Erase in a browser
-    else if (kind == UiState::Ask::CaptureScene) c.capture_scene(unsigned(ui.ask_target), true); // Scenes' CAPTURE
     else if (kind == UiState::Ask::ReplacePlugin && c.plugins) { // the picker's row asked about, picked again
         auto view = c.plugins->view();
         if (unsigned(ui.ask_target) < view.files.size()) { ui.plugin_replace = true; c.choose_plugin(view.files[size_t(ui.ask_target)]); }
@@ -105,6 +105,12 @@ bool ask_button(Context& c, SurfaceButton button) {
     }
     else if (kind == UiState::Ask::InstallUpdate) begin_update(c); // shell/update.h
     else if (kind == UiState::Ask::BreakLength) c.gen_break_begin();
+    else if (kind == UiState::Ask::Rechop) { // issue 24 (3b): the change asked about, and no more asking this visit
+        ui.chop_rechop_ok = true;
+        auto change = std::move(c.chop_pending);
+        c.chop_pending = nullptr;
+        if (change) change();
+    }
     else if (kind == UiState::Ask::Unfreeze) { // freeze plan F2c: live again at once; its prints stay for the next freeze
         unsigned t = unsigned(ui.ask_target) % track_count;
         bool thaw = c.deep(t) && !((c.deep_hold >> t) & 1); // freeze plan F2d: its plug-ins load first
@@ -136,7 +142,7 @@ std::string ask_title(const Project& project, const UiState& ui) {
     case UiState::Ask::Unfreeze: return "Unfreeze track " + std::to_string(ui.ask_target % track_count + 1) + "?";
     case UiState::Ask::DeleteFile: return std::string("Delete ") + ui.ask_name.data() + "?";
     case UiState::Ask::ReplacePlugin: return std::string("Replace ") + ui.ask_name.data() + "?";
-    case UiState::Ask::CaptureScene: return "Capture into SEQ " + std::to_string(ui.ask_target % pattern_count + 1) + "?";
+    case UiState::Ask::Rechop: return std::string("Rechop ") + (ui.chop_sample < sample_slots ? project.samples[ui.chop_sample].name : "") + "?";
     default: return {};
     }
 }
@@ -168,11 +174,13 @@ std::string ask_detail(const Project& project, const UiState& ui, const Pattern&
     if (ui.ask == UiState::Ask::BreakLength) return "Patterns keep their length. B is cleared; Undo restores both.";
     if (ui.ask == UiState::Ask::Unfreeze) return "Its sound plays live again; prints stay until what made them changes.";
     if (ui.ask == UiState::Ask::DeleteFile) return "It goes from the card. Undo can't bring it back.";
-    if (ui.ask == UiState::Ask::ReplacePlugin) return ui.plugin_target == UiState::PluginTarget::Instrument ? "Patterns stay. Undo restores the previous sound." : "Its sound and settings go. Undo can't bring them back.";
+    if (ui.ask == UiState::Ask::ReplacePlugin) return ui.plugin_target == UiState::PluginTarget::Instrument ? "Patterns stay. Undo restores the previous sound." : "Its sound and settings go. Undo brings them back.";
     if (ui.ask == UiState::Ask::ProjectChanges) return "SAVE keeps changes. DISCARD keeps the last manual save.";
     if (ui.ask == UiState::Ask::OverwriteProject) return "Replace the existing named file only after confirmation.";
     if (ui.ask == UiState::Ask::RecoverProject) return "A separate checkpoint is available; your manual file stays.";
     if (ui.ask == UiState::Ask::NewProject) return "The open project closes after SAVE or DISCARD.";
+    if (ui.ask == UiState::Ask::Rechop)
+        return std::to_string(ui.ask_target) + (ui.ask_target == 1 ? " slice hit changes" : " slice hits change") + " sound. Undo brings them back.";
     return {};
 }
 

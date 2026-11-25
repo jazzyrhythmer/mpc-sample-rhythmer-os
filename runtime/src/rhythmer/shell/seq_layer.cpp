@@ -24,24 +24,27 @@ unsigned playing_pattern(Context& c) {
 }
 
 // That pattern of the selected track, at the next bar while playing. An empty one starts as long as
-// the one playing, so a new idea fits what is there.
+// the one playing, so a new idea fits what is there (Free while that one is: shell/free_length.h).
 void launch_one(Context& c, unsigned pattern) {
     unsigned t = c.ui.track % track_count, now = playing_pattern(c);
     pattern %= pattern_count;
     auto& target = c.patterns.at[t][pattern];
-    uint32_t length = c.patterns.at[t][now].length;
-    if (target.empty() && pattern != now && length && target.length != length) {
+    const auto& playing = c.patterns.at[t][now];
+    uint32_t length = playing.length;
+    bool free_now = playing.is_free();
+    if (target.empty() && pattern != now && length && (target.length != length || target.free != free_now)) {
         target.length = length;
+        target.free = free_now;
         c.sync_pattern(t, pattern);
     }
-    c.launch(t, pattern);
+    const bool first = c.pick(t, pattern); // kept in the sequence in hand (model/scene_links.h)
     c.ui.pattern_bank = uint8_t(pattern / pattern_pads); // its bank in view (−/+ cross from one to the next)
     bool waits = c.host.playing() && pattern != now;
-    c.notice(name_of(pattern) + (target.empty() ? " new" : "") + (waits ? ", next bar" : ""));
+    c.notice(name_of(pattern) + (target.empty() ? " new" : "") + (waits ? ", next bar" : "") +
+             (first ? " · SEQ " + std::to_string(c.project.scene % pattern_count + 1) + " kept" : ""));
 }
 
-// Shift + pad: that column on every track holding notes there, and on the selected one: the scene (roadmap P5), its
-// tempo with it.
+// Shift + pad: that sequence on every used track (shell/sequences.h), its tempo with it.
 void launch_column(Context& c, unsigned pattern) { c.launch_scene(pattern); }
 
 // Seq Record held with Seq: the next empty pattern, armed (recording at once while playing).
@@ -95,15 +98,12 @@ bool seq_pad(Context& c, unsigned pad, bool down) {
     if (!down) { // a pattern pad let go: a tap launches it, unless it was copied from (the bank may have moved meanwhile)
         if (ui.pattern_held < 0 || unsigned(ui.pattern_held) % pattern_pads != pad % pattern_pads) return false;
         pad = unsigned(ui.pattern_held);
-        bool every = sequences_on_pads(ui); // off the Patterns page Seq held launches the sequence: every track
-        if (!ui.pattern_copied && ui.seq_held && ui.chain_building) { // seq-sheet2 B: after the first, a chain
-            if (every) c.chain_sequence(pad, false); else c.chain_add(pad);
+        bool sequences = c.chain_lead == int(ui.track % track_count); // the chain in this hold is of sequences (Shift + pads)
+        if (!ui.pattern_copied && ui.seq_held && ui.chain_building && !sequences) { // seq-sheet2 B: after the first, a chain
+            c.chain_add(pad);
         } else if (!ui.pattern_copied) {
-            if (every) c.launch_scene(pad); else launch_one(c, pad);
-            if (ui.seq_held) {
-                if (every) c.chain_sequence(pad, true); else c.chain_start(pad);
-                ui.chain_building = true;
-            }
+            launch_one(c, pad);
+            if (ui.seq_held) { c.chain_start(pad); ui.chain_building = true; }
         }
         ui.pattern_held = -1;
         return true;
@@ -119,7 +119,13 @@ bool seq_pad(Context& c, unsigned pad, bool down) {
         else ask(c, UiState::Ask::ClearPattern, int(pad));
         return true;
     }
-    if (ui.shift) { ui.shift_used = true; launch_column(c, pad); return true; }
+    if (ui.shift) { // the sequence: every track; with Seq held, Shift + pads after the first chain the sequences
+        ui.shift_used = true;
+        if (ui.seq_held && ui.chain_building && c.chain_lead == int(t)) { c.chain_sequence(pad, false); return true; }
+        launch_column(c, pad);
+        if (ui.seq_held) { c.chain_sequence(pad, true); ui.chain_building = true; }
+        return true;
+    }
     if (ui.pattern_held >= 0 && ui.pattern_held != int(pad)) { // hold one, tap another: copy
         unsigned from = unsigned(ui.pattern_held);
         c.edit_pattern(t, pad, "Copy pattern", [&] { c.copy_pattern(t, from, pad); });
@@ -148,10 +154,23 @@ bool seq_button(Context& c, SurfaceButton button) {
         if (ui.shift) return false; // undo / redo, as printed
         int from = int(c.track().pattern % pattern_count), way = button == B::Plus ? 1 : -1;
         int to = std::clamp(from + way, 0, int(pattern_count) - 1);
-        bool every = sequences_on_pads(ui);
-        if (to == from) { c.notice(std::string(every ? "SEQ " : "P") + (way > 0 ? std::to_string(pattern_count) + " is the last" : "1 is the first")); return true; }
-        if (every) { c.launch_scene(unsigned(to)); ui.pattern_bank = uint8_t(unsigned(to) / pattern_pads); } // its bank in view
-        else launch_one(c, unsigned(to));
+        if (to == from) { c.notice(way > 0 ? "P" + std::to_string(pattern_count) + " is the last" : std::string("P1 is the first")); return true; }
+        launch_one(c, unsigned(to));
+        return true;
+    }
+    case B::Stop: { // sequence links: the selected track off in the sequence in hand; again, back on its pattern
+        if (ui.shift) return false; // as printed
+        unsigned t = ui.track % track_count;
+        if (!c.track().used()) { c.notice("Track " + std::to_string(t + 1) + " is empty"); return true; }
+        if (c.host.song_playing()) { c.notice("Not while the song plays"); return true; }
+        const std::string seq = "SEQ " + std::to_string(c.project.scene % pattern_count + 1);
+        if (c.track().off) {
+            c.pick(t, c.track().pattern % pattern_count);
+            c.notice("T" + std::to_string(t + 1) + " on in " + seq);
+        } else {
+            c.pick_off(t);
+            c.notice("T" + std::to_string(t + 1) + " off in " + seq + (c.host.playing() ? ", next bar" : ""));
+        }
         return true;
     }
     case B::SeqRecord:

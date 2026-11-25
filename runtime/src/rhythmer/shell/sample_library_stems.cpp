@@ -6,6 +6,7 @@
 // to the MIDI thread, which loads the files as it loads any other.
 #include "rhythmer/shell/sample_library.h"
 #include "rhythmer/shell/sample_memory.h"
+#include "rhythmer/shell/stems_find.h"
 #include "drivers/platform.h"
 #include <algorithm>
 #include <cstdlib>
@@ -31,14 +32,11 @@ std::string file_name(const char* name) {
 
 std::string SampleLibrary::stems_program(const std::string& card_top) {
     if (const char* named = std::getenv("RHYTHMER_STEMS_ENGINE"); named && *named) return named;
-    if (card_top.empty()) return {};
-    // A release's folder (tools/make_release.py), else the folder `device.py install-sd` starts the app from.
+    // The card folder the app was copied from, which sd-worker.sh writes beside its copy in RAM, else the fixed
+    // folders (shell/stems_find.h).
     std::error_code error;
-    for (const char* folder : {"/autorun/rhythmer", "/sample-base"}) {
-        const std::string path = card_top + folder + "/stems/rhythmer-stems";
-        if (fs::is_regular_file(path, error)) return path;
-    }
-    return card_top + "/autorun/rhythmer/stems/rhythmer-stems";
+    const auto exe = fs::read_symlink("/proc/self/exe", error);
+    return find_stems_program(card_top, error ? std::string() : release_sd_folder(exe.parent_path()));
 }
 
 bool SampleLibrary::take_stems(StemsResult& out) {
@@ -84,10 +82,15 @@ void SampleLibrary::stems_service(const Platform& platform) {
     const char* model = std::getenv("RHYTHMER_STEMS_MODEL"); // beside the program
     job.model = model && *model ? std::string(model) : (fs::path(job.engine).parent_path() / "spleeter-4stems.f16").string();
     if (!fs::is_regular_file(job.model, error)) { refuse("no model on the card"); return; }
+    job.best = request.best;
+    const uint64_t needed = stems_memory(frames, job.best) + stems_headroom;
     uint64_t free = platform.memory().available_kb * 1024; // 0: a host, which does not say
     // Short of it: what the pager keeps of files it has read is given back first (engine/stream_pager.h).
-    if (free && free < stems_memory(frames) + stems_headroom && stream_cache_give_back()) free = memory_free();
-    if (free && free < stems_memory(frames) + stems_headroom) { refuse("not enough memory"); return; }
+    if (free && free < needed && stream_cache_give_back()) free = memory_free();
+    if (free && free < needed) { // with BEST off it would fit: so says the notice
+        refuse(job.best && free >= stems_memory(frames, false) + stems_headroom ? "not enough memory, BEST off fits" : "not enough memory");
+        return;
+    }
     // The four files share one free name: "LOOP DRUMS", "LOOP BASS", "LOOP MUSIC", "LOOP VOCALS", else "LOOP 2 DRUMS" ...
     const std::string folder = root + "/Stems", base = file_name(request.name);
     fs::create_directories(folder, error);

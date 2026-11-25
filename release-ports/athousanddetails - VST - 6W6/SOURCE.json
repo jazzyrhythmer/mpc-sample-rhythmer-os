@@ -1,0 +1,10 @@
+{
+  "repo": "sd88me/mpc-vst-TR-MPC",
+  "tag": "6w6-vst-v1.3.1",
+  "asset": "6W6-1.3.1-mpc-aarch64.zip",
+  "url": "https://github.com/sd88me/mpc-vst-TR-MPC/releases/download/6w6-vst-v1.3.1/6W6-1.3.1-mpc-aarch64.zip",
+  "sha256": "6cc2626cc5f54fee5b2d3035da0add9a7fa62da53c3086d59133f3db97bcffe7",
+  "github_digest": "sha256:6cc2626cc5f54fee5b2d3035da0add9a7fa62da53c3086d59133f3db97bcffe7",
+  "bytes": 8011963,
+  "source_commit": "e511f73f48f6205df804ccc5389374c97257c7df"
+}

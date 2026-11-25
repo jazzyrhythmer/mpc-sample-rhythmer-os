@@ -1,4 +1,5 @@
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -6,6 +7,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from device import Device, service_unit, stale_releases
+
+ROOT = Path(__file__).resolve().parents[1]
 
 ACTIVE_RELEASE = "/run/sample-base-release-abcdef012345"
 RUN_NAMES = ["sample-base", "sample-base-release-abcdef012345", "sample-base-release-2e98caf725ed",
@@ -111,7 +114,7 @@ class SwitchingTests(unittest.TestCase):
         self.assertNotIn("LD_PRELOAD", unit)
 
     def test_stages_app_and_recovery_script_and_runs_self_test(self):
-        device = Device()
+        device = Device(port=2222)
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / "build").mkdir()
@@ -402,6 +405,142 @@ class SdAutorunTests(unittest.TestCase):
         self.assertEqual(chain_autorun(chained), chained)
         with self.assertRaises(RuntimeError):
             chain_autorun("echo no shebang\n")
+
+    def test_start_line_reads_the_folder_beside_the_autorun(self):
+        from device import chain_autorun, SD_COMMAND, SD_FOLDER, SD_MARKER
+        self.assertEqual(SD_FOLDER, "autorun/sample-base")
+        self.assertIn('"$(dirname -- "$0")/sample-base/sd-boot.sh"', SD_COMMAND)
+        self.assertNotIn("..", SD_COMMAND)
+        # An install from before (its folder at the card's top): its line replaced by the new one.
+        old = ("#!/bin/sh\n" + SD_MARKER + "\ntrap '/bin/sh \"$(dirname -- \"$0\")/../sample-base/sd-boot.sh\" "
+               "\"$(dirname -- \"$0\")/../sample-base\" > /run/sample-base-sd.log 2>&1 || true' EXIT\necho ssh\n")
+        chained = chain_autorun(old)
+        self.assertNotIn("../sample-base", chained)
+        self.assertEqual(chained, chain_autorun("#!/bin/sh\necho ssh\n"))
+
+    def local_device(self):
+        def run(command, *, input=None, check=True):
+            result = subprocess.run(["sh", "-c", command], input=input, text=True, capture_output=True)
+            if check and result.returncode:
+                raise RuntimeError(result.stderr.strip())
+            return result
+        device = Device()
+        device.run = run
+        return device
+
+    def test_old_folder_at_the_card_top_moves_into_autorun(self):
+        with tempfile.TemporaryDirectory() as temp:
+            card = Path(temp)
+            (card / "autorun").mkdir()
+            (card / "sample-base/autorun-backup").mkdir(parents=True)
+            (card / "sample-base/autorun-backup/autorun.sh").write_text("original\n")
+            (card / "sample-base/sd-boot.sh").write_text("x")
+            (card / "sample-base/dev-previous").mkdir()
+            with patch("builtins.print"):
+                self.local_device().move_old_sd_folder(str(card / "sample-base"), str(card / "autorun/sample-base"))
+            self.assertFalse((card / "sample-base").exists())
+            self.assertEqual((card / "autorun/sample-base/autorun-backup/autorun.sh").read_text(), "original\n")
+            self.assertTrue((card / "autorun/sample-base/dev-previous").is_dir())
+
+    def test_old_folder_beside_a_new_one_gives_its_backup_and_goes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            card = Path(temp)
+            (card / "autorun/sample-base").mkdir(parents=True)
+            (card / "sample-base/autorun-backup").mkdir(parents=True)
+            (card / "sample-base/autorun-backup/autorun.sh").write_text("original\n")
+            for name in ("sample-base", "sd-boot.sh", "SHA256SUMS", "app"):
+                (card / "sample-base" / name).write_text("x")
+            device = self.local_device()
+            with patch("builtins.print"):
+                device.move_old_sd_folder(str(card / "sample-base"), str(card / "autorun/sample-base"))
+            self.assertFalse((card / "sample-base").exists())
+            self.assertEqual((card / "autorun/sample-base/autorun-backup/autorun.sh").read_text(), "original\n")
+            # Files install-sd did not put there keep the old folder.
+            (card / "sample-base").mkdir()
+            (card / "sample-base/notes.txt").write_text("mine")
+            (card / "sample-base/app").write_text("x")
+            with patch("builtins.print"):
+                device.move_old_sd_folder(str(card / "sample-base"), str(card / "autorun/sample-base"))
+            self.assertEqual(sorted(os.listdir(card / "sample-base")), ["notes.txt"])
+            # No old folder: nothing happens.
+            device.move_old_sd_folder(str(card / "nothing"), str(card / "autorun/sample-base"))
+
+    def test_firmware_is_named_by_the_stock_app_digest(self):
+        device = Device(port=22)
+        for digest, version in (("b6584cba76e416e432ad202509099d34373dc2c3d6a8fb625f5678bf0193b508", "1.3.0.12"),
+                                ("2271252ffded26830546d4ee1852e39a2c1f4c574a40c47fba10b5a397727ec2", "1.4.0.7"),
+                                ("473fb7260e597e61cc55d9d30595eb9d9aa1304ff1b88960e633ad19457dc91a", "1.4.0.8")):
+            answers = {"uname -m": "aarch64\n", "sha256sum '/usr/bin/MPC Sample'": digest + "  /usr/bin/MPC Sample\n"}
+            device.run = lambda command, **kwargs: subprocess.CompletedProcess([], 0, answers[command], "")
+            self.assertEqual(device.firmware(), version)
+        answers["sha256sum '/usr/bin/MPC Sample'"] = "0" * 64 + "  /usr/bin/MPC Sample\n"
+        with self.assertRaises(RuntimeError):
+            device.firmware()
+
+    def test_card_start_knows_the_same_firmwares(self):
+        from device import STOCK_FIRMWARES
+        worker = (ROOT / "install/sd-worker.sh").read_text()
+        listed = set(re.findall(r"^\s+([0-9a-f]{64})\) ;;$", worker, re.MULTILINE))
+        self.assertEqual(listed, set(STOCK_FIRMWARES))
+
+    def card_install(self, card, firmware):
+        """install-sd onto a card folder on this computer, as if the MPC ran the given firmware."""
+        build = card.parent / "build"
+        build.mkdir()
+        (build / "sample-base").write_bytes(b"test executable")
+        device = self.local_device()
+        device.card = lambda: str(card)
+        device.firmware = lambda: firmware
+        device.copy = lambda source, target: subprocess.run(["cp", str(source), target], check=True)
+        with patch("device.BINARY", build / "sample-base"), patch("builtins.print"):
+            device.install_sd("melodee")
+        return device
+
+    def test_install_on_a_card_without_autorun_on_firmware_1_4(self):
+        from device import autorun_check, SD_MARKER, TOP_AUTORUN
+        with tempfile.TemporaryDirectory() as temp:
+            card = Path(temp) / "card"
+            card.mkdir()
+            device = self.card_install(card, "1.4.0.7")
+            script = (card / "autorun/autorun.sh").read_text()
+            manifest = (card / "autorun/autorun.json").read_text()
+            self.assertTrue(script.startswith("#!/bin/sh\n" + SD_MARKER + "\n"))
+            self.assertEqual((card / "autorun/autorun.check").read_text(), autorun_check(manifest, script))
+            self.assertEqual((card / "autorun.sh").read_text(), TOP_AUTORUN.read_text())
+            self.assertEqual((card / "autorun/sample-base/app").read_text(), "melodee\n")
+            self.assertFalse((card / "autorun/sample-base/autorun-backup/autorun.sh").exists())
+            with patch("builtins.print"):
+                device.uninstall_sd()
+            self.assertFalse((card / "autorun.sh").exists())
+            self.assertNotIn(SD_MARKER, (card / "autorun/autorun.sh").read_text())
+
+    def test_firmware_1_3_cards_get_no_top_autorun(self):
+        with tempfile.TemporaryDirectory() as temp:
+            card = Path(temp) / "card"
+            card.mkdir()
+            self.card_install(card, "1.3.0.12")
+            self.assertTrue((card / "autorun/autorun.sh").is_file())
+            self.assertFalse((card / "autorun.sh").exists())
+
+    def test_another_top_autorun_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as temp:
+            card = Path(temp) / "card"
+            card.mkdir()
+            (card / "autorun.sh").write_text("#!/bin/sh\necho someone else\n")
+            with self.assertRaises(RuntimeError):
+                self.card_install(card, "1.4.0.7")
+            self.assertEqual(sorted(os.listdir(card)), ["autorun.sh"])
+
+    def test_top_autorun_runs_the_autorun_folder_script_as_asked(self):
+        from device import TOP_AUTORUN
+        with tempfile.TemporaryDirectory() as temp:
+            card = Path(temp)
+            (card / "autorun").mkdir()
+            (card / "autorun/autorun.sh").write_text('echo "$0 ${SAMPLE_BASE_ASKED:-}"\n')
+            (card / "autorun.sh").write_text(TOP_AUTORUN.read_text())
+            # As the 1.4 stock app runs it: /bin/sh with the script's full path, no environment.
+            result = subprocess.run(["/bin/sh", str(card / "autorun.sh")], env={}, capture_output=True, text=True)
+            self.assertEqual(result.stdout, str(card) + "/autorun/autorun.sh 1\n")
 
     def test_uninstall_takes_out_only_our_lines(self):
         from device import chain_autorun, without_marker, SD_MARKER

@@ -1,0 +1,267 @@
+[
+  {
+    "file": "020-acid-settings-0.png",
+    "source": "preview/acid-settings-0.png",
+    "sha256": "2d2bf7b524ec3ab9213cdf21352604c9dfa6985d25d3aea5b15a939e02a5219c"
+  },
+  {
+    "file": "020-acid-settings-1.png",
+    "source": "preview/acid-settings-1.png",
+    "sha256": "ed49c7ec774d56bee670bde8090273686d7c54bd454a8051d1d7e06ede71857b"
+  },
+  {
+    "file": "020-break-browse-open.png",
+    "source": "preview/break-browse-open.png",
+    "sha256": "f1eb32f232058850bb67c27a8951d2e6234bcf40d04c299acbb6815936d9d9db"
+  },
+  {
+    "file": "020-break-menu.png",
+    "source": "preview/break-menu.png",
+    "sha256": "34325c595b0835fba3085841a650bfae7e53099a5603c9a41493087f70ceda52"
+  },
+  {
+    "file": "020-break-perf-0.png",
+    "source": "preview/break-perf-0.png",
+    "sha256": "b904a7f1dd11b9db8533672501ce6511179eb43a21b3887c7e8de5473af4f615"
+  },
+  {
+    "file": "020-break-perf-1.png",
+    "source": "preview/break-perf-1.png",
+    "sha256": "6b6e2858d379a5636f70c295770bc16633af95a836968f68ed58e2e1460682dc"
+  },
+  {
+    "file": "020-break-perf-2.png",
+    "source": "preview/break-perf-2.png",
+    "sha256": "1ee9221a66c5f821dee9597264445f40ac716acf96a57edf23c032b045ee7a76"
+  },
+  {
+    "file": "020-break-perf-3.png",
+    "source": "preview/break-perf-3.png",
+    "sha256": "a23c2c4e3dc5bac79390ac67369539c2a1588f7c4f5372b700e06aeb08545b35"
+  },
+  {
+    "file": "020-break-perf-4.png",
+    "source": "preview/break-perf-4.png",
+    "sha256": "61159b8cf9d9f7d9e3f2534997100c360ccbad6be1965e2b9971fc76b843aeb8"
+  },
+  {
+    "file": "020-break-perf-5.png",
+    "source": "preview/break-perf-5.png",
+    "sha256": "6ab273b0adf18801b44f60535d33ed9930020fa40b052e73543ba68cd342fba9"
+  },
+  {
+    "file": "020-chord-gen-1.png",
+    "source": "preview/chord-gen-1.png",
+    "sha256": "6d3861977bbf17c990ee4c42901cde364f4b84b033ca5942b8acc0bab1bbc893"
+  },
+  {
+    "file": "020-chord-gen-2.png",
+    "source": "preview/chord-gen-2.png",
+    "sha256": "fbb3176048994568572f13d343ff1ec2c0e9c3682470de1a688a2fa221b99366"
+  },
+  {
+    "file": "020-chord-gen-3.png",
+    "source": "preview/chord-gen-3.png",
+    "sha256": "b8fe5efdcc84d35ddd31bcb7e1fca2646b7735fc5822410084d51b4dfd73ba90"
+  },
+  {
+    "file": "020-chord-gen-4.png",
+    "source": "preview/chord-gen-4.png",
+    "sha256": "f47d0c3314983e83c65c28e62a07dd651c0cff87f1239ec0b4ded7ae333527e5"
+  },
+  {
+    "file": "020-chord-gen-5.png",
+    "source": "preview/chord-gen-5.png",
+    "sha256": "f139b46d1c67818b36b99343bef07a7b2289293057ae0319928288796d009e6f"
+  },
+  {
+    "file": "020-chord-gen-entry.png",
+    "source": "preview/chord-gen-entry.png",
+    "sha256": "a152d3cdb44a425dc6afb0b2fcea2a12cf199baa7e87aba086906fa4cfbe1030"
+  },
+  {
+    "file": "020-empty-sample-pad.png",
+    "source": "preview/stagekitempty.png",
+    "sha256": "64428bfced7addf53cf2218d5c9314f47c41d9bcf34441eed89cb63d8bba0264"
+  },
+  {
+    "file": "020-fm106-home.png",
+    "source": "engines/FM-106-home.png",
+    "sha256": "04ac7637f50e244eba19854ec77e4309a80d7e5ffcfee0eec23e635a0f965877"
+  },
+  {
+    "file": "020-fmini-edit.png",
+    "source": "engines/FMini-1-edit.png",
+    "sha256": "f01ac49d4c2a47dc02da531e34b4aa5f6c49e0517a4db97cebaeb0ace0a9cb1e"
+  },
+  {
+    "file": "020-fmini-home.png",
+    "source": "engines/FMini-1-home.png",
+    "sha256": "5b60f154b00ff282f5c126a69ea81e7c25be3e7bf316ad800318e20519bf0458"
+  },
+  {
+    "file": "020-fmini-presets.png",
+    "source": "engines/FMini-1-presets.png",
+    "sha256": "ebf912b5bc0045be7471c42c48f687eaf2f06fd05c9d854cea4afbf37683ff1a"
+  },
+  {
+    "file": "020-fmini-save.png",
+    "source": "engines/FMini-1-save.png",
+    "sha256": "47384564cd8834908feb6dcb3eea544d3b963268c8c875b848136ceb46885812"
+  },
+  {
+    "file": "020-gen-group-0-main.png",
+    "source": "preview/gen-group-0-main.png",
+    "sha256": "9e9a763cd3c4645825c270798ad8f5e063901cd7560adb519f4062720f4b8764"
+  },
+  {
+    "file": "020-gen-group-0-setup.png",
+    "source": "preview/gen-group-0-setup.png",
+    "sha256": "31979954b45b706932d8c8d4d7f5a52b3eff08a0c4fee7908cab1682606acf39"
+  },
+  {
+    "file": "020-kit-edit.png",
+    "source": "engines/Rhythmer-Kit-edit.png",
+    "sha256": "f0ac5ccb6ecbfcccf9ef4e99b58175031024c996f90073793cd302901d1fd936"
+  },
+  {
+    "file": "020-kit-home.png",
+    "source": "engines/Rhythmer-Kit-home.png",
+    "sha256": "f937e71cd2be1047566abe33c45d2775509e0ea064f31b2bf3b6ea4f4ee7a610"
+  },
+  {
+    "file": "020-kit-presets.png",
+    "source": "engines/Rhythmer-Kit-presets.png",
+    "sha256": "91d29e8ff5a1768372206eb8008d1ce93c2337b48d36b944e96e40f79befa2f2"
+  },
+  {
+    "file": "020-kit-save.png",
+    "source": "engines/Rhythmer-Kit-save.png",
+    "sha256": "35978ebbbcaeadbf950604d48bf52b45509ffae0fa9f08fdc339e5ad515b72a1"
+  },
+  {
+    "file": "020-kit-source.png",
+    "source": "engines/Rhythmer-Kit-source.png",
+    "sha256": "e3d963e9a757d602f44064dfe047842ef1a088a1114a5240cbf686d8a8fe7595"
+  },
+  {
+    "file": "020-modlfo.png",
+    "source": "preview/modlfo.png",
+    "sha256": "c173fd2b3b1c312ea17b2a07970e736ad04f968cba330665986e046114f70f0a"
+  },
+  {
+    "file": "020-motion.png",
+    "source": "preview/motion.png",
+    "sha256": "f13643ff2453ce671b0db7fa30b3e5149f717894d17ba5805addebf424079737"
+  },
+  {
+    "file": "020-nameproject.png",
+    "source": "preview/nameproject.png",
+    "sha256": "c25ad10465d98df0723289072c10695e4390642ed2efd5a8c5a898be57e3f09f"
+  },
+  {
+    "file": "020-newproject.png",
+    "source": "preview/newproject.png",
+    "sha256": "e9c4181b8a0a292f211993258c4ac1a7825d98d496970024cbc4f49934e4aa98"
+  },
+  {
+    "file": "020-padbankheld.png",
+    "source": "preview/padbankheld.png",
+    "sha256": "1aa2d051a7e89c50e86558d14fe96f214ab35e117366f49071d6651a6d9449c2"
+  },
+  {
+    "file": "020-patterns.png",
+    "source": "preview/patterns.png",
+    "sha256": "13b5ce772e1c037f5cc4cc7ffdff18ce58e88486f729041c81be19e972ad2505"
+  },
+  {
+    "file": "020-project.png",
+    "source": "preview/project.png",
+    "sha256": "4bed705d53da96e01c1060cb57897d3af6fb478281d234e1a7af8568124eac60"
+  },
+  {
+    "file": "020-projectlist.png",
+    "source": "preview/projectlist.png",
+    "sha256": "ee0a447cfb2ff66d0adca0efaa2de1ba95fed0aa2b4900327016d5a9ef8df256"
+  },
+  {
+    "file": "020-recordseq.png",
+    "source": "preview/recordseq.png",
+    "sha256": "97e2752445a142b914e3f8a380927601aac3e37e8827f822eff9fb871dd72240"
+  },
+  {
+    "file": "020-recovery.png",
+    "source": "preview/recovery.png",
+    "sha256": "7b125fa647622b3fbe704d18c9f46ff8f79c7307580132b876bae13c3cfad124"
+  },
+  {
+    "file": "020-sampleheldkeys.png",
+    "source": "preview/sampleheldkeys.png",
+    "sha256": "2ecbff7e369a5342cb6ea31aae03cda9687e287393e4181beacbd04f328a2249"
+  },
+  {
+    "file": "020-samplespreview.png",
+    "source": "preview/samplespreview.png",
+    "sha256": "f5ed364bb98295395d111cab4e618d29eb90440915990ad5b8cd91740e395228"
+  },
+  {
+    "file": "020-save-folder.png",
+    "source": "preview/save-folder.png",
+    "sha256": "307b33ad410f65a3f024b46d46e800af5fb47a4182090993f0fcb8aa112d452a"
+  },
+  {
+    "file": "020-sends-enable-full.png",
+    "source": "preview/sends-enable-full.png",
+    "sha256": "b2a14439e79f2148576b54e3f26c3b2c961fd00468d65e0bd039f7eb8888b130"
+  },
+  {
+    "file": "020-sends.png",
+    "source": "preview/mixerrow.png",
+    "sha256": "1e688814f2cb54e23eeceb8da5ce4e4821af144ad24eefa8d3bfb903ae60a791"
+  },
+  {
+    "file": "020-stepedit.png",
+    "source": "preview/stepedit.png",
+    "sha256": "990695ad3dca6824fb1ec2cdfa09eb30f7e60ca72de91a553c85624cc6432e71"
+  },
+  {
+    "file": "020-tempo.png",
+    "source": "preview/tempo.png",
+    "sha256": "fe17e861443b7210481cfe2c0f8e94f9e271bcf0d634734e782f05ea2254c697"
+  },
+  {
+    "file": "020-trackactions.png",
+    "source": "preview/trackactions.png",
+    "sha256": "71e3176b3ead97ce26a39f2d6376e921fbab7ff10a01ae4cc6f1f2f4cba9bbf0"
+  },
+  {
+    "file": "020-tracks.png",
+    "source": "preview/mixer.png",
+    "sha256": "60ff59acbcc6432c3ecbe001e3ec1095c9c4afa70a71300467a03458ce4a80c2"
+  },
+  {
+    "file": "020-tracktypes.png",
+    "source": "preview/tracktypes.png",
+    "sha256": "a9641c43be1bccf8b2e66fd7b0c569582df727a61aaded073e48a9058fcd704e"
+  },
+  {
+    "file": "essential-controls.svg",
+    "source": "reference/essential-controls.svg",
+    "sha256": "b3dd1796a340eed34a6c9f74adcad8d11ed6191544cc712bd51479eea214e60b"
+  },
+  {
+    "file": "essential-controls.png",
+    "source": "reference/essential-controls.png",
+    "sha256": "9446f9067fa6fbc9b4508d6f1acf79c90782dcf27efdc3a802c5cb2dc1e08e01"
+  },
+  {
+    "file": "os-structure.svg",
+    "source": "reference/os-structure.svg",
+    "sha256": "f59a0f76e1d6d7b09c4e1db8408ea4772c28cdb8896ca7821c8444b03d06c020"
+  },
+  {
+    "file": "os-structure.png",
+    "source": "reference/os-structure.png",
+    "sha256": "c9067f87c5653ace8dd617121074e41470bc11b6ada4e302016c127146ea7a7f"
+  }
+]

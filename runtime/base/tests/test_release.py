@@ -26,6 +26,8 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(files["autorun/autorun.check"].decode(), make_release.device().autorun_check(manifest, script))
         self.assertIn('sd-boot.sh" "$D/sample-base"', script)
         self.assertTrue(script.startswith("#!/bin/sh\n"))
+        # Firmware 1.4 runs only an autorun.sh at the card's top: it runs this one.
+        self.assertIn(b'/autorun/autorun.sh"', files["autorun.sh"])
 
     def test_checksums_cover_what_sd_worker_copies(self):
         files = self.collect()

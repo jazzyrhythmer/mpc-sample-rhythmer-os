@@ -1,3 +1,5 @@
+import sys
+from sources import source
 import os
 from pathlib import Path
 import subprocess
@@ -8,6 +10,6 @@ class ChordGenTests(unittest.TestCase):
     def test_harmony_context_and_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             binary=str(Path(tmp)/"chord-test")
-            sources=["tests/chord_gen.cpp","src/rhythmer/model/chord_gen.cpp","src/rhythmer/model/project_file.cpp","src/rhythmer/model/pattern.cpp","src/rhythmer/engine/engine_info.cpp","src/rhythmer/model/print.cpp","src/rhythmer/model/gen8.cpp","src/rhythmer/model/break_gen.cpp"]
-            subprocess.run([os.environ.get("CXX","c++"),"-std=c++17","-O1","-g1","-fsanitize=address,undefined","-fno-omit-frame-pointer","-Wall","-Wextra","-Werror","-Isrc","-Ibase/src",*sources,"-o",binary],cwd=ROOT,check=True)
-            subprocess.run([binary],cwd=ROOT,env=dict(os.environ,ASAN_OPTIONS="detect_leaks=1:halt_on_error=1",UBSAN_OPTIONS="halt_on_error=1"),check=True,timeout=180)
+            sources=["tests/chord_gen.cpp",source('src/rhythmer/model/chord_gen.cpp'),source('src/rhythmer/model/project_file.cpp'),source('src/rhythmer/model/pattern.cpp'),source('src/rhythmer/engine/engine_info.cpp'),source('src/rhythmer/model/print.cpp'),source('src/rhythmer/model/gen8.cpp'),source('src/rhythmer/model/break_gen.cpp')]
+            subprocess.run([os.environ.get("CXX","c++"),"-std=c++17","-O1","-g1","-fsanitize=address,undefined","-fno-omit-frame-pointer","-Wall","-Wextra","-Werror","-Isrc","-Icore/src","-Ibase/src",source("src/rhythmer/model/project.cpp"),*sources,"-o",binary],cwd=ROOT,check=True)
+            subprocess.run([binary],cwd=ROOT,env=dict(os.environ,ASAN_OPTIONS=("detect_leaks=0" if sys.platform=="darwin" else "detect_leaks=1")+":halt_on_error=1",UBSAN_OPTIONS="halt_on_error=1"),check=True,timeout=180)

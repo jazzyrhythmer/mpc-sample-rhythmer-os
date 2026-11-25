@@ -3,10 +3,13 @@
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+from sources import source  # noqa: E402
 
 
 class StemsTests(unittest.TestCase):
@@ -14,8 +17,8 @@ class StemsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "stems"
             subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror", "-pthread",
-                            "-I" + str(ROOT / "src"), "-I" + str(ROOT / "base/src"), str(ROOT / "tests/stems.cpp"),
-                            str(ROOT / "src/rhythmer/shell/stems.cpp"), str(ROOT / "src/rhythmer/engine/sample_data.cpp"),
+                            "-I" + str(ROOT / "src"), "-I" + str(ROOT / "core/src"), "-I" + str(ROOT / "base/src"), str(ROOT / "tests/stems.cpp"),
+                            source("src/rhythmer/shell/stems.cpp"), source("src/rhythmer/engine/sample_data.cpp"),
                             "-o", str(binary)], check=True)
             folder = Path(temp) / "card"
             folder.mkdir()

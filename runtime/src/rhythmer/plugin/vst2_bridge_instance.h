@@ -12,8 +12,13 @@
 // inherits priority, so a reader holding it runs at the audio thread's while
 // that thread waits; the bridge's worker answers at that priority too, and a
 // whole state is read or written one parameter a lock, a block between each.
+//
+// A plug-in's own screen (plugin/screen_source.h) crosses in a second block
+// (bridge::ScreenShared), answered by a second bridge thread, so drawing it
+// never takes the connection's lock.
 #pragma once
 
+#include "rhythmer/plugin/screen_source.h"
 #include "rhythmer/plugin/vst2_bridge_protocol.h"
 
 #include <juce_audio_processors_headless/juce_audio_processors_headless.h>
@@ -58,7 +63,7 @@ private:
     bool inheriting = false;
 };
 
-class Vst2BridgeInstance final : public juce::AudioPluginInstance
+class Vst2BridgeInstance final : public juce::AudioPluginInstance, public ScreenSource
 {
 public:
     // bridgeFolder holds vst2_bridge32 and armhf/ (ld-linux-armhf.so.3 and
@@ -89,6 +94,15 @@ public:
     void setStateInformation (const void*, int) override;
 
     bool bridgeDied() const { return connection->dead; }
+
+    // Its own screen (plugin/screen_source.h), over the screen's block: the bridge found one when it opened the
+    // plug-in. Calls come back false while the bridge is in another of the plug-in's calls, or does not answer.
+    bool hasScreen() const override;
+    bool screenDraw (const rhythmer_screen_frame& frame, bool& changed) override;
+    bool screenInput (const rhythmer_screen_input& input, bool& used) override;
+    bool screenControls (std::array<int, 3>& indices) override;
+    bool takeRedraw() override;
+    bool wantsProcess() const override;
     // How long processBlock waits for its block before the bridge counts as dead.
     void setProcessTimeout (int milliseconds) { processTimeoutMs = milliseconds; }
     // Times `count` empty round trips (a command the plug-in answers
@@ -102,8 +116,14 @@ public:
         pid_t pid = -1;
         uint32_t sequence = 0;
         bool dead = false;
+        int unspunBlocks = 0; // process blocks still to wait without a spin, after one outlasted it (call)
         InheritingMutex lock; // around a whole exchange: its fields, the round trip, the answer
         bool call (bridge::Command, int timeoutMs = 2000);
+        // The screen's block, null without one; a screen command and its answer (-1 busy), false with none in time.
+        bridge::ScreenShared* screen = nullptr;
+        uint32_t screenSequence = 0;
+        std::mutex screenLock;
+        bool screenCall (bridge::ScreenCommand, int32_t& result, int timeoutMs = 200);
         ~Connection();
     };
 

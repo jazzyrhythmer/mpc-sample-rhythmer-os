@@ -4,12 +4,12 @@
 // as the pads sit (pad 1 bottom left, 13 top left), so a cell is the pad that launches it. The pads launch them
 // as Seq held does (shell/seq_layer.h): at the next bar (stopped, at once), hold one and tap another to copy,
 // Erase + pad clears (asked first); they light as the cells. Pad Bank steps the bank (A-H), as Seq held + Pad Bank.
-// In each cell: the number, ▶ playing, NEXT queued, a tinted cell for notes, a dot a track in view for the other
-// tracks (a ring: notes there; filled: playing it), an arrow for a follow action, an amber dot for a scene tempo.
-// Right: the eight tracks in view, each with the pattern it plays and how far along it is; a track on another
-// number than the selected track's, a pattern of its own, carries a not-equal mark (shell/sequences.h).
-// The wheel selects the track (the list on the right follows it, eight at a time). The selected track's pattern
-// in hand is the scene in view: cell n is scene n too, and Push launches it on every track; Shift + wheel moves the playhead by Q (stopped: where Shift + Play carries on from). Minus / Plus move the track. K1-K3: the pattern's length, Q, swing (Shift: any bars, time signature,
+// In each cell: the number, ▶ playing, NEXT queued, a tinted cell for notes, an arrow for a follow action, and the
+// sequences that keep the pattern (S1 S2; model/scene_links.h): an edit reaches each of them.
+// Right: the eight tracks in view, each with the pattern it plays and how far along it is, OFF for a track off in
+// its sequence; a track off what the sequence in hand keeps for it carries a not-equal mark (shell/sequences.h).
+// The wheel selects the track (the list on the right follows it, eight at a time). The header shows the sequence in
+// hand, and Push launches it again (every track back on what it keeps); Shift + wheel moves the playhead by Q (stopped: where Shift + Play carries on from). Minus / Plus move the track. K1-K3: the pattern's length, Q, swing (Shift: any bars, time signature,
 // the metronome's level). B1-B3 PATTERNS / ROLL / MOTION (B1 again: SCENES); Shift + B1 SCENE (K1 the scene's tempo, Push
 // names it), Shift + B2 FOLLOW (the pattern's follow action, Shift + K1 OR, Push puts it on its column), Shift + B3
 // VARY (a variation of the pattern into the next empty one; the wheel picks, Push or B3 makes it).
@@ -30,10 +30,10 @@ using namespace ui;
 constexpr float cell_w = 47, cell_h = 32.5f, cell_gap = 3, grid_x = zone::pad, grid_y = zone::picture_y + 3;
 constexpr float list_x = 214, list_w = zone::width - zone::pad - list_x;
 
-// The scene in view: the column of the selected track's pattern in hand.
-unsigned scene_of(const Project& project, const UiState& ui) { return project.tracks[ui.track % track_count].pattern % pattern_count; }
+// The sequence in view: the sequence in hand.
+unsigned scene_of(const Project& project, const UiState& ui) { return sequence_in_view(project, ui); }
 
-void draw_cell(Paint& p, const Snapshot& s, unsigned k, unsigned first) {
+void draw_cell(Paint& p, const Snapshot& s, unsigned k) {
     unsigned t = s.ui.track % track_count, n = s.ui.pad_pattern(k);
     float x = grid_x + (k % 4) * (cell_w + cell_gap), y = grid_y + (3 - k / 4) * (cell_h + cell_gap);
     auto c = track_colour(t);
@@ -41,7 +41,7 @@ void draw_cell(Paint& p, const Snapshot& s, unsigned k, unsigned first) {
     const auto& sketch = s.sketches[t][n];
     bool notes = track.used() && sketch.notes;
     unsigned live = s.playing ? s.playing_patterns[t] : track.pattern;
-    bool playing = notes && n == live && (!s.playing || s.positions[t] >= 0);
+    bool playing = notes && n == live && !track.off && (!s.playing || s.positions[t] >= 0);
     bool queued = track.used() && s.playing && n == track.pattern && n != live;
     juce::Colour ink = notes ? colour::text : colour::dim;
     if (playing) {
@@ -59,23 +59,19 @@ void draw_cell(Paint& p, const Snapshot& s, unsigned k, unsigned first) {
     auto number = juce::String(n + 1);
     auto style = plain(ink, type::small, Weight::Bold);
     p.text(number, x + 5, y + 3, 24, 13, style);
-    float after = x + 5 + p.width(number, style) + 3;
-    if (s.project.scenes[n].tempo) p.circle(after + 1.5f, y + 9.5f, 1.6f, playing ? colour::bg : colour::amber); // the scene's tempo
     if (playing) icon(p, Icon::Play, x + cell_w - 12, y + 4, 8, colour::bg, 1.4f);
     else if (queued) p.text("NEXT", x + cell_w - 34, y + 3, 30, 13, plain(c, type::small, Weight::Bold), juce::Justification::centredRight);
     else if (notes && sketch.follows) icon(p, Icon::ArrowRight, x + cell_w - 12, y + 4, 8, colour::sec, 1.4f); // a follow action
     if (notes && sketch.follows && playing) icon(p, Icon::ArrowRight, x + cell_w - 22, y + 4, 8, colour::bg, 1.4f);
-    // The other tracks in view: a dot each, a ring for notes in this pattern, filled while it plays it.
-    for (unsigned r = 0; r < 8; ++r) {
-        unsigned o = first + r;
-        if (o == t) continue;
-        const auto& other = s.project.tracks[o];
-        if (!other.used() || !s.sketches[o][n].notes) continue;
-        bool on = (s.playing ? s.playing_patterns[o] == n && s.positions[o] >= 0 : other.pattern == n);
-        float dx = x + 6 + r * 5.3f, dy = y + cell_h - 6.5f;
-        auto dc = playing ? colour::bg : track_colour(o);
-        if (on) p.circle(dx, dy, 1.9f, dc);
-        else p.ring(dx - 1.6f, dy - 1.6f, 3.2f, 3.2f, dc, 1.6f, 0.9f);
+    // The sequences that keep this pattern: the first two, then how many more.
+    unsigned keeping[2] {};
+    unsigned count = track.used() ? scenes_keeping(track, n, keeping, 2) : 0;
+    if (count) {
+        juce::String text = "S" + juce::String(keeping[0] + 1);
+        if (count == 2) text += " S" + juce::String(keeping[1] + 1);
+        else if (count > 2) text += " +" + juce::String(count - 1);
+        auto foot = plain(playing ? colour::bg : colour::sec, type::small, Weight::SemiBold);
+        p.text(text, x + 5, y + cell_h - 15, cell_w - 8, 13, p.fit(text, foot, cell_w - 8, type::floor));
     }
     if (s.ui.pattern_held == int(n)) p.ring(x - 1.5f, y - 1.5f, cell_w + 3, cell_h + 3, colour::text, 5, 2);
 }
@@ -93,6 +89,12 @@ void draw_tracks(Paint& p, const Snapshot& s, unsigned first) {
         p.text(juce::String(t + 1), list_x + 2, y, 15, rh, plain(selected ? colour::bg : c, type::small, Weight::Bold), juce::Justification::centred);
         if (!track.used()) continue;
         unsigned live = s.playing ? s.playing_patterns[t] : track.pattern;
+        if (track.off) { // off in its sequence (SEQ + STOP, or the sequence keeps it off)
+            p.fill(list_x + 22, cy - 3, 6, 6, colour::sec, 1);
+            p.text("OFF", list_x + 31, y, 30, rh, plain(colour::sec, type::small, Weight::SemiBold));
+            if (own_pattern(s.project, s.ui, t)) icon(p, Icon::NotEqual, list_x + 56, cy - 4.5f, 9, colour::text, 1.3f);
+            continue;
+        }
         bool stopped = s.playing && s.positions[t] < 0;
         if (!s.sketches[t][live].notes || stopped) {
             p.text(juce::String::fromUTF8("\xe2\x80\x93"), list_x + 22, y, 20, rh, plain(colour::dim, type::small));
@@ -100,7 +102,7 @@ void draw_tracks(Paint& p, const Snapshot& s, unsigned first) {
         }
         icon(p, Icon::Play, list_x + 21, cy - 3.5f, 7, c, 1.2f);
         float nw = p.text(juce::String(live + 1), list_x + 31, y, 22, rh, plain(colour::text, type::small, Weight::SemiBold));
-        bool own = own_pattern(s.project, s.ui, t); // off the sequence in view, on a pattern of its own
+        bool own = own_pattern(s.project, s.ui, t); // off what the sequence in hand keeps for it
         if (own) icon(p, Icon::NotEqual, list_x + 33 + nw, cy - 4.5f, 9, colour::text, 1.3f);
         float bx = list_x + (own ? 66 : 54), bw = list_w - (own ? 70 : 58);
         p.fill(bx, cy - 1, bw, 2, colour::line, 1);
@@ -125,11 +127,9 @@ void draw(Paint& p, const Snapshot& s) {
         h.left.push_back(chip(name.isEmpty() || name == id ? id : id + " " + name, colour::amber)); // a name of its own beside its number
     }
     h.left.push_back(bank_pill(s));
-    // Rec Quantize's grid (Shift + Pad 10), after the scene: the header leaves it out when there is no room.
-    h.left.push_back(pill(Icon::Magnet, s.ui.settings.rec_quantize ? juce::String(division_name(grid_division(s.ui.settings.rec_grid, s.pattern.division)))
-                                                                 : juce::String("OFF"),
-                          s.ui.settings.rec_quantize ? colour::mid : colour::dim));
-    if (s.track().speed != speed_normal) // the track plays its patterns at a speed (Tracks, Shift + K1)
+    // Rec Quantize (Shift + Pad 10) on or off, after the scene: the header leaves it out when there is no room. Q is K2's card.
+    h.left.push_back(pill(Icon::Magnet, s.ui.settings.rec_quantize ? "ON" : "OFF", s.ui.settings.rec_quantize ? colour::mid : colour::dim));
+    if (s.track().speed != speed_normal) // the track plays its patterns at a speed (Shift + K3)
         h.right.push_back(pill(juce::String::fromUTF8(speed_name(s.track().speed)), c));
     h.right.push_back(tag_of(s, s.ui.track));
     SoftKeys keys {{"PATTERNS", "ROLL", motion_key(s)}, 0, c};
@@ -145,7 +145,7 @@ void draw(Paint& p, const Snapshot& s) {
         keys=SoftKeys{{"CANCEL","",""},-1,c,{KeyIcon::Back,KeyIcon::None,KeyIcon::None}};
     frame(p, s, keys, h);
 
-    for (unsigned k = 0; k < pattern_pads; ++k) draw_cell(p, s, k, first);
+    for (unsigned k = 0; k < pattern_pads; ++k) draw_cell(p, s, k);
     draw_tracks(p, s, first);
 
     if (s.ui.sheet_open) { // Push: VARY, a variation of the pattern into the next empty one (roadmap P1)
@@ -219,16 +219,15 @@ void gen_push(Context& c) { // VARY: Push opens it on the row last used; there P
     c.ui.sheet_open = true;c.ui.gen8_mode=0;c.ui.sheet_row=0;
 }
 
-
-// Push: the scene in view (the selected track's pattern's column) on every track; on SCENE its name, on FOLLOW the follow action onto its column; on VARY
-// the variation.
+// Push: the sequence in hand again (every track back on what it keeps); on SEQUENCE its name, on FOLLOW the follow
+// action onto the patterns the other tracks are on; on VARY the variation.
 void push(Context& c) {
     auto& ui = c.ui;
     if (ui.sheet_open) { gen_push(c); return; }
-    ui.scene = uint8_t(scene_of(c.project, ui));
-    if (ui.patterns_cards == 1) { c.name_scene(ui.scene); return; }
+    const unsigned scene = scene_of(c.project, ui);
+    if (ui.patterns_cards == 1) { c.name_scene(scene); return; }
     if (ui.patterns_cards == 2) { c.follow_to_column(); return; }
-    c.launch_scene(ui.scene);
+    c.launch_scene(scene);
 }
 
 // The wheel: the track (the VARY sheet: its rows; Shift: the playhead).

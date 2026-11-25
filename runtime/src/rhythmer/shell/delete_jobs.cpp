@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "rhythmer/shell/delete_jobs.h"
+#include "rhythmer/model/card_folders.h"
 #include "rhythmer/plugin/plugin_rack.h"
 #include "rhythmer/shell/ask.h"
 #include "rhythmer/shell/context.h"
 #include "rhythmer/shell/sample_library.h"
+#include "rhythmer/shell/sample_lists.h"
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
@@ -34,7 +36,7 @@ bool sample_in_use(const Context& c, const std::string& path) {
     for (const auto& ref : c.project.samples) {
         if (!ref.used()) continue;
         std::string file = ref.path;
-        if (auto pad = file.find('#'); pad != std::string::npos) file.resize(pad); // "<file>#<pad>": a pad of a program
+        part_of_file(ref.path, &file); // "<file>#<pad>": a pad of a program (shell/sample_lists.h)
         if (within(file, path) || (!data.empty() && within(file, data))) return true;
     }
     return false;
@@ -58,13 +60,18 @@ bool samples_erase(Context& c) {
     const auto files = c.library->files();
     if (files.empty()) return false;
     const auto& file = files[std::min<size_t>(c.ui.files_cursor, files.size() - 1)]; // as the page draws the cursor
-    const std::string root = c.library->root(); // <card>/Samples
-    const std::string card = root.empty() ? std::string() : fs::path(root).parent_path().string();
+    if (file.list) return false; // STARRED and RECENT themselves stay
+    if (list_folder(c.library->folder())) { c.library->unlist(file.path); return true; } // in a list: off it, the file kept
+    const std::string card = c.library->card(), samples = samples_folder(card); // <card>/Rhythmer/Samples
     const std::string name = fs::path(file.path).filename().string();
-    if (file.path.find('#') != std::string::npos) { c.notice("Delete: its file, not a preset of it"); return true; }
+    if (part_of_file(file.path)) { c.notice("Delete: its file, not a preset of it"); return true; }
     if (card.empty() || !within(file.path, card) || file.path == card) { c.notice("Delete: files on the card only"); return true; }
     if (fs::path(file.path).parent_path().string() == card) { c.notice("Delete: not the card's own folders"); return true; }
-    if (within(file.path, (fs::path(card) / "Rhythmer").string())) { c.notice("Delete: not in Rhythmer's folder"); return true; }
+    // In Rhythmer's folder only what is in its Samples folder: the samples are the user's, the rest Rhythmer's.
+    if (within(file.path, (fs::path(card) / "Rhythmer").string()) && (!within(file.path, samples) || file.path == samples)) {
+        c.notice("Delete: not in Rhythmer's folder");
+        return true;
+    }
     if (sample_in_use(c, file.path)) { c.notice("In use by this project"); return true; }
     const bool program = !file.folder && !owned_folder(file.path).empty();
     ask_delete(c, file.path, name, file.folder && !file.presets ? DeleteWhat::Folder : program ? DeleteWhat::Program : DeleteWhat::File);

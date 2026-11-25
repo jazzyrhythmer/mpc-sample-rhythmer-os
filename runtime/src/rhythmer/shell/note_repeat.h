@@ -18,6 +18,7 @@ void repeat_button(Context& c, bool pressed);
 // pads are the loop grid, which repeats nothing).
 // On Stage only while Note Repeat is held: latched, B1-B3 stay Stage's (its ARP page has the rate on K2).
 inline bool repeat_keys(const Project& project, const UiState& ui) {
+    if (ui.page == PageId::TrackActions) return false; // modal track setup owns BACK/SELECT; repeat itself keeps running.
     if (ui.page == PageId::Stage) return project.tracks[ui.track % track_count].repeat && ui.repeat_held;
     return project.tracks[ui.track % track_count].repeat && ui.page != PageId::Song && ui.page != PageId::Looper;
 }

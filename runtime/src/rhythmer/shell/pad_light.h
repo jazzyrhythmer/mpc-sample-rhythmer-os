@@ -24,7 +24,7 @@ constexpr float off = 0, faint = 0.25f, dim = 0.4f, mid = 0.65f, full = 1.0f;
 constexpr uint32_t blink_ms = 150; // a change waiting for the bar: a pattern, a track's next pattern
 constexpr uint32_t flash_ms = 250; // waiting on you: a take's pad, the pad a question is about
 
-enum class Hue : uint8_t { None, Track, Loop, White, Red, Orange };
+enum class Hue : uint8_t { None, Track, Loop, White, Red, Orange, Sub }; // Sub: a mixer submix's
 
 // A pad's light: the drive the LEDs get, and what it says (`status`, the tests).
 struct Look {
@@ -45,6 +45,7 @@ inline Look of(uint32_t colour, Hue hue, float level) {
 }
 inline Look track(unsigned t, float level) { return of(ui::track_shades[t % 16][0], Hue::Track, level); }
 inline Look loop(unsigned l, float level) { return of(ui::loop_shades[l % 4][0], Hue::Loop, level); }
+inline Look sub(unsigned n, float level) { return of(ui::sub_shades[n % 8][0], Hue::Sub, level); }
 inline Look white(float level) { return of(0xFFFFFF, Hue::White, level); }
 inline Look red(float level) { return of(0xFF0000, Hue::Red, level); }
 inline Look orange(float level) { return of(0xFF7300, Hue::Orange, level); } // the Looper's overdub

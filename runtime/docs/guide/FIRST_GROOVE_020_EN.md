@@ -1,6 +1,6 @@
 # Your first groove with RHYTHMER OS.
 
-RHYTHMER OS **0.2.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass and chord pattern, then save it. Acid and Break are optional additions at the end. No downloaded break recording is required for the main exercise.
+RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass and chord pattern, then save it. Acid and Break are optional additions at the end. No downloaded break recording is required for the main exercise.
 
 ## Before you start
 
@@ -39,8 +39,8 @@ RHYTHMER OS **0.2.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ![Rhythmer Kit: kit name, selected pad and whole-kit filter](../images/rhythmer/020-kit-home.png)
 
-1. Press **PAD FX + KNOB FX together** to open TRACKS.
-2. Press **B1 TRACK SETUP**, select **TRACK TYPE**, then **PLUG-IN**.
+1. Press **PAD FX + KNOB FX together** to open MIXER.
+2. Press **MENU → HERE → TRACK SETUP**, select **TRACK TYPE**, then **PLUG-IN**.
 3. Choose **Rhythmer Kit** from the top of the plug-in list and push to load it.
 4. Press **SAMPLE**, then B1 until **PRESETS** is selected.
 5. Push to open the preset list, choose **DRUM-X**, then push / **B3 LOAD**.
@@ -135,17 +135,17 @@ RHYTHMER OS **0.2.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 7. Balance the tracks
 
-![TRACKS: select a track and balance LEVEL, PAN and SEND A](../images/rhythmer/020-tracks.png)
+![MIXER: select a track and balance LEVEL, PAN and SEND A](../images/rhythmer/020-tracks.png)
 
 ![Rhythmer Kit: selected pad sound controls](../images/rhythmer/020-kit-edit.png)
 
-1. Press PAD FX + KNOB FX together for **TRACKS**.
+1. Press PAD FX + KNOB FX together for **MIXER**.
 2. Select track 1, 2 or 3 using the encoder or PAD BANK + its pad.
-3. Use **K1 LEVEL** to balance it, **K2 PAN** for left/right position and **K3 SEND A** only if you intend to use bus A.
+3. Use the **fader** to balance its level. In FULL MIXER → SENDS, K1–K3 adjust sends A/B/C; press + for PAN/OUT/D. In BASIC, K1 is send A and SHIFT + K1 is pan.
 4. To adjust the whole drum kit's filter: select track 1 → SAMPLE → B1 PRESETS → **KIT CUTOFF / KIT RESONANCE**.
 5. To adjust only one drum's volume: track 1 → SAMPLE → B1 EDIT → hit that pad → first row **K1 Pxx Volume**. Check the P number before turning it.
 
-For buses B–D, press **B2 SENDS** on TRACKS. In BASIC, press **B3 ENABLE FULL** in the confirmation, or B1 CANCEL to stay in BASIC. In SENDS, K2 chooses bus A–D, K1 sets this track’s send and K3 adjusts that bus’s return. FULL also reveals the other advanced pages.
+For all four sends, press **B1 SENDS** in BASIC and choose **B3 ENABLE FULL**, or **B1 CANCEL** to stay in BASIC. In FULL, press B1 until SENDS is selected: K1/K2/K3 are A/B/C; press + for PAN/OUT/D and use K3 for D. Bus return levels belong to the bus channels: press PAD BANK in MIXER, select the labelled bus and move the fader.
 
 **Check:** KIT CUTOFF affects all kit pads; Pxx Volume affects only the selected pad. ECHO/SPACE on PERFORM are separate track effects, not the main engine filter or sends A/B.
 
@@ -156,7 +156,7 @@ For buses B–D, press **B2 SENDS** on TRACKS. In BASIC, press **B3 ENABLE FULL*
 3. Hit pad 4 again to restore it. Tap **MUTE** again to leave mute mode. You can also hold MUTE while hitting pads, then release it.
 4. While mute mode is active, **SHIFT + a drum pad** solos that pad inside the kit; repeat on that pad to restore the populated kit pads. **SHIFT + MUTE** clears all project pad mutes and track mute/solo states.
 
-**Check:** SAMPLE's Rhythmer Kit screen says **Mute: pads**. On TRACKS, MUTE + pad still mutes whole tracks. Muting blocks new notes; existing releases and effect tails decay naturally. The project save below keeps the pad-mute state. If the kit is frozen, accept UNFREEZE and repeat the action.
+**Check:** SAMPLE's Rhythmer Kit screen says **Mute: pads**. On MIXER, MUTE + pad still mutes whole tracks. Muting blocks new notes; existing releases and effect tails decay naturally. The project save below keeps the pad-mute state. If the kit is frozen, accept UNFREEZE and repeat the action.
 
 ## 8. Save and reopen
 
@@ -216,7 +216,7 @@ If it plays at half/double the intended speed, check the source's bar count. Cha
 | Pads switch patterns | Release SEQ; press SAMPLE |
 | Wrong track is being edited | PAD BANK + target pad; check the header |
 | No plug-ins listed | Check the full SD installation and Rhythmer/Plugins |
-| B1 is a rate instead of TRACK SETUP | Turn off NOTE REPEAT / ARP, then reopen TRACKS |
+| B1 is a rate instead of TRACK SETUP | Turn off NOTE REPEAT / ARP, then reopen MIXER |
 | I see Save Slot instead of synth controls | SHIFT + encoder push; return to sound-screen EDIT |
 | I lost the Break menu | SEQ → B1 PATTERNS → SHIFT + B3 GEN → BREAK GEN |
 | An effect or note will not stop | STOP twice within 400 ms |

@@ -1,6 +1,11 @@
 {
-  "product": "Rhythmer OS",
-  "version": "0.2.0",
-  "source_commit": "db6ddd910eaa5334090ca244763f3f6320c3bb25",
-  "hardware_validated": false
+  "product": "RHYTHMER OS",
+  "version": "0.3.0",
+  "engine_entries": 24,
+  "source_views": 31,
+  "kits": 69,
+  "hardware_validated": false,
+  "catalog_sha256": "ba0357ec674e85eefb36fb65aca393a4f9526193110a38e740f644a1b9970a66",
+  "source_layout": "Matching application runtime and per-library release-ports source snapshots",
+  "source_adjustments": "SOURCE-ADJUSTMENTS.json"
 }

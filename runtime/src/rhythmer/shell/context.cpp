@@ -9,11 +9,16 @@
 #include "rhythmer/shell/mod_jobs.h"
 #include "rhythmer/shell/midi_track_jobs.h"
 #include "rhythmer/shell/context.h"
+#include "rhythmer/shell/mixer_channels.h"
+#include "rhythmer/shell/free_length.h"
+#include "rhythmer/shell/follow_tempo.h"
+#include "rhythmer/shell/mute_mode.h"
 #include "rhythmer/model/pad_params.h"
 #include "rhythmer/shell/input_choices.h"
 #include "rhythmer/shell/step_edit.h"
 #include "rhythmer/shell/step_lane.h"
 #include "rhythmer/engine/engine_host.h"
+#include "rhythmer/engine/engine_info.h"
 #include "rhythmer/engine/midi_engine.h"
 #include "rhythmer/engine/sampler.h"
 #include <cmath>
@@ -30,6 +35,7 @@
 #include "rhythmer/shell/shell.h"
 #include "rhythmer/shell/sound_list.h"
 #include "rhythmer/shell/stage_map.h"
+#include "rhythmer/shell/pad_gap.h"
 #include "rhythmer/shell/track_copy.h"
 #include "rhythmer/shell/zoom_view.h"
 #include "rhythmer/shell/name_suggest.h"
@@ -37,6 +43,8 @@
 #include "rhythmer/shell/page_stack.h"
 #include "rhythmer/shell/pad_colour.h"
 #include "rhythmer/shell/mpc_wav_slices.h"
+#include "rhythmer/shell/update.h"
+#include <ctime>
 #include <filesystem>
 #include "rhythmer/shell/recovery_file.h"
 #include "rhythmer/pages/pages.h"
@@ -52,13 +60,22 @@ namespace rhythmer {
 using Type = Command::Type;
 
 void Context::send(const Command& command) {
+    ++sent;
     // Anything but playing changes the project (the metronome is Rhythmer's setting, not the project's).
     switch (command.type) {
     case Type::NoteOn: case Type::NoteOff: case Type::AllNotesOff: case Type::Wheel: case Type::Bend: case Type::Pressure:
     case Type::Control: case Type::Audition: case Type::PadNote: case Type::Play: case Type::Stop: case Type::Reload:
     case Type::RecordArm: case Type::RecordNow: case Type::RecordStop: case Type::RecordAutoEnd: case Type::Locate: case Type::Recorded:
-    case Type::Click: break;
-    default: dirty = true;
+    case Type::Click: case Type::MuteMode: break;
+    // Nor what only tells the engine how things stand or passes a gesture on: the input's route and level (Input
+    // Config is a setting), a MIDI track's audio input (sent again every second), a keygroup's found root, MIDI
+    // clock and MTC in, a Note Repeat or arp key, a Pad FX pressed or let go. A project left alone is not saved
+    // again for them. PunchDepth still counts: K1's depth is the project's. The Pad FX bank and target mark the
+    // project themselves (shell/pad_fx.cpp).
+    case Type::MidiAudio: case Type::Monitor: case Type::LoopMonitor: case Type::InputTaken: case Type::RecordGain:
+    case Type::RecordSource: case Type::KeyedRoot: case Type::ExtSync: case Type::MtcIn: case Type::RepeatKey: case Type::ArpKey:
+    case Type::PunchOn: case Type::PunchOff: break;
+    default: dirty = true; ++heavy_serial;
     }
     // A note played by hand or by MIDI in plays at the frame it came in, a block late, not at the next block's start.
     switch (command.type) {
@@ -113,13 +130,14 @@ bool Context::autosave() {
     return queue_project_save(dir + "/" + project.recovery_id + ".mldp", true);
 }
 
-void Context::new_project() {
+void Context::new_project(bool kit) {
     if(!kit_from.empty())kit_target=-2;
     if(!bank_from.empty())bank_target=-2;
     ui.break_pending=-1;ui.break_browse=false;
     auto fresh = std::make_unique<Project>();
     auto bank = std::make_unique<PatternBank>();
     starting_project(*fresh, *bank);
+    if (kit) rhythmer::load_sound(fresh->tracks[0], EngineKind::Sampler, 0); // an empty kit on track 1, for a kit on its way
     switch_to(*fresh, *bank, {});
 }
 
@@ -139,22 +157,33 @@ void Context::switch_to(const Project& next, const PatternBank& bank, const std:
     audio_peaks.reset();  // and their takes' overviews read again (another folder's)
     audio_prune = true;   // and its takes no pattern plays removed (nothing in its history can bring them back)
     audio_staging_from.clear(); // an import's own are set by its loader
+    jams = JamList {}; jam.bars.clear(); jam_running = false; jam_scene = -1; // jam capture: the loader gives its own
+    if (jam_auditioning) end_audition();
+    ui.jam_sheet = false;
+    publish_jams();
     for (auto& serial : audio_serial) ++serial;
     if (plugins) plugins->set_states(plugin_states ? *plugin_states : PluginStates {});
     for(unsigned t=0;t<track_count;++t)invalidate_track_jobs(*this,t);
     project = next;
     patterns = bank;
+    ++heavy_serial;
     auto keep = ui.pots;
     auto settings = ui.settings; // Rhythmer's own: they belong to no project
     auto pads_down = ui.held_pads; // the hand on the pads stays where it is
+    // The browser's rows, cursor and drive: the library's folder in view, which a project does not change. The shell
+    // copies them in only when the listing changes, so a new UiState would show an empty folder until then.
+    const auto files_cursor = ui.files_cursor, files_count = ui.files_count;
+    const auto files_drive = ui.files_drive;
     ui = UiState {};
     ui.pots = keep;
     ui.held_pads = pads_down;
     ui.settings = settings;
+    ui.files_cursor = files_cursor; ui.files_count = files_count; ui.files_drive = files_drive;
     for (auto& pot : ui.pots) pot.bound = 0; // pick the new values up again
     edits.clear();                            // its edits were made to another project
     chain_lead = -1;                          // and its chain of sequences
     take_edit.reset(); take_track = -1;
+    free_take = {}; // a Free pattern growing in the project before
     for (auto& h : held_notes) h.key = -1;
     ui.lead_pattern = project.tracks[0].pattern; // as the audio thread starts it
     free_retired();
@@ -171,6 +200,7 @@ void Context::switch_to(const Project& next, const PatternBank& bank, const std:
     ui.loading_total = ui.loading_left = uint16_t(ui.loading_samples + ui.loading_files);
     send_click(); // the metronome is Rhythmer's, and no take is running now
     send_repeat_velocity();
+    send_mute_kind();
     project_path = path;
     recovered_project = false; recovery_origin.clear(); recovery_status.clear(); recovery_hash = 0; recovery_offer_shown = false;
     ui.project_save_picker = false;
@@ -268,25 +298,63 @@ void Context::reload_tick() {
 #endif
 }
 
+// The sample browser's place for a kind of track: 0 a kit, 1 a keygroup, 2 an audio track, 3 anything else.
+unsigned Context::browse_kind() const {
+    switch (project.tracks[ui.track % track_count].engine) {
+    case EngineKind::Sampler: return 0;
+    case EngineKind::Keygroup: return 1;
+    case EngineKind::Audio: return 2;
+    default: return 3;
+    }
+}
+
+// Samples opened for the selected track: opened last for the same kind of track, as it was left; for another, that
+// one's place kept and this kind's taken up, where it was left, else the card's top.
+void Context::browse_for_track() {
+    if (!library) return;
+    const unsigned kind = browse_kind();
+    if (files_kind == int(kind)) return;
+    if (files_kind >= 0) {
+        files_places[unsigned(files_kind)][ui.files_drive % 2] = {library->folder(), ui.files_cursor, true};
+        files_drives[unsigned(files_kind)] = uint8_t(ui.files_drive % 2);
+    }
+    files_kind = int(kind);
+    const uint8_t drive = uint8_t(files_drives[kind] % 2);
+    const auto& back = files_places[kind][drive];
+    files_row_wanted = back.set ? back.row : -1;
+    ui.files_drive = drive;
+    library->browse(Drive(drive), back.set ? back.folder : std::string());
+}
+
 void Context::open(PageId page) {
+    // Only the owned tools and its plug-in/preset pickers retain this return context.
+    if (page != PageId::Edit && page != PageId::PluginPresets && page != PageId::Plugins) ui.sound_tools_track = -1;
+    // The fork's owned sound/source/save sheet is distinct from native Stage EDIT.
+    const bool sound_tools = page == PageId::Edit && track().engine == EngineKind::Plugin && ui.sound_tools_track == int(ui.track);
     if(ui.project_save_picker&&page!=PageId::Project)cancel_project_save();
     if(ui.page==PageId::Edit && page!=PageId::Edit && track().break_bars)
         for(unsigned n=0;n<16;++n)if(pad_track[n]==ui.track && pad_keys[n][0]>=0 && pad_keys[n][0]<19)release_pad(n);
-    if(page==PageId::Edit&&track().engine==EngineKind::Plugin&&ui.page!=PageId::PluginPresets){
+    if(page==PageId::Edit&&track().engine==EngineKind::Plugin&&ui.page!=PageId::PluginPresets&&!sound_tools){
         ui.edit_page[ui.track]=1;ui.edit_row[ui.track]=0;ui.kit_common=false;
         if(track().plugin<max_plugins){ui.plugin_row[track().plugin]=0;}plugin_panel_at=0;
     }
     if(page!=PageId::Samples){ui.break_browse=false;ui.break_from_picker=false;}
     if(page!=PageId::Project)ui.project_kit_only=false;
     if (page != PageId::Scenes) ui.scene_capture = false; // CAPTURE waits for a pad on Scenes only
+    if (page == PageId::Samples) browse_for_track();
     // A PLUGIN track's sounds are the plug-ins on the card (Sample Select, or Sounds from anywhere).
     if (page == PageId::Sounds && track().engine == EngineKind::Plugin && plugins) { open_plugin_picker(UiState::PluginTarget::Instrument); return; }
+    if (page == PageId::Edit && track().engine == EngineKind::Plugin && !sound_tools) { // a plug-in's parameters live on Stage's B1 EDIT
+        stage_go(ui, EngineKind::Plugin, StageKind::PluginEdit);
+        page = PageId::Stage;
+    }
     if (page == PageId::Trim) { // Trim lives on Stage now: a kit's B1 TRIM (the sampler pages' B1 and Chop come here)
         if (track().engine == EngineKind::Sampler) stage_go(ui,EngineKind::Sampler,StageKind::Trim);
         page = PageId::Stage;
     }
     if (page != ui.page) punch_release(); // a pad held over a page change would never let go
-    if (page != ui.page && page == PageId::Sends) ui.sends_pads = false; // SENDS opens on the tracks (B2 again: a kit's pads)
+    if (page != ui.page && ui.page == PageId::Chop) for (unsigned n = 0; n < 16; ++n) slice_release(n); // and a slice hit held (issue 24)
+    if (page == PageId::Tracks || page == PageId::Sends) page = PageId::Mixer; // gone with the mixer (docs/MIXER_PLAN.md step 6)
     if (page != PageId::Stage && page != PageId::Plugins && page != PageId::Samples && page != PageId::Record)
         ui.new_for = -1; // an empty track's Stage left: no going back to where it was picked
     if (page != PageId::Samples) ui.new_kit = -1;
@@ -295,9 +363,14 @@ void Context::open(PageId page) {
     ui.map_open = false;
     ui.loop_sheet = false;
     ui.layer_load = -1; // Layers' LOAD sets it after opening Samples
-    ui.fx_loop = -1; // FX Select on a loop track is set by its caller after this
+    // FX Select on a loop track is set by its caller after this, and on a submix (Shift + Knob FX on the mixer). The
+    // chain's own side pages (the plug-in picker, a plug-in's presets) keep it, so coming back lands on that chain.
+    auto chain_side = [](PageId p) { return p == PageId::Rack || p == PageId::Plugins || p == PageId::PluginPresets; };
+    if (!(chain_side(page) && chain_side(ui.page))) { ui.fx_loop = -1; ui.fx_sub = -1; ui.mixer_picker = false; }
     ui.picker_open = false;
+    ui.fx_panel = false; // an effect's full page closes with the page
     ui.song_export = false;
+    if (ui.jam_sheet) open_jams(false); // JAMS closes (what it plays stops)
     if (ui.page == PageId::Sounds && page != PageId::Sounds) audition(-1);
     if (page != ui.page) {
         push_back_stack(ui, page);
@@ -341,8 +414,8 @@ void Context::back() {
     if(ui.page==PageId::Patterns && ui.sheet_open && ui.gen8_mode){ui.gen8_mode=0;ui.sheet_row=0;return;}
     if(ui.page==PageId::Edit&&track().engine==EngineKind::Plugin&&ui.edit_page[ui.track]&&ui.map_open){ui.map_open=false;return;}
 
-    if (ui.sheet_open || ui.map_open || ui.picker_open || ui.move_open) { // a sheet, map or picker first
-        ui.sheet_open = ui.map_open = ui.picker_open = ui.move_open = false;
+    if (ui.sheet_open || ui.map_open || ui.picker_open || ui.move_open || ui.fx_panel) { // a sheet, map or picker first
+        ui.sheet_open = ui.map_open = ui.picker_open = ui.move_open = ui.fx_panel = false;
         return;
     }
     if (ui.page == PageId::Edit && track().engine == EngineKind::Plugin && ui.sound_tools_track == int(ui.track) && back_target(ui) == PageId::Stage) {
@@ -371,7 +444,8 @@ void Context::select_track(unsigned t) {
         || ui.page == PageId::PlayPage || ui.page == PageId::EnvelopePage || ui.page == PageId::FilterPage
         || ui.page == PageId::FollowPage || ui.page == PageId::CloudPage || ui.page == PageId::PadMix
         || ui.page == PageId::PadFilterPage || ui.page == PageId::FilterEnvPage || ui.page == PageId::LayersPage
-        || (ui.page == PageId::PluginPresets && (ui.presets_back == PageId::Stage || ui.presets_back == PageId::Edit || ui.presets_back == PageId::Rack || ui.presets_back == PageId::PadFx))
+        || (ui.page == PageId::PluginPresets && (ui.presets_back == PageId::Stage || ui.presets_back == PageId::Edit || ui.presets_back == PageId::PadFx
+            || (ui.presets_back == PageId::Rack && ui.fx_sub < 0 && ui.fx_loop < 0)))
         || (ui.page == PageId::Plugins && (ui.plugin_target == UiState::PluginTarget::Instrument || ui.plugin_chain < track_count));
     if(changed){
         bool owned=false;
@@ -407,6 +481,7 @@ void Context::select_track(unsigned t) {
     if(ui.page==PageId::Edit&&track().engine==EngineKind::Plugin){ui.edit_page[ui.track]=1;ui.edit_row[ui.track]=0;ui.kit_common=false;if(track().plugin<max_plugins)ui.plugin_row[track().plugin]=0;plugin_panel_at=0;}
     ui.held_step = -1;
     if (ui.page == PageId::Sounds) ui.sounds_cursor = track().preset;
+    if (ui.page == PageId::Edit && track().engine == EngineKind::Plugin) open(PageId::Edit); // to Stage's B1 EDIT
 }
 
 void Context::note(unsigned t, int key, int velocity) {
@@ -486,7 +561,7 @@ void Context::play_pad(unsigned pad, uint8_t velocity, bool down) {
                 std::array<int, notes_per_step> chord {};
                 unsigned count = levels_chord(t, pad, chord);
                 for (unsigned n = 0; n < count; ++n) {
-                    pad_keys[pad][n] = pad_note(int(sampler_first_note + t.levels_pad), levels_chord_semitones(chord[n]));
+                    pad_keys[pad][n] = pad_note(int(sampler_first_note + t.levels_pad), levels_chord_semitones(chord[n], levels_root_shift(project, t)));
                     key(pad_keys[pad][n], velocity, true); // played, recorded and kept as any pad's note
                 }
                 follow_zone(t.levels_pad, level.semitones, velocity);
@@ -556,8 +631,7 @@ void Context::play_pad(unsigned pad, uint8_t velocity, bool down) {
 // Seq Record while playing: the note lands where it was heard (its pad's or MIDI
 // message's stamp less the output latency, on the nearest tick: by the time the
 // MIDI thread sees it the playhead has moved on), or with Rec Quantize on
-// (Shift + Pad 10) on the nearest step of its grid (the pattern's Q, or one of
-// its own: Settings::rec_grid). A note moved ahead of the playhead is skipped
+// (Shift + Pad 10) on the nearest step of the pattern's Q. A note moved ahead of the playhead is skipped
 // once by the audio thread, as it was heard live.
 void Context::record(int key, int velocity, int cutoff) {
     if (!ui.recording || !host.playing()) return;
@@ -576,17 +650,21 @@ void Context::record(int key, int velocity, int cutoff) {
     } else if (!host.heard_place(ui.track, hit_ns, position, ticks)) { position = host.position_of(ui.track); ticks = host.ticks(); }
     int playhead = early ? position : host.position_of(ui.track);
     if (playhead < 0) return;
-    uint32_t at = wrap_tick(position, p.length);
+    // A kit lane of its own length: the hit lands where its lane was, as the lane plays (shell/record_place.h).
+    const uint32_t loop = p.lane_length(uint8_t(key)), pass = early ? 0 : host.pass_of(ui.track);
+    const bool lane = loop < p.length;
+    uint32_t at = lane_tick(position, pass, p.length, loop);
     bool ahead = early;
     if (ui.settings.rec_quantize) {
-        unsigned grid = division_ticks(grid_division(ui.settings.rec_grid, p.division));
-        uint32_t snapped = quantise_tick(p, at, grid); // past the last step: the first, next time round
-        ahead = early || still_ahead(at, snapped, playhead, p.length);
+        uint32_t snapped = quantise_tick(p, at); // past the last step: the first, next time round
+        if (snapped >= loop) snapped = 0;              // its lane's last step too
+        ahead = early || still_ahead(at, snapped, lane ? int(lane_tick(playhead, pass, p.length, loop)) : playhead, lane ? loop : p.length);
         at = snapped;
     }
     Event e;
     e.tick = at; e.length = uint16_t(p.q()); e.key = uint8_t(key); e.pitch = int8_t(key >> 8); e.velocity = uint8_t(std::clamp(velocity, 1, 127));
     if (cutoff >= 0 && track().engine == EngineKind::Sampler) e.cutoff = uint8_t(std::min(cutoff, 100) + 1); // roadmap P3
+    if (note_slice(key) >= 0 && track().engine == EngineKind::Sampler) e.slice = uint8_t(note_slice(key) + 1); // issue 24: a slice hit
     if (!p.add(e)) { notice("Pattern full"); return; }
     sync_pattern(ui.track, track().pattern);
     if (ahead) { Command c {Type::Recorded, ui.track, track().pattern, uint16_t(key)}; c.position = at; send(c); }
@@ -605,7 +683,7 @@ void Context::record_release(int key) {
         if (!host.heard_place(h.track, hit_ns, position, ticks)) ticks = host.ticks();
         int32_t held = int32_t(ticks - h.since); // let go before the first tick (an early hit): the shortest
         for (size_t n = p.lower(h.tick); n < p.events.size() && p.events[n].tick == h.tick; ++n)
-            if (p.events[n].key == uint8_t(key) && p.events[n].pitch == int8_t(key >> 8)) {
+            if (p.events[n].key == uint8_t(key) && p.events[n].pitch == int8_t(key >> 8) && p.events[n].slice == uint8_t(note_slice(key) + 1)) {
                 p.events[n].length = uint16_t(std::clamp<int32_t>(held, 1, 65535));
                 sync_pattern(h.track, h.pattern);
                 break;
@@ -629,7 +707,7 @@ void Context::load_sound(unsigned t, EngineKind kind, unsigned sound) {
     const auto& info = engine_info(kind);
     const UserSound* own = sound >= info.sound_count ? user_sound(kind, sound - info.sound_count) : nullptr;
     if (own) { // a sound of one's own: its values and routes, as saved
-        tr.engine = kind; tr.preset = uint16_t(sound); tr.params = own->params; tr.mods = own->mods; tr.set_name(own->name);
+        tr.engine = kind; tr.preset = uint16_t(sound); tr.params = own->params; tr.mods = own->mods; tr.name_from(own->name);
         if (engine_changed) send({Type::Engine, uint8_t(t), 0, uint16_t(kind), 0});
         for (unsigned p = 0; p < info.param_count; ++p) send({Type::Param, uint8_t(t), 0, uint16_t(p), tr.params[p]});
         for (unsigned r = 0; r < mod_routes; ++r) { Command c {Type::Mod, uint8_t(t), 0, uint16_t(r)}; c.route = tr.mods[r]; send(c); }
@@ -701,6 +779,35 @@ void Context::apply(const Binding& b, int value) {
         record_motion(int(motion_send(bus)), t.mix.sends[bus]); // roadmap P4: the mix's lanes
         break;
     }
+    case Kind::Strip: { // the mixer (docs/MIXER_PLAN.md): one value of a strip; a track's on its Motion lane too
+        const unsigned n = unsigned(b.id) >> 8;
+        const auto part = StripPart(b.id & 0xff);
+        if (n >= strip_channels) break;
+        Strip& strip = project.strip(n);
+        strip_set(strip, part, value);
+        const int now = strip_get(strip, part);
+        send({Type::StripValue, uint8_t(n), 0, uint16_t(part), int16_t(now)});
+        if (n == ui.track % track_count) { const int lane = motion_strip(part); if (lane >= 0) record_motion(lane, now); }
+        break;
+    }
+    case Kind::TrackOut: { // the mixer: where a track plays (0 the master, out_sub(s))
+        const unsigned at = unsigned(b.id) % track_count;
+        project.tracks[at].mix.out = uint8_t(value <= int(sub_count) ? value : 0);
+        send({Type::TrackOut, uint8_t(at), 0, 0, int16_t(project.tracks[at].mix.out)});
+        break;
+    }
+    case Kind::SubMix: { // the mixer: a submix's level, pan or send (no Motion lanes: decision 7)
+        const unsigned sub = (unsigned(b.id) >> 8) % sub_count, part = unsigned(b.id) & 0xff;
+        auto& mix = project.subs[sub].mix;
+        if (part == Command::SubLevel) mix.level = uint8_t(std::clamp(value, 0, 127));
+        else if (part == Command::SubPan) mix.pan = int8_t(std::clamp(value, -50, 50));
+        else if (part >= Command::SubSend0 && part < Command::SubSend0 + bus_count) mix.sends[part - Command::SubSend0] = uint8_t(std::clamp(value, 0, 100));
+        else break;
+        send({Type::SubMix, uint8_t(sub), 0, uint16_t(part), int16_t(value)});
+        break;
+    }
+    case Kind::InputMonitor: ui.settings.input.monitor = Monitor(std::clamp(value, 0, int(Monitor::Count) - 1)); input_changed(); break;
+    case Kind::InputWet: project.input_wet = value != 0; send({Type::InputWet, 0, 0, 0, int16_t(project.input_wet)}); break;
     case Kind::Root: project.root = uint8_t(value); break;
     case Kind::Scale: project.scale = uint8_t(value); break;
     case Kind::Layout:
@@ -769,8 +876,11 @@ void Context::apply(const Binding& b, int value) {
         set_route(unsigned(b.id), route);
         break;
     }
-    case Kind::PatternBars: set_length(uint32_t(value) * project.bar_ticks()); break;
-    case Kind::PatternLength: set_length(pattern_lengths[unsigned(value) % pattern_length_count] * project.bar_ticks()); break;
+    case Kind::PatternSteps: set_length(uint32_t(value) * sixteenth_ticks); break; // issue 27: 5/16, 7/16 ..
+    case Kind::PatternLength: // below 1 bar: Free (shell/free_length.h)
+        if (value < 0) set_free();
+        else set_length(pattern_lengths[unsigned(value) % pattern_length_count] * project.bar_ticks());
+        break;
     case Kind::TimeSignature: set_signature(unsigned(value)); break;
     case Kind::TcShift: ui.tc_shift = int16_t(value); break;
     case Kind::TcSwing: ui.tc_swing = uint8_t(value); break;
@@ -780,6 +890,14 @@ void Context::apply(const Binding& b, int value) {
         send({Type::Swing, 0, 0, 0, int16_t(value)});
         break;
     case Kind::SongZoom: ui.song_zoom = uint8_t(value); break;
+    case Kind::JamFrom: // JAMS: TO moves on with FROM past it, and FROM back with TO before it
+        ui.jam_from = uint16_t(std::clamp(value - 1, 0, std::max(int(ui.jam_pick_bars) - 1, 0)));
+        ui.jam_to = std::max<uint16_t>(ui.jam_to, uint16_t(ui.jam_from + 1));
+        break;
+    case Kind::JamTo:
+        ui.jam_to = uint16_t(std::clamp(value, 1, std::max(int(ui.jam_pick_bars), 1)));
+        ui.jam_from = std::min<uint16_t>(ui.jam_from, uint16_t(ui.jam_to - 1));
+        break;
     case Kind::RegionGain: case Kind::RegionStart: case Kind::RegionEnd: case Kind::RegionFadeIn: case Kind::RegionFadeOut:
     case Kind::RegionReverse: case Kind::RegionWarp: case Kind::RegionBpm: case Kind::RegionSemi: case Kind::RegionFine:
         set_region_value(b, value); // freeze plan F3 (shell/audio_jobs.cpp)
@@ -819,6 +937,10 @@ void Context::apply(const Binding& b, int value) {
         record_pad_motion(PadParam(unsigned(PadParam::SendA) + bus), pad().sends[bus]); // its lane on the pad
         break;
     }
+    case Kind::PadOut: // the pad into the kit, or into a submix (MPC 3's pad output)
+        pad().out = uint8_t(std::clamp(value, 0, int(sub_count)));
+        send_pad(ui.track, t.last_pad);
+        break;
     case Kind::PadCloud: { // the pad's cloud: on or off, or a value Motion records as a lane of the pad
         if (!b.id) { pad().cloud = value != 0; send_pad(ui.track, t.last_pad); break; }
         auto which = PadParam(int(PadParam::CloudPosition) + std::clamp(b.id, 1, 5) - 1);
@@ -906,19 +1028,36 @@ void Context::apply(const Binding& b, int value) {
         record_pad_motion(which, value);
         break;
     }
-    case Kind::ChopMode: ui.chop_mode = ChopMode(value); rechop(); break;
-    case Kind::ChopAmount: ui.chop_amount[size_t(ui.chop_mode) % ui.chop_amount.size()] = value; rechop(); break;
-    case Kind::ChopStart: case Kind::ChopEnd: { // editing a slice makes the chop Manual, as on the MPC (in frames)
+    case Kind::ChopMode: // the same type again (a pot's noise): nothing, the cuts as they are
+        if (ChopMode(value) == ui.chop_mode) break;
+        chop_change(0, [this, value] { // slice hits on any slice: asked first (issue 24)
+            ui.chop_mode = ChopMode(value); rechop();
+            ui.settings.chop_mode = uint8_t(value); // the next sample with no chop of its own opens on it
+            settings_save_at = std::max<uint32_t>(now, 1) + 1000; // K3 turns in steps: the card gets the last
+        });
+        break;
+    case Kind::ChopAmount:
+        if (ui.chop_amount[size_t(ui.chop_mode) % ui.chop_amount.size()] == value) break;
+        chop_change(0, [this, value] { ui.chop_amount[size_t(ui.chop_mode) % ui.chop_amount.size()] = value; rechop(); });
+        break;
+    case Kind::ChopStart: case Kind::ChopEnd: { // a cut moved by hand: it stays through a new chop by type or amount (in frames)
         auto was = chop_view(project, ui);
         uint32_t frames = chop_frames(project, ui), at = std::min(uint32_t(value), frames);
         if (!exact_cut) at = zero_cut(at); // onto a zero crossing near where the pot is
-        if (b.kind == Kind::ChopStart) ui.slices.move_start(unsigned(b.id), at, frames);
-        else ui.slices.move_end(unsigned(b.id), at, frames);
-        ui.chop_mode = ChopMode::Manual; ui.chop_armed = false;
+        auto& sl = ui.slices;
+        const unsigned n = unsigned(b.id);
+        const bool start = b.kind == Kind::ChopStart;
+        // A cut inside the region (not its first start or its last end, which the pad's region sets).
+        const bool inside = n < sl.count && (start ? n > 0 : n + 1 < sl.count);
+        const uint32_t before = !inside ? 0 : start ? sl.start[n] : sl.end(n, frames);
+        if (start) sl.move_start(n, at, frames);
+        else sl.move_end(n, at, frames);
+        if (inside) ui.chop_hand.move(before, start ? sl.start[n] : sl.end(n, frames));
         chop_moved(was);
+        ui.chop_heard_at = std::max<uint32_t>(1, now + chop_heard_ms); // heard once the cut is still (chop_tick)
         break;
     }
-    case Kind::ChopZoom: ui.chop_zoom = uint8_t(value); ui.chop_focus = uint8_t(b.id % 2); ui.chop_view = {}; break;
+    case Kind::ChopZoom: ui.chop_zoom = uint8_t(value); ui.chop_zoom_auto = false; ui.chop_focus = uint8_t(b.id % 2); ui.chop_view = {}; break;
     case Kind::FileJump: ui.files_cursor = uint16_t(value); break;
     case Kind::PluginJump: if(ui.page==PageId::PluginPresets)ui.presets_cursor=uint16_t(std::clamp(value,0,std::max(1,int(ui.presets_rows_count?ui.presets_rows_count:ui.plugin_panel.programs))-1));else ui.plugins_cursor=uint16_t(value);break;
     case Kind::ProjectJump: ui.project_cursor = uint16_t(value); break;
@@ -956,16 +1095,22 @@ void Context::apply(const Binding& b, int value) {
         break;
     case Kind::PunchSnap: project.punch_snap = uint8_t(value); break;
     case Kind::PunchTail: project.punch_tail = uint8_t(value); break;
-    case Kind::RecGrid: // the REC QUANTIZE page's K1: the pattern's Q, or a grid of its own
-        ui.settings.rec_grid = uint8_t(std::clamp(value, 0, int(Division::Count)));
-        settings_save_at = std::max<uint32_t>(now, 1) + 1000;
-        break;
     case Kind::Features: // Settings' K1: Basic or Full; nothing in the project changes
         if (ui.settings.full_features == (value != 0)) break;
         ui.settings.full_features = value != 0;
         notice(value ? "Full: every page" : "Basic: the stock app's pages");
         settings_save_at = std::max<uint32_t>(now, 1) + 1000;
         break;
+    case Kind::UsageLog: // Settings' K2 on the doors: the usage log on or off (shell/usage_log.h)
+        if (ui.settings.usage_log == (value != 0)) break;
+        ui.settings.usage_log = value != 0;
+        if (value) usage.start(now, (long long)std::time(nullptr), rhythmer_version(), ui.settings.full_features);
+        else { flush_usage(); usage.stop(); }
+        notice(value ? "Usage log on: Rhythmer/Usage" : "Usage log off");
+        settings_save_at = std::max<uint32_t>(now, 1) + 1000;
+        break;
+    case Kind::SettingRow: set_setting(unsigned(b.id), unsigned(value)); break;
+    case Kind::MidiRow: set_midi(unsigned(b.id), unsigned(value)); break;
     case Kind::ClickLevel:
         ui.settings.click_level = uint8_t(value);
         send_click();
@@ -1008,7 +1153,10 @@ void Context::apply(const Binding& b, int value) {
     case Kind::EntryVelocity: ui.entry_velocity = uint8_t(std::clamp(value, 0, 127)); break;
     case Kind::EntryChance: ui.entry_chance = uint8_t(std::clamp(value, 0, 100)); break;
     case Kind::EventNudge: set_event_nudge(*this, value); break;
-    case Kind::MarksRamp: roll_marks_ramp(*this, value); break;                               // Roll's Shift + K2, marked notes                             // Roll's Shift + K1
+    case Kind::MarksVelocity: // Roll's K2, marked notes: their velocities moved together
+        if (ui.page == PageId::Roll && roll_selected(ui, t.pattern) && roll_marks_velocity(pattern(), ui, value)) sync_pattern(ui.track, t.pattern);
+        break;
+    case Kind::MarksRamp: roll_marks_ramp(*this, value); break;                              // Roll's Shift + K2, marked notes                             // Roll's Shift + K1
     case Kind::EuclidHits: case Kind::EuclidSteps: case Kind::EuclidRotate: set_euclid(b.kind, value); break;
     case Kind::TrackSpeed: set_speed(unsigned(b.id), value); break;
     case Kind::GenFirst:project.gen8.first=uint8_t(std::clamp(value,0,15));project.gen8.last=std::max(project.gen8.first,project.gen8.last);break;
@@ -1023,6 +1171,8 @@ void Context::apply(const Binding& b, int value) {
     case Kind::VaryAmount: if(ui.gen8_mode==4){project.gen8.complexity=uint8_t(std::clamp(value,0,100));break;} ui.vary_amount = uint8_t(std::clamp(value, 0, 100)); break;
     case Kind::FollowAction: case Kind::FollowOther: case Kind::FollowAfter: case Kind::FollowChance: set_follow(b.kind, value); break; // roadmap P5
     case Kind::SceneTempo: set_scene_tempo(unsigned(b.id), value * 10); break; // Patterns' SCENE: below 30, none of its own
+    case Kind::SceneColour: set_scene_colour(unsigned(b.id), value); break;
+    case Kind::PadMute: set_pad_mute(*this, ui.track, unsigned(b.id), value != 0); break; // issue 32: Motion's card, kept while Seq Record runs
     case Kind::AutoLow: case Kind::AutoHigh: case Kind::AutoStep: case Kind::AutoLayers: case Kind::AutoHold: case Kind::AutoTail:
     case Kind::AutoTap: case Kind::AutoLoop: case Kind::AutoLevel: auto_sheet_set(b.kind, value); break; // shell/auto_sample.cpp
     case Kind::PrintTapPick: ui.print_sheet.tap = value ? PrintTap::PreFx : PrintTap::PostFx; break; // freeze plan F2c
@@ -1080,7 +1230,7 @@ void Context::apply(const Binding& b, int value) {
     case Kind::NewPort: ui.new_port = uint8_t(value); break;
     case Kind::NewChannel: ui.new_channel = uint8_t(value); break;
     case Kind::TrackPick: select_track(unsigned(value)); break;
-    case Kind::TrackPattern: launch(ui.track, unsigned(value)); break;
+    case Kind::TrackPattern: pick(ui.track, unsigned(value)); break;
     // The Looper (docs/LOOPER.md, shell/looper_jobs.cpp).
     case Kind::LoopPick: ui.loop = uint8_t(value % loop_tracks); break;
     case Kind::LoopLength: looper_do(*this, looper::Do::Length, ui.loop, looper::lengths[size_t(value) % looper::lengths.size()]); break;
@@ -1109,7 +1259,24 @@ void Context::set_route(unsigned r, const ModRoute& value) {
 void Context::change_setting(unsigned row, int way) {
     ui.settings.step(row, way);
     if (row == Settings::RepeatVelocity || row == Settings::PadResponse || row == Settings::PadPressure) send_repeat_velocity();
+    if (row == Settings::MuteKind) send_mute_kind();
     if (store) store->save_settings(ui.settings.text());
+}
+
+// K1 on a Settings row. A row that reopens the audio device or the USB camera keeps the value until the knob rests,
+// so a turn past 48 kHz to 96 kHz opens the device once (record_tick).
+void Context::set_setting(unsigned row, unsigned value) {
+    if (Settings::reopens(row)) {
+        ui.settings_wait_row = int8_t(row);
+        ui.settings_wait_value = uint8_t(value);
+        settings_wait_at = std::max<uint32_t>(now, 1);
+        return;
+    }
+    if (ui.settings.choice(row) == value) return;
+    ui.settings.set_choice(row, value);
+    if (row == Settings::RepeatVelocity || row == Settings::PadResponse || row == Settings::PadPressure) send_repeat_velocity();
+    if (row == Settings::MuteKind) send_mute_kind();
+    settings_save_at = std::max<uint32_t>(now, 1) + 1000; // pots move in many steps: the card gets the last
 }
 
 void Context::set_look(unsigned row, unsigned value) {
@@ -1215,7 +1382,7 @@ void Context::finish_name() {
     case NameTarget::Sound: {
         auto& t = track();
         if (!store || t.engine == EngineKind::None || t.sampled()) break;
-        t.set_name(text.c_str());
+        t.name_from(text.c_str());
         store->save_sound(text, rhythmer::save_sound(sound_of(t, text.c_str())));
         break;
     }
@@ -1228,6 +1395,19 @@ void Context::finish_name() {
     }
     case NameTarget::Mixdown: mixdown(text); break;
     case NameTarget::Scene: project.scenes[name_scene_at % pattern_count].set_name(text.c_str()); dirty = true; break; // roadmap P5
+    case NameTarget::Track: { // one undo step: the name alone, nothing sent to the engine
+        auto& tr = project.tracks[name_track_at % track_count];
+        if (!tr.used()) break;
+        auto name_of = [&] { auto n = std::make_unique<TrackName>(); std::copy(tr.name, tr.name + name_length, n->text); n->named = tr.named; return n; };
+        Edit edit = begin_edit(("Name track " + std::to_string(name_track_at % track_count + 1)).c_str(), name_track_at, -1, false);
+        edit.name_before = name_of();
+        tr.set_name(text.c_str());
+        tr.named = true;
+        edit.name_after = name_of();
+        edits.push(std::move(edit));
+        dirty = true;
+        break;
+    }
     case NameTarget::None: break;
     }
 }
@@ -1263,6 +1443,44 @@ void Context::set_solo(unsigned t, bool on) {
     send({Type::Solo, uint8_t(t), 0, 0, int16_t(on)});
 }
 
+void Context::set_channel_mute(unsigned n, bool on) {
+    switch (channel_kind(n)) {
+    case ChannelKind::Track: set_mute(n, on); break;
+    case ChannelKind::Submix: project.subs[channel_sub(n)].mix.mute = on; send({Type::SubMix, uint8_t(channel_sub(n)), 0, Command::SubMute, int16_t(on)}); break;
+    case ChannelKind::Bus: project.buses[channel_bus(n)].mute = on; send({Type::BusMute, 0, 0, uint16_t(channel_bus(n)), int16_t(on)}); break;
+    default: break;
+    }
+}
+void Context::set_channel_solo(unsigned n, bool on) {
+    switch (channel_kind(n)) {
+    case ChannelKind::Track: set_solo(n, on); break;
+    case ChannelKind::Submix: project.subs[channel_sub(n)].mix.solo = on; send({Type::SubMix, uint8_t(channel_sub(n)), 0, Command::SubSolo, int16_t(on)}); break;
+    default: break;
+    }
+}
+
+void Context::open_mixer_chain(bool picker) {
+    const unsigned n = mixer_strip(ui);
+    switch (channel_kind(n)) {
+    case ChannelKind::Submix: open(PageId::Rack); ui.fx_sub = int8_t(channel_sub(n)); break;
+    case ChannelKind::Bus: open(PageId::Bus); ui.sends_bus = uint8_t(channel_bus(n)); break;
+    case ChannelKind::Master: open(PageId::Master); break;
+    case ChannelKind::Input: open(PageId::InputConfig); return;
+    default: open(PageId::Rack); break;
+    }
+    const unsigned chain = unsigned(channel_chain(n));
+    if (!picker || project.chain(chain).count() >= project.chain(chain).size) return;
+    ui.fx_cursor[UiState::cursor_of(chain)] = uint8_t(project.chain(chain).count()); // the plus
+    ui.picker_open = true; ui.picker_items = false; ui.picker_replaces = false;
+    ui.mixer_picker = true;
+}
+
+void Context::picker_done() {
+    if (!ui.mixer_picker) return;
+    ui.mixer_picker = false;
+    open(PageId::Mixer); // the channel and its FX block, as they were
+}
+
 void Context::set_step(unsigned t, unsigned at, const Step& value) {
     auto& tr = project.tracks[t % track_count];
     auto& p = patterns.at[t % track_count][tr.pattern];
@@ -1274,6 +1492,8 @@ void Context::set_step(unsigned t, unsigned at, const Step& value) {
 void Context::free_retired() {
     Pattern* old = nullptr;
     while (host.take_retired_pattern(old)) delete old;
+    const Slices* chop = nullptr; // a sample's chop a newer one replaced (issue 24)
+    while (host.take_retired_chop(chop)) delete chop;
 }
 
 void Context::sync_pattern(unsigned t, unsigned p) {
@@ -1282,6 +1502,7 @@ void Context::sync_pattern(unsigned t, unsigned p) {
     c.data = new Pattern(played_pattern(patterns.at[t % track_count][p % pattern_count], project.tracks[t % track_count].speed)); // as it plays: its feel, its track's speed (roadmap P1)
     if (!host.send(c)) delete c.data;
     dirty = true;
+    ++heavy_serial;
 }
 
 // Seq Record + a pot: a point of the playing pattern's Motion at the tick playing (roadmap P1: tick resolution).
@@ -1313,6 +1534,7 @@ void Context::sync_motion(unsigned t, unsigned p) {
     if (motion_waiting >= 0 && motion_waiting != which) sync_pattern(unsigned(motion_waiting) >> 8, unsigned(motion_waiting) & 0xff);
     motion_waiting = which;
     dirty = true;
+    ++heavy_serial; // at the write: the pattern goes to the audio thread a little later (flush_motion())
     flush_motion();
 }
 
@@ -1366,6 +1588,7 @@ void Context::launch(unsigned t, unsigned p) {
         if (chain_lead == int(t % track_count)) chain_lead = -1;
     }
     tr.pattern = uint8_t(p % pattern_count);
+    tr.off = false; // a launch ends off (sequence links)
     ui.lead_pattern = tr.pattern; // BPM per pattern: the one launched last leads
     send({Type::Pattern, uint8_t(t), 0, 0, int16_t(tr.pattern)});
     if (ui.recording && host.song_playing()) record_launch(t % track_count, tr.pattern);
@@ -1418,12 +1641,13 @@ void Context::song_tick() {
     sync_song();
 }
 
-// Seq Record off or the song stopped: each clip ends with the bar that was playing.
-void Context::finish_launches() {
+// Seq Record off or the song stopped: each clip ends with the bar that was playing (`tracks`: a bit each; a track
+// going off, its own).
+void Context::finish_launches(uint16_t tracks) {
     auto& song = project.song;
     unsigned bar = seen_song_bar == ~0u ? 0 : seen_song_bar;
     for (unsigned t = 0; t < track_count; ++t) {
-        if (!(recording_tracks & (1u << t))) continue;
+        if (!(recording_tracks & tracks & (1u << t))) continue;
         for (unsigned n = 0; n < song.count; ++n) {
             auto& c = song.clips[n];
             if (c.track != t || c.bar != recording_from[t]) continue;
@@ -1432,7 +1656,7 @@ void Context::finish_launches() {
             break;
         }
     }
-    recording_tracks = 0;
+    recording_tracks = uint16_t(recording_tracks & ~tracks);
     sync_song();
 }
 
@@ -1465,8 +1689,7 @@ void Context::sync_punches() {
 
 void Context::clear_pattern(unsigned t, unsigned p) {
     auto& pattern = patterns.at[t % track_count][p % pattern_count];
-    if (pattern.events.empty()) return;
-    pattern.events.clear();
+    if (!pattern.clear_notes_and_motion()) return; // its Motion too, as the question says
     sync_pattern(t, p);
 }
 
@@ -1512,15 +1735,41 @@ void Context::send_trims(unsigned t, unsigned kit) {
 void Context::delete_pad(unsigned kit) {
     kit %= sampler_pads;
     auto& t = track();
-    if (!t.pads[kit].used()) { notice(pad_text("Empty", kit)); return; }
+    if (!t.pads[kit].used()) { close_pad_gap(kit); return; } // an empty pad: the pads after it move down one (shell/pad_gap.h)
     Edit edit;
     edit.what = pad_text("Delete", kit); edit.track = ui.track; edit.pad = int16_t(kit);
     edit.pad_before = pad_state(t, kit);
     edit.pad_after = PadState {};
     edit.pad_after.chain.size = pad_slots;
     restore_pad(ui.track, kit, edit.pad_after);
-    notice(edit.what);
+    // Pads after it to move down: say that Erase + this pad again does it (31 bytes at most, the notice's room).
+    notice(gap_closes(t, kit) ? pad_text("Deleted", kit) + " \xc2\xb7 again closes gap" : edit.what);
     edits.push(std::move(edit));
+}
+
+// Erase + an empty kit pad, stopped (shell/pad_gap.h): the gap closed, as one undo.
+void Context::close_pad_gap(unsigned kit) {
+    kit %= sampler_pads;
+    if (!gap_closes(track(), kit)) { notice(pad_text("Empty", kit)); return; }
+    unsigned last = kit + 1; // the last pad with a sample that moves
+    for (unsigned n = kit + 1; n < gap_end(kit); ++n) if (track().pads[n].used()) last = n;
+    char first_label[4], last_label[4];
+    pad_label(kit + 1, first_label); pad_label(last, last_label);
+    std::string what = last == kit + 1 ? std::string(first_label) + " moved down one" : std::string(first_label) + "-" + last_label + " moved down one";
+    Edit edit = begin_edit(what.c_str(), ui.track, -1, false);
+    edit.track_before = std::make_unique<TrackState>(track_state(*this, ui.track));
+    edit.master_before = std::make_unique<MasterState>(master_of(project));
+    auto next = std::make_unique<TrackState>(*edit.track_before);
+    rhythmer::close_pad_gap(next->track, next->patterns, kit);
+    restore_track(*this, ui.track, *next);
+    close_pad_gap_names(project, ui.track, kit);
+    edit.master_after = std::make_unique<MasterState>(master_of(project));
+    if (*edit.master_after == *edit.master_before) { edit.master_before.reset(); edit.master_after.reset(); }
+    else restore_master(*edit.master_after);
+    edit.track_after = std::move(next);
+    edits.push(std::move(edit));
+    dirty = true;
+    notice(what);
 }
 
 void Context::erase_pad_notes(unsigned kit) {
@@ -1631,8 +1880,16 @@ void Context::apply_edit(const Edit& e, bool after) {
     if (e.chain >= 0 && chain) restore_chain(unsigned(e.chain), *chain);
     if (const auto& m = after ? e.mix_after : e.mix_before) restore_mix(*m);
     if (const auto& m = after ? e.sound_after : e.sound_before) restore_sound(e.track, *m);
+    if (const auto& m = after ? e.name_after : e.name_before) { auto& tr = project.tracks[e.track % track_count]; tr.set_name(m->text); tr.named = m->named; }
     if (const auto& m = after ? e.master_after : e.master_before) restore_master(*m);
     if (const auto& m = after ? e.chop_after : e.chop_before) restore_chop(*m);
+    if (e.pattern_was >= 0 && e.pattern >= 0) // the pattern it played before, or the one the edit made it play, kept
+        pick(e.track % track_count, unsigned(after ? e.pattern : e.pattern_was) % pattern_count);
+    if (const auto& m = after ? e.jams_after : e.jams_before) { jams = *m; publish_jams(); } // a jam deleted (JAMS' ERASE)
+    if (const auto& m = after ? e.scene_after : e.scene_before) { // a sequence kept or cleared
+        project.scenes[m->index % pattern_count] = m->scene;
+        for (unsigned t = 0; t < track_count; ++t) project.tracks[t].in_scene[m->index % pattern_count] = m->kept[t];
+    }
     if (const auto& m = after ? e.tempo_after : e.tempo_before) {
         for (unsigned n = 0; n < pattern_count; ++n)
             if (project.pattern_tempo[n] != m->patterns[n]) { project.pattern_tempo[n] = m->patterns[n]; send({Type::PatternTempo, 0, 0, uint16_t(n), int16_t(m->patterns[n])}); }
@@ -1644,7 +1901,14 @@ void Context::apply_edit(const Edit& e, bool after) {
     take_track = -1;
 }
 
+void Context::flush_usage() {
+    if (!store || !usage.on()) return;
+    auto text = usage.take(now);
+    if (!text.empty()) store->append_usage(usage.file(), text);
+}
+
 void Context::undo() {
+    end_take();                             // a Chop take is the step undone, whole
     close_gesture();                        // a pot's turns just made are the step undone
     close_hold(hold.pad);                   // so is a held pad's note
     if (ui.recording) set_recording(false); // a take in progress ends, and is the edit undone
@@ -1654,6 +1918,8 @@ void Context::undo() {
     Edit* e = edits.undo();
     if (!e) { notice("Nothing to undo"); return; }
     apply_edit(*e, false);
+    swap_plugin(*e, false);
+    usage.undo(now, false, e->what, ui.page);
     notice("Undo " + e->what);
 }
 
@@ -1667,15 +1933,115 @@ void Context::redo() {
     Edit* e = edits.redo();
     if (!e) { notice("Nothing to redo"); return; }
     apply_edit(*e, true);
+    swap_plugin(*e, true);
+    usage.undo(now, true, e->what, ui.page);
     notice("Redo " + e->what);
 }
 
 void Context::set_length(uint32_t ticks) {
     auto& p = pattern();
     ticks = std::clamp<uint32_t>(ticks, 1, project.max_length());
-    if (p.length == ticks) return;
+    stop_growing(ui.track, track().pattern);
+    if (p.length == ticks && !p.free) return;
     p.length = ticks;
+    p.free = false;
     sync_pattern(ui.track, track().pattern);
+}
+
+// K1 turned below 1 bar: an empty pattern with no notes on another track in its sequence is Free again, a bar long
+// until a take sets its length (shell/free_length.h).
+void Context::set_free() {
+    auto& p = pattern();
+    unsigned bar = std::max(project.bar_ticks(), 1u);
+    if (!free_offered(p, column_fit(project, patterns, ui.track).length)) return;
+    if (p.free && p.length == bar) return;
+    p.free = true;
+    p.length = bar;
+    p.fit_lanes();
+    sync_pattern(ui.track, track().pattern);
+}
+
+void Context::stop_growing(unsigned t, unsigned p) {
+    if (free_take.track == int(t % track_count) && free_take.pattern == int(p % pattern_count)) free_take = {};
+}
+
+// Seq Record on an empty Free pattern. With notes on another track in its sequence, it takes the longest of them
+// and counts with that track; else it grows a bar at a time from the bar playing (free_tick()).
+void Context::start_free(unsigned t, unsigned p, bool song) {
+    free_take = {};
+    t %= track_count; p %= pattern_count;
+    auto& pat = patterns.at[t][p];
+    if (!pat.is_free() || song) return;
+    ColumnFit fit = column_fit(project, patterns, t);
+    pat.free = false;
+    if (fit.length) {
+        pat.length = fit.length;
+        pat.fit_lanes();
+        sync_pattern(t, p);
+        if (host.playing()) send({Type::Rebase, uint8_t(t), uint8_t(p), uint16_t(fit.track)});
+        return;
+    }
+    pat.length = std::max(project.bar_ticks(), 1u);
+    pat.fit_lanes();
+    sync_pattern(t, p);
+    free_take.track = int(t); free_take.pattern = int(p);
+    free_tick();
+    notice("P" + std::to_string(p + 1) + " Free: Seq Record ends it");
+}
+
+// The take on a Free pattern ends: at the end of the bar playing, or in a bar's first eighth at that bar line,
+// with what was played since moved to the top. Nothing taken: Free again.
+void Context::end_free() {
+    if (free_take.track < 0) return;
+    FreeTake take = free_take;
+    free_take = {};
+    unsigned t = unsigned(take.track) % track_count, p = unsigned(take.pattern) % pattern_count;
+    auto& pat = patterns.at[t][p];
+    unsigned bar = std::max(project.bar_ticks(), 1u);
+    if (pat.empty() && pat.motion.empty()) {
+        pat.free = true;
+        pat.length = bar;
+        sync_pattern(t, p);
+        return;
+    }
+    if (!take.full) {
+        uint32_t position = take.seen;
+        if (take.rebased && host.playing() && !host.count_in() && host.pattern_of(t) % pattern_count == p) {
+            int at = host.position_of(t);
+            if (at >= 0) position = uint32_t(at);
+        }
+        free_close(pat, free_end(position, bar, ticks_per_quarter / 2, project.max_length()));
+        sync_pattern(t, p);
+    }
+    unsigned bars = pattern_bars(project, pat);
+    notice("P" + std::to_string(p + 1) + ": " + std::to_string(bars) + (bars == 1 ? " bar" : " bars"));
+}
+
+// Often (shell/lights.cpp): the growing take keeps the bar playing and the next in its pattern; K1's card learns
+// what the selected pattern's sequence holds.
+void Context::free_tick() {
+    unsigned selected = ui.track % track_count, shown = track().pattern % pattern_count;
+    ui.column_ticks = column_fit(project, patterns, selected).length;
+    ui.free_growing = free_take.track == int(selected) && free_take.pattern == int(shown);
+    if (free_take.track < 0 || free_take.full) return;
+    unsigned t = unsigned(free_take.track) % track_count, p = unsigned(free_take.pattern) % pattern_count;
+    if (!host.playing() || host.count_in() || host.song_playing() || host.pattern_of(t) % pattern_count != p) return;
+    int at = host.position_of(t);
+    if (at < 0) return;
+    auto& pat = patterns.at[t][p];
+    uint32_t bar = std::max(project.bar_ticks(), 1u), most = project.max_length(), position = uint32_t(at);
+    if (!free_take.rebased) { // from the top of the bar playing, then its pattern grows ahead of it
+        send({Type::Rebase, uint8_t(t), uint8_t(p), uint16_t(0xffff)});
+        free_take.rebased = true;
+        position %= bar;
+    }
+    free_take.seen = position;
+    uint32_t want = free_grown(position, bar, most);
+    if (want > pat.length) { pat.length = want; sync_pattern(t, p); }
+    if (pat.length >= most && position + bar >= most) {
+        free_take.full = true;
+        notice("P" + std::to_string(p + 1) + ": " + std::to_string(max_bars) + " bars, the most");
+    }
 }
 
 void Context::set_division(Division division) {
@@ -1718,14 +2084,16 @@ void Context::set_seq_tempo(bool on) {
 }
 
 // The wheel on Patterns: the playhead by a beat, or with Shift by Q. Stopped,
-// it sets where Shift + Play carries on from.
+// it sets where Shift + Play carries on from. ui.locate is a place in the
+// selected track's pattern as written; the transport's tick is that place as
+// the track plays it, at its speed.
 void Context::locate(int way) {
     const auto& p = pattern();
     unsigned step = ui.shift ? p.q() : project.beat_ticks();
-    uint32_t from = host.playing() ? host.ticks() : ui.locate;
+    uint32_t from = host.playing() ? uint32_t(written_ticks(host.ticks(), track().speed)) : ui.locate;
     int64_t at = int64_t(from / step * step) + int64_t(way) * step;
     ui.locate = uint32_t(std::max<int64_t>(at, 0)) % std::max<uint32_t>(p.length, 1);
-    if (host.playing() && !host.song_playing()) { Command c {Type::Locate}; c.position = ui.locate; send(c); }
+    if (host.playing() && !host.song_playing()) { Command c {Type::Locate}; c.position = uint32_t(played_ticks(ui.locate, track().speed)); send(c); }
 }
 
 void Context::send_pad(unsigned t, unsigned n) {
@@ -1737,7 +2105,14 @@ void Context::send_pad(unsigned t, unsigned n) {
 int Context::sample_slot(const std::string& path, const std::string& name) {
     int free = -1;
     for (unsigned n = 0; n < sample_slots; ++n) {
-        if (project.samples[n].used() && path == project.samples[n].path) return int(n); // already in the project
+        if (project.samples[n].used() && path == project.samples[n].path) { // already in the project
+            // Its last read failed (the file was missing then, or the card was lent): read it again, it may be there now.
+            if (library && library->slot_load(n).settled) {
+                const auto loaded = library->slot(n);
+                if (!loaded.ready && !loaded.error.empty() && loaded.path == path && !library->load(n, path)) slots_waiting.push_back(uint16_t(n));
+            }
+            return int(n);
+        }
         if (free < 0 && !project.samples[n].used()) free = int(n);
     }
     if (free < 0 || !library || path.size() >= sizeof(SampleRef::path)) return -1; // a path cut short opens nothing
@@ -1753,14 +2128,30 @@ int Context::sample_slot(const std::string& path, const std::string& name) {
 // Chop's slices of the region it holds, by its type. Manual starts as one
 // slice, the whole region, armed: pad 1 plays it and the pads tapped
 // meanwhile cut it (chop_tap()).
-void Context::rechop() {
-    if (!library || ui.chop_sample >= sample_slots) { ui.slices = {}; return; }
+// What Chop's type and amount cut of the region now, without the hand's cuts.
+Slices Context::type_chop(bool* capped) const {
+    if (!library || ui.chop_sample >= sample_slots) return {};
     auto loaded = library->slot(ui.chop_sample);
-    ui.slices = chop(ui.chop_mode, ui.chop_amount[size_t(ui.chop_mode) % ui.chop_amount.size()], ui.chop_from, ui.chop_to, loaded.frames,
-                     loaded.hits, loaded.hit_count, project.tempo, &loaded.beats);
+    int amount = ui.chop_amount[size_t(ui.chop_mode) % ui.chop_amount.size()];
+    if (ui.chop_mode == ChopMode::Beats) amount = int(division_sixteenths(unsigned(std::max(amount, 0)), project.bar_ticks() / sixteenth_ticks)); // in 16ths
+    if (ui.chop_mode == ChopMode::Auto) { // engine/auto_chop.h: by what the sample is (with CLEAN, its DRUMS stem)
+        const auto read = chop_cut_slot() == ui.chop_sample ? loaded : library->slot(chop_cut_slot());
+        return auto_chop(read.autos, auto_slice_count(amount), ui.chop_from, ui.chop_to, loaded.frames, read.hits, read.hit_count, read.beats, capped);
+    }
+    return chop(ui.chop_mode, amount, ui.chop_from, ui.chop_to, loaded.frames, loaded.hits, loaded.hit_count, project.tempo, &loaded.beats, capped);
+}
+
+void Context::rechop() {
+    end_take(); ui.chop_more = false; ui.chop_take_from = 0; // a take in progress is kept as it was; no red left over
+    if (!library || ui.chop_sample >= sample_slots) { ui.slices = {}; return; }
+    bool capped = false, full = false;
+    const uint32_t frames = chop_frames(project, ui);
+    uint32_t clear = 0; // Auto keeps an eighth note (or 150 ms) clear of a hand cut: no sliver beside one
+    if (ui.chop_mode == ChopMode::Auto) { const auto read = library->slot(chop_cut_slot()); clear = auto_keep_clear(read.autos, read.beats); }
+    ui.slices = with_hand(type_chop(&capped), ui.chop_hand, frames, &full, clear); // the cuts made by hand stay
+    if (capped || full) notice("128 slices, the most: the last runs to the end");
     snap_slices();
     ui.chop_slice = uint8_t(std::min<unsigned>(ui.chop_slice, ui.slices.count ? ui.slices.count - 1 : 0));
-    ui.chop_armed = ui.chop_mode == ChopMode::Manual;
     ui.chop_take_at = 0;
 }
 
@@ -1772,23 +2163,20 @@ void Context::follow_tempos() {
         if (!frames) continue;
         uint32_t end = pad.end ? pad.end : frames, length = end > pad.start ? end - pad.start : 0;
         if (length < 4410) continue; // a hit, not a loop: it keeps its speed
-        // The number of bars that puts it nearest the project's tempo, between 70 and 180 BPM.
-        double best = 0, target = project.tempo / 10.0;
-        for (double bars : {0.25, 0.5, 1.0, 2.0, 4.0, 8.0}) {
-            double bpm = bars * 4 * 60 * 44100.0 / length;
-            if (bpm >= 70 && bpm <= 180 && (best == 0 || std::fabs(bpm - target) < std::fabs(best - target))) best = bpm;
-        }
-        pad.own_tempo = uint16_t(best * 10);
+        // The sample's found tempo, in the octave nearest the project's and exact at whole bars of the region; else
+        // the number of bars that puts it nearest the project's tempo (shell/follow_tempo.h).
+        const auto beats = library ? library->slot(pad.sample % sample_slots).beats : BeatGrid {};
+        pad.own_tempo = follow_tempo(length, beats.found() ? beats.tempo : 0, project.tempo);
         send_pad(ui.track, n);
     }
 }
 
 bool Context::host_recording() const { return host.recorder().state() != TakeRecorder::State::Idle; }
 
-void Context::chop_to_pads() {
+void Context::chop_to_pads(SlicePlay play, bool with_pattern) {
     auto& t = track();
     uint32_t frames = ui.chop_sample < sample_slots ? project.samples[ui.chop_sample].frames : 0;
-    if (!frames) return;
+    if (!frames || (play == SlicePlay::Kit && !library)) return;
     // The pad chopped (the last pad, a region of the sample inside the chop's or the region itself; else the first
     // holding the region): each slice takes its values.
     auto chopped = [&](const PadSound& p) { return p.sample == ui.chop_sample && p.start == ui.chop_from && p.end == ui.chop_to; };
@@ -1797,13 +2185,79 @@ void Context::chop_to_pads() {
     const auto& last = t.pads[t.last_pad % sampler_pads];
     if (last.used() && last.sample == ui.chop_sample) parent = last;
     else for (const auto& p : t.pads) if (chopped(p)) { parent = p; break; }
-    unsigned pad = 0;
-    for (unsigned n = 0; n < ui.slices.count; ++n) {
-        while (pad < sampler_pads && t.pads[pad].used()) ++pad; // from the first free pad on
-        if (pad >= sampler_pads) break;
-        t.pads[pad] = slice_sound(parent, ui.slices.start[n], ui.slices.end(n, frames));
+    const uint8_t group = slice_group(parent, t.pads); // MONO and THRU: one at a time; KIT: the hats
+    std::array<int, max_slices> keys; // each slice's note, for the pattern
+    keys.fill(-1);
+    // A Seq Record take ends first, as Undo ends it: kept open, it would go into the history after this step, with the
+    // slices' pattern in it, and Undo would take the pattern back and leave the pads.
+    if (ui.recording) set_recording(false);
+    end_take(); // and a Chop take
+    Edit edit = begin_edit("Slices to pads", ui.track, -1, false); // one undo: the pads, the pattern and which plays
+    auto lay = [&](unsigned pad, const PadSound& one) {
+        edit.pads_before.emplace_back(uint8_t(pad), pad_state(t, pad));
+        t.pads[pad] = one;
         send_pad(ui.track, pad);
+        edit.pads_after.emplace_back(uint8_t(pad), pad_state(t, pad));
+    };
+    unsigned pad = 0, laid = 0;
+    std::string said;
+    if (play == SlicePlay::Kit) { // one pad a sound, kicks first; the hats in one mute group
+        const unsigned from = chop_cut_slot(); // with CLEAN on: the sounds and the pads from the DRUMS stem
+        const auto loaded = library->slot(from);
+        bool hats = false;
+        std::array<int, max_slices> sound_of; // each slice's sound, so the pattern plays its pad
+        const auto sounds = kit_sounds(ui.slices, frames, loaded.hits, loaded.hit_count, loaded.autos, &sound_of);
+        std::vector<int> note(sounds.size(), -1);
+        for (size_t k = 0; k < sounds.size(); ++k) {
+            while (pad < sampler_pads && t.pads[pad].used()) ++pad;
+            if (pad >= sampler_pads) break;
+            const auto& sound = sounds[k];
+            PadSound one = slice_pad(parent, ui.slices, sound.slice, frames, SlicePlay::Poly, group);
+            one.sample = uint16_t(from);
+            if (sound.kind == KitKind::Hat || sound.kind == KitKind::OpenHat) { one.group = group; hats = true; }
+            lay(pad, one);
+            note[k] = int(sampler_first_note + pad);
+            ++laid;
+        }
+        for (unsigned n = 0; n < ui.slices.count && n < max_slices; ++n)
+            if (sound_of[n] >= 0) keys[n] = note[size_t(sound_of[n])];
+        if (laid) said = "Kit: " + std::to_string(laid) + (laid == 1 ? " sound" : " sounds") + (hats ? ", hats in mute group " + std::to_string(group) : "");
+    } else {
+        for (unsigned n = 0; n < ui.slices.count && n < max_slices; ++n) {
+            while (pad < sampler_pads && t.pads[pad].used()) ++pad; // from the first free pad on
+            if (pad >= sampler_pads) break;
+            lay(pad, slice_pad(parent, ui.slices, n, frames, play, group));
+            keys[n] = int(sampler_first_note + pad);
+            ++laid;
+        }
+        if (play != SlicePlay::Poly && laid) said = std::string(play == SlicePlay::Thru ? "Thru" : "Mono") + ": mute group " + std::to_string(group);
     }
+    // The pattern (Live's Slice to New MIDI Track): into the track's pattern when it holds nothing, else the first that
+    // holds nothing, which then plays; none free, none written. The pattern's own settings (Q, feel, what follows) stay.
+    if (with_pattern && laid) {
+        auto& slots = patterns.at[ui.track % track_count];
+        auto blank = [&](unsigned p) { const auto& x = slots[p]; return x.empty() && x.motion.empty() && x.punches.empty() && x.euclids.empty(); };
+        unsigned target = t.pattern % pattern_count;
+        if (!blank(target)) for (target = 0; target < pattern_count && !blank(target); ++target) {}
+        if (target < pattern_count) {
+            const uint32_t region = ui.slices.end(ui.slices.count - 1, frames) - ui.slices.start[0];
+            const double per_frame = slice_ticks_per_frame(parent, t.params[sampler::Follow] != 0, region, project.tempo_of(target));
+            const Pattern made = slice_pattern(ui.slices, frames, keys, per_frame, project.bar_ticks(), project.max_length());
+            edit.pattern = int16_t(target);
+            edit.pattern_before = std::make_unique<Pattern>(slots[target]);
+            slots[target].length = made.length;
+            slots[target].events = made.events;
+            slots[target].free = false;
+            edit.pattern_after = std::make_unique<Pattern>(slots[target]);
+            sync_pattern(ui.track, target);
+            if (target != t.pattern % pattern_count) { edit.pattern_was = int16_t(t.pattern % pattern_count); pick(ui.track, target); }
+            const unsigned bars = made.length / std::max(1u, project.bar_ticks());
+            said += (said.empty() ? "" : "; ") + std::string("P") + std::to_string(target + 1) + ": " + std::to_string(made.events.size()) +
+                    (made.events.size() == 1 ? " note, " : " notes, ") + std::to_string(bars) + (bars == 1 ? " bar" : " bars");
+        } else said += (said.empty() ? "" : "; ") + std::string("No empty pattern for the slices");
+    }
+    if (laid) edits.push(std::move(edit));
+    if (!said.empty()) notice(said);
 }
 
 // A track chain changed shape: motion on its effects named slots that now
@@ -1846,7 +2300,7 @@ void Context::set_effect_param(unsigned n, unsigned slot, unsigned param, int va
 
 void Context::set_effect_key(unsigned n, unsigned slot, unsigned key) {
     auto& chain = project.chain(n);
-    if (n >= chain_count || slot >= chain.size || !fx_keyable(chain.slots[slot].kind)) return;
+    if (n >= mix_chain_count || slot >= chain.size || !fx_keyable(chain.slots[slot].kind)) return;
     if (key >= fx_keys || (fx_key_is_track(key) && n < track_count && key - 1 == n)) key = 0; // a track keyed by itself hears itself
     chain.slots[slot].key = uint8_t(key);
     send({Type::FxKey, uint8_t(n), 0, uint16_t(slot), int16_t(key)});
@@ -1886,7 +2340,7 @@ void Context::sync_chain(unsigned n) {
         send_fx(Type::FxKind, n, k, 0, int16_t(s.kind));
         for (unsigned q = 0; q < effect_params; ++q) send_fx(Type::FxParam, n, k, q, s.params[q]);
         send_fx(Type::FxBypass, n, k, 0, int16_t(s.bypass));
-        if (n < chain_count) send({Type::FxKey, uint8_t(n), 0, uint16_t(k), int16_t(s.key)}); // roadmap P4
+        if (n < mix_chain_count) send({Type::FxKey, uint8_t(n), 0, uint16_t(k), int16_t(s.key)}); // roadmap P4
     }
 }
 
@@ -1904,8 +2358,9 @@ void Context::set_return(unsigned bus, int level) {
     send({Type::Return, 0, 0, uint16_t(bus % bus_count), int16_t(level)});
 }
 
-void Context::sync_song() {
-    const auto& song = project.song;
+void Context::sync_song() { send_song(project.song); }
+
+void Context::send_song(const Song& song) {
     for (unsigned n = 0; n < song.count; ++n) {
         Command c {Type::SongClip, 0, 0, uint16_t(n)};
         c.clip = song.clips[n];
@@ -1965,6 +2420,8 @@ void Context::send_repeat_velocity() {
     for (unsigned t = 0; t < track_count; ++t) send({Type::Repeat, uint8_t(t), 0, 5, int16_t(ui.settings.repeats_by_pressure())});
 }
 
+void Context::send_mute_kind() { send({Type::MuteMode, 0, 0, 0, int16_t(ui.settings.note_mutes)}); }
+
 void Context::send_click() {
     const auto& set = ui.settings;
     bool on = set.click == 1 || (set.click == 2 && (ui.recording || loop_click)); // a loop recording counts (docs/LOOPER.md)
@@ -1975,6 +2432,7 @@ void Context::send_click() {
 // armed, the take begins, after a bar's count when Count-In is on.
 void Context::play(bool external) {
     if (host.playing()) return;
+    if (ui.jam_sheet && ui.page == PageId::Song && !external) { audition_jam(); return; } // JAMS: the picked jam
     played_song = ui.page == PageId::Song;
     ui.span_count = 0; // the punches heard (pad-fx C) counted from this Play
     if (ui.rec_armed) { ui.rec_armed = false; set_recording(true); }
@@ -2000,7 +2458,7 @@ void Context::play_continue(bool external) {
     if (ui.rec_armed) { ui.rec_armed = false; set_recording(true); }
     bool count = (ui.recording || host.looper().armed()) && ui.settings.count_in && !external;
     if (played_song) send({Type::Play, uint8_t(count), 0, uint16_t(host.song_bar()), 1}); // from the bar it stopped in
-    else { Command c {Type::Play, uint8_t(count)}; c.position = ui.locate; send(c); }
+    else { Command c {Type::Play, uint8_t(count)}; c.position = uint32_t(played_ticks(ui.locate, track().speed)); send(c); } // as the track plays it
     if (external) send({Type::ExtSync, 0, 0, 3});
 }
 
@@ -2024,6 +2482,8 @@ void Context::double_notes() {
     auto& p = pattern();
     bool copy = ui.settings.double_copies;
     if (!double_pattern(p, project.max_length(), copy)) return; // its motion too (Settings' Empty: the new half bare)
+    stop_growing(ui.track, track().pattern);
+    p.free = false; // a length set by hand
     sync_pattern(ui.track, track().pattern);
 }
 
@@ -2032,6 +2492,8 @@ void Context::half_length() {
     uint32_t half = std::max<uint32_t>(p.length / 2, 1);
     if (half == p.length) return;
     edit_pattern(ui.track, track().pattern, "Half Seq", [&] {
+        stop_growing(ui.track, track().pattern);
+        p.free = false; // a length set by hand
         half_pattern(p); // its motion past the half goes with the notes
         sync_pattern(ui.track, track().pattern);
     });
@@ -2086,9 +2548,11 @@ void Context::set_recording(bool on) {
         ui.rec_armed = false;
         take_track = ui.track; take_pattern = track().pattern;
         take_edit = std::make_unique<Edit>(begin_edit("Take", ui.track, track().pattern, true));
+        start_free(ui.track, track().pattern, host.playing() ? host.song_playing() : played_song); // part of the take
         return;
     }
     for (auto& h : held_notes) h.key = -1; // notes held on keep the length they were written with
+    end_free(); // a Free pattern's length, in the take
     song_tick(); // finishes the clips and the punch being written
     if (take_edit) commit_edit(std::move(*take_edit));
     take_edit.reset();
@@ -2099,6 +2563,13 @@ void Context::set_recording(bool on) {
 void Context::seq_record() {
     if (ui.recording) { set_recording(false); return; }
     if (frozen_edit(ui.track)) return; // freeze plan F2c: "Unfreeze track N?" first
+    if (track().used() && track().off && !host.song_playing()) { // off in its sequence: a new take in its first empty pattern, kept
+        int empty = -1;
+        for (unsigned n = 0; n < pattern_count && empty < 0; ++n) if (patterns.at[ui.track % track_count][n].empty()) empty = int(n);
+        if (empty < 0) { notice("No empty pattern left"); return; }
+        pick(ui.track, unsigned(empty));
+        notice("New take: P" + std::to_string(empty + 1));
+    }
     if (host.playing()) { set_recording(true); return; }
     ui.rec_armed = !ui.rec_armed;
 }

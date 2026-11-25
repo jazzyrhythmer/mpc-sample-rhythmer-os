@@ -12,6 +12,7 @@ constexpr uint32_t autosave_idle_ms = 3000;   // this long after the last contro
 constexpr uint32_t autosave_retry_ms = 10000; // after a save that found no card: not before this
 
 struct AutosaveFacts {
+    bool enabled = true; // Settings: disable recovery checkpoints too
     bool dirty = false;     // changed since manual save or load
     bool playing = false;   // the sequencer, the song or a loop take runs
     bool recording = false; // a pattern take, a sample take, a print, an auto sample or an export runs
@@ -23,7 +24,7 @@ struct AutosaveFacts {
 };
 
 inline bool autosave_due(const AutosaveFacts& f) {
-    if (!f.dirty || f.playing || f.recording || f.sheet || f.loading || f.editing) return false;
+    if (!f.enabled || !f.dirty || f.playing || f.recording || f.sheet || f.loading || f.editing) return false;
     if (f.now - f.last_input < autosave_idle_ms) return false;
     return f.now - f.last_try >= (f.failed ? autosave_retry_ms : autosave_idle_ms);
 }

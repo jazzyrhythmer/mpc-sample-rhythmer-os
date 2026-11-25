@@ -37,6 +37,7 @@ void draw_levels_sheet(ui::Paint& p, const Snapshot& s);  // 16 Levels' FILE and
 void draw_lesson(ui::Paint& p, const Snapshot& s);     // a lesson's step on B1-B3 or K1-K3 (no lights): the key or the card pulses
 void draw_key_list(ui::Paint& p, const Snapshot& s);   // a soft key of several pages: their names for a moment after a press
 void draw_menu(ui::Paint& p, const Snapshot& s);       // the encoder held: HERE and GO (pages/menu_sheet.cpp)
+void draw_history(ui::Paint& p, const Snapshot& s);    // Shift + Minus held: the undo list (pages/history_sheet.cpp)
 void draw_loading_sheet(ui::Paint& p, const Snapshot& s); // a project loading: built, then its samples coming in
 void draw_ask_sheet(ui::Paint& p, const Snapshot& s);  // a question before an erase (shell/ask.cpp)
 void draw_notice(ui::Paint& p, const Snapshot& s);     // copying a pad, or what an undo did

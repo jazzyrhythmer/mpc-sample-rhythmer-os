@@ -1,8 +1,8 @@
 # Rhythmer OS user guide
 
-Rhythmer OS 0.2.0 for MPC Sample. Developed by jazzy rhythmer, based on Melodee by Kerem Kiliç (Ellic Studio). This owner beta awaits physical-device validation.
+Rhythmer OS 0.2.0 for MPC Sample. Developed by jazzy rhythmer, based on Melodee by Kerem Kiliç (Ellic Studio).
 
-Start with the [0.2.0 practical manual](guide/MANUAL_020_EN.md), [Your first groove with RHYTHMER OS.](guide/FIRST_GROOVE_020_EN.md), [essential controls](guide/QUICK_REFERENCE_020_EN.md) and [system map](guide/SYSTEM_MAP_020_EN.md)..
+Start with the [0.2.0 practical manual](guide/MANUAL_020_EN.md), [Your first groove with RHYTHMER OS.](guide/FIRST_GROOVE_020_EN.md), [essential controls](guide/QUICK_REFERENCE_020_EN.md) and [system map](guide/SYSTEM_MAP_020_EN.md).
 
 The chapters below provide the foundation reference. For RHYTHMER-specific engine controls, track setup, GEN, Acid and Break, use the 0.2.0 manual and First Groove above.
 
@@ -28,7 +28,7 @@ The chapters below provide the foundation reference. For RHYTHMER-specific engin
    - [Light show](guide/basics.md#light-show)
 4. [Tracks](guide/tracks.md)
    - [Select a track](guide/tracks.md#select-a-track)
-   - [The Tracks page](guide/tracks.md#the-tracks-page)
+   - [Track speed](guide/tracks.md#track-speed)
    - [Make a new track](guide/tracks.md#make-a-new-track)
    - [Freeze a track](guide/tracks.md#freeze-a-track)
 5. [Kits and sampling](guide/kits-and-sampling.md)
@@ -48,6 +48,7 @@ The chapters below provide the foundation reference. For RHYTHMER-specific engin
    - [Plug-in instruments](guide/plug-ins.md#plug-in-instruments)
    - [Drum machine plug-ins](guide/plug-ins.md#drum-machine-plug-ins)
    - [Plug-in effects](guide/plug-ins.md#plug-in-effects)
+   - [A plug-in's own screen](guide/plug-ins.md#a-plug-ins-own-screen)
    - [Neural Amp Modeler](guide/plug-ins.md#neural-amp-modeler)
    - [Plugin Data](guide/plug-ins.md#plugin-data)
    - [Latency and sample rate](guide/plug-ins.md#latency-and-sample-rate)
@@ -71,15 +72,25 @@ The chapters below provide the foundation reference. For RHYTHMER-specific engin
    - [Hold SEQ](guide/sequencing.md#hold-seq)
    - [Record](guide/sequencing.md#record)
    - [The pattern editors](guide/sequencing.md#the-pattern-editors)
+   - [Lanes of their own length](guide/sequencing.md#lanes-of-their-own-length)
+   - [Patterns of odd lengths](guide/sequencing.md#patterns-of-odd-lengths)
    - [Time Correct](guide/sequencing.md#time-correct)
+   - [Half and double](guide/sequencing.md#half-and-double)
    - [Sequences and follow actions](guide/sequencing.md#sequences-and-follow-actions)
    - [Tempo](guide/sequencing.md#tempo)
 10. [Song](guide/song.md)
+   - [Record into the song](guide/song.md#record-into-the-song)
+   - [Jam capture](guide/song.md#jam-capture)
    - [Export](guide/song.md#export)
 11. [Looper](guide/looper.md)
 12. [Mixer and effects](guide/mixer-and-effects.md)
    - [Signal flow](guide/mixer-and-effects.md#signal-flow)
-   - [Sends](guide/mixer-and-effects.md#sends)
+   - [The mixer](guide/mixer-and-effects.md#the-mixer)
+   - [SENDS](guide/mixer-and-effects.md#sends)
+   - [FX](guide/mixer-and-effects.md#fx)
+   - [EQ](guide/mixer-and-effects.md#eq)
+   - [COMP](guide/mixer-and-effects.md#comp)
+   - [Submixes, buses, input and master](guide/mixer-and-effects.md#submixes-buses-input-and-master)
    - [Pad sends](guide/mixer-and-effects.md#pad-sends)
    - [Effect chains](guide/mixer-and-effects.md#effect-chains)
    - [Knob FX](guide/mixer-and-effects.md#knob-fx)

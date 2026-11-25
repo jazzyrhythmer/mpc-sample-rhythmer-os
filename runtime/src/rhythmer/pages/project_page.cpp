@@ -21,17 +21,21 @@ namespace rhythmer {
 namespace {
 using namespace ui;
 constexpr unsigned visible = list_rows;
-const juce::Colour amber = colour::amber;
+const juce::Colour& amber = colour::amber; // the palette in use, set each frame (a copy keeps the first palette's)
 
-enum Action { Load, Save, SaveAsNew, Rename, Duplicate, MoveTo, NewFolder, OpenAtStart, Delete, LoadKit };
+enum Action { Load, Save, SaveAsNew, Rename, Duplicate, MoveTo, NewFolder, OpenAtStart, Delete, LoadKit, Revert };
 
-// The sheet's rows for an entry: the open project's, or another's with Load first.
-unsigned actions(bool open, std::array<Action, 8>& out, bool mpc = false) {
+// The sheet's rows for an entry: the open project's, or another's with Load first. REVERT (issue 18) on the open
+// one while it has a file and changes since it was saved: the file opened again, the changes left behind.
+unsigned actions(bool open, std::array<Action, 9>& out, bool mpc = false, bool revert = false) {
     if (mpc) { out[0] = Load; out[1] = LoadKit; return 2; } // the MPC's own file is only ever read
+    if (open && revert) { out = {Save, Revert, SaveAsNew, Rename, Duplicate, MoveTo, NewFolder, OpenAtStart, Delete}; return 9; }
     if (open) { out = {Save, SaveAsNew, Rename, Duplicate, MoveTo, NewFolder, OpenAtStart, Delete}; return 8; }
     out = {Load, LoadKit, Duplicate, Rename, MoveTo, NewFolder, OpenAtStart, Delete};
     return 8;
 }
+// Whether the open project can go back to its file (REVERT on its sheet).
+bool can_revert(bool dirty, const std::string& path) { return dirty && !path.empty(); }
 
 // The card itself: Rhythmer/Projects' grandparent.
 std::string card_dir(const ProjectStore::View& v) { return v.root.empty() ? std::string() : std::filesystem::path(v.root).parent_path().parent_path().string(); }
@@ -220,8 +224,8 @@ void draw(Paint& p, const Snapshot& s) {
     if (sheet) {
         const auto* e = in_hand;
         if (!e || e->kind != ProjectEntry::Kind::Project) return;
-        std::array<Action, 8> list {};
-        unsigned n = actions(open_one, list, mpc);
+        std::array<Action, 9> list {};
+        unsigned n = actions(open_one, list, mpc, can_revert(s.dirty, s.project_path));
         CardSheet m;
         m.chip = open_one ? "OPEN" : "PROJECT"; m.title = e->name;
         if (open_one && s.dirty) { m.detail = "UNSAVED"; m.detail_colour = amber; }
@@ -229,7 +233,11 @@ void draw(Paint& p, const Snapshot& s) {
         for (unsigned k = 0; k < n; ++k) {
             bool start = v.start == e->path;
             switch (list[k]) {
-            case Load: m.items[k] = card_item(Icon::Folder, "LOAD"); break;
+            case Load: // Autosave Off (issue 18): the open project's changes are left behind, so it asks once more
+                m.items[k] = card_item(Icon::Folder, "LOAD", !s.ui.settings.autosave && s.dirty
+                                       ? (s.ui.delete_armed && k == s.ui.sheet_row ? "PRESS AGAIN" : "CHANGES LOST") : "");
+                break;
+            case Revert: m.items[k] = card_item(Icon::Undo, "REVERT", s.ui.delete_armed && k == s.ui.sheet_row ? "PRESS AGAIN" : "TO SAVED"); break;
             case LoadKit: m.items[k] = card_item(Icon::Pads, "LOAD KIT", "NO PATTERNS"); break;
             case Save: m.items[k] = card_item(Icon::Save, "SAVE"); break;
             case SaveAsNew: m.items[k] = card_item(Icon::File, "SAVE AS NEW"); break;
@@ -262,7 +270,10 @@ void act(Context& c, Action action) {
     const auto* e = entry_at(v, c.ui.project_cursor);
     if (!e || e->kind != ProjectEntry::Kind::Project || !c.store) return;
     bool open = e->path == c.project_path;
-    if (action != Delete) c.ui.delete_armed = false;
+    // Delete, REVERT and (Autosave Off, with changes) Load ask once more: the second press does it
+    bool twice = action == Delete || action == Revert || (action == Load && !c.ui.settings.autosave && c.dirty);
+    if (!twice) c.ui.delete_armed = false;
+    else if (!c.ui.delete_armed) { c.ui.delete_armed = true; return; }
     switch (action) {
     case Load:
         if (e->mpc()) c.notice("Opening " + e->name);
@@ -274,8 +285,8 @@ void act(Context& c, Action action) {
     case Duplicate: c.store->duplicate(e->path); break;
     case NewFolder: c.store->new_folder(); break;
     case OpenAtStart: c.store->open_at_start(e->path); break;
+    case Revert: c.store->load(c.project_path); c.notice("Reverted to saved"); break; // switch_to() clears dirty
     case Delete:
-        if (!c.ui.delete_armed) { c.ui.delete_armed = true; return; } // asks once more
         c.store->remove(e->path);
         if (open) c.project_path.clear(); // still open, but no longer on the card
         c.ui.delete_armed = false;
@@ -293,8 +304,8 @@ void act(Context& c) {
     const auto* e = entry_at(v, c.ui.project_cursor);
     if (!e) return;
     bool open = e->path == c.project_path;
-    std::array<Action, 8> list {};
-    unsigned n = actions(open, list, e->mpc() || c.project_folder == ":recovery");
+    std::array<Action, 9> list {};
+    unsigned n = actions(open, list, e->mpc() || c.project_folder == ":recovery", can_revert(c.dirty, c.project_path));
     act(c, list[c.ui.sheet_row % n]);
 }
 
@@ -312,14 +323,14 @@ void move_here(Context& c) {
 
 void open_list(Context& c) {
     c.ui.project_list = true;
-    if (!c.project_list_opened) { // the first time: the open project's folder, on it
+    if (!c.project_list_opened) { // the first time: the open project's folder, on it; with none on the card, its top
         c.project_list_opened = true;
         auto v = view_of(c);
         const std::string card = card_dir(v);
         if (!card.empty() && c.project_path.rfind(card + "/", 0) == 0) { // anywhere on the card
             c.project_folder = card_folder_of(card, v.root, std::filesystem::path(c.project_path).parent_path().string());
             c.project_row_path = c.project_path;
-        }
+        } else if (!card.empty()) c.project_folder = card_folder;
     }
     if (c.store) c.store->list(c.project_folder); // else where it was left, on the same row
 }
@@ -336,8 +347,8 @@ void wheel(Context& c, int delta) {
     if (c.ui.sheet_open) {
         auto v = view_of(c);
         const auto* e = entry_at(v, c.ui.project_cursor);
-        std::array<Action, 8> list {};
-        unsigned n = actions(e && e->path == c.project_path, list, e && (e->mpc() || c.project_folder == ":recovery"));
+        std::array<Action, 9> list {};
+        unsigned n = actions(e && e->path == c.project_path, list, e && (e->mpc() || c.project_folder == ":recovery"), can_revert(c.dirty, c.project_path));
         c.ui.sheet_row = uint8_t(std::clamp<int>(c.ui.sheet_row + delta, 0, int(n) - 1));
         c.ui.delete_armed = false;
         return;
@@ -400,7 +411,7 @@ void soft(Context& c, int key) {
         bool inside = on_internal(c.project_folder);
         c.project_places[inside ? 1 : 0] = {c.project_folder, c.ui.project_cursor, true};
         const auto& back = c.project_places[inside ? 0 : 1];
-        c.project_folder = back.set ? back.folder : inside ? std::string() : std::string(internal_folder);
+        c.project_folder = back.set ? back.folder : std::string(inside ? card_folder : internal_folder); // the card: its top
         c.ui.project_cursor = back.set ? back.row : first_entry;
         c.project_row_path.clear();
         if (c.store) c.store->list(c.project_folder);
@@ -456,8 +467,8 @@ bool project_erase(Context& c) {
     auto v = view_of(c);
     const auto* e = entry_at(v, c.ui.project_cursor);
     if (!e || e->kind != ProjectEntry::Kind::Project || e->mpc()) return false;
-    std::array<Action, 8> list {};
-    unsigned n = actions(e->path == c.project_path, list, e->mpc()), row = n;
+    std::array<Action, 9> list {};
+    unsigned n = actions(e->path == c.project_path, list, e->mpc(), can_revert(c.dirty, c.project_path)), row = n;
     for (unsigned k = 0; k < n; ++k) if (list[k] == Delete) row = k;
     if (row == n) return false;
     if (!c.ui.sheet_open || c.ui.sheet_row != row) { c.ui.sheet_open = true; c.ui.sheet_row = uint8_t(row); c.ui.delete_armed = false; }

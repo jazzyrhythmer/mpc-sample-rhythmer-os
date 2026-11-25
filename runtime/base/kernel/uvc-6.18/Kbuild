@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0
+# kernel/uvc for firmware 1.4's kernel (6.18.59-imb-2026-10-26-rt9), built
+# only with KERNEL=6.18 (tools/build_kernel_modules.sh). The same files from
+# inMusic's public 6.18.45 release brought to 6.18.59 with kernel.org's stable
+# increments, with kernel/uvc's "sample-base:" changes in f_uvc.c, uvc_v4l2.c
+# and uvc.h.
+obj-m := sample_base_uvc.o
+sample_base_uvc-y := f_uvc.o uvc_configfs.o uvc_queue.o uvc_v4l2.o uvc_video.o uvc_common.o
+ifneq ($(CONFIG_TRACING),)
+CFLAGS_uvc_trace.o := -I$(src)
+sample_base_uvc-y += uvc_trace.o
+endif

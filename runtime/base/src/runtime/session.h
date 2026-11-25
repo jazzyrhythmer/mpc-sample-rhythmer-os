@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <unistd.h>
 
 // What the runtime's threads share. An app reads it through App::session().
 // Four threads run at once:
@@ -36,6 +37,16 @@ struct Session {
     std::atomic<uint32_t> last_input {0};          // pack_last_input(); the service thread writes the power key.
     std::atomic<unsigned> hardware_events {0}, external_events {0}, synthetic_events {0}, clocks {0};
     std::atomic<unsigned> midi_send_errors {0};
+    // Any thread, the audio thread too: the MIDI thread runs a pass now,
+    // App::midi_output() among it, instead of at its next wake-up, so a
+    // message the app has just decided goes out at once. One write to an
+    // eventfd: it never blocks. The MIDI thread sets the fd while it runs.
+    std::atomic<int> midi_wake {-1};
+    void wake_midi() const {
+        int fd = midi_wake.load(std::memory_order_relaxed);
+        uint64_t one = 1;
+        if (fd >= 0 && ::write(fd, &one, sizeof(one)) < 0) {} // full (never in practice): a wake is already due
+    }
 
     std::atomic<bool> push_exit {true}; // Wheel Push returns to the stock app.
 

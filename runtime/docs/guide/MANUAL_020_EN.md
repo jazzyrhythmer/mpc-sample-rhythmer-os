@@ -1,6 +1,32 @@
 # RHYTHMER OS — User manual
 
-RHYTHMER OS **0.2.0** for MPC Sample. Choose a chapter from the contents, or follow [Your first groove](FIRST_GROOVE_020_EN.md) to build and save a pattern from scratch.
+RHYTHMER OS **0.3.0** for MPC Sample. Choose a chapter from the contents, or follow [Your first groove](FIRST_GROOVE_020_EN.md) to build and save a pattern from scratch.
+
+## New in 0.3.0
+
+- **24 engine entries:** Amino adds wavetable synthesis with **324 original presets**; Fizzik adds physical-modeling synthesis with **31 original presets**. Both have their own input-responsive engine screen.
+- **69 Rhythmer Kits:** 32 new sixteen-pad kits pair Weird Dreams' original eight-voice banks; one KrautDrums kit contains all sixteen original voices. These are **33 added complete kits**.
+- **Break PERF:** held effects remain active across performance pages. A/B switching and Return follow the FM-1 performance workflow more closely; performance-pad velocity does not reduce the break's level.
+- **Clearer editing:** source-ordered parameter groups, selected-pad controls, step lights and navigation across GEN, Acid and Break.
+- **Stock firmware:** 1.3.0.12, 1.4.0.7 and 1.4.0.8. You do not need to update the official firmware to use 0.3.0. Firmware 1.4 needs Developer Mode; follow the [installation guide](install.md).
+
+Original preset names are retained. Rhythmer Kit, Acid and Break are integrated host workflows; the original engine authors retain credit for their instruments and sounds.
+
+### Amino and Fizzik
+
+![Amino: original PD Wave Drift preset](../images/rhythmer/030-amino.png)
+
+![Fizzik: original StarlightPad preset](../images/rhythmer/030-fizzik.png)
+
+Load either engine on a Plugin track. On PRESETS, turn the encoder to browse; push / LOAD to choose the original program. PLAY a note to hear it, and use EDIT for the source controls. Amino groups layers, oscillators, filter, envelopes, modulation and FX; Fizzik groups its exciter, two resonators, envelopes, modulation and FX. These source parameters retain their original sound behavior.
+
+### The added kits
+
+![Weird Dreams: a complete sixteen-pad kit](../images/rhythmer/030-weird-dreams.png)
+
+![KrautDrums: all sixteen original voices](../images/rhythmer/030-krautdrums.png)
+
+Choose a complete kit in Rhythmer Kit PRESETS. PAD SOURCE changes one selected pad; it does not load a full kit. Save an edited kit as a User Kit before switching factory kits.
 
 ## Essential controls
 
@@ -11,7 +37,7 @@ RHYTHMER OS **0.2.0** for MPC Sample. Choose a chapter from the contents, or fol
 | Task | Controls | Result |
 | --- | --- | --- |
 | Return or cancel | Hold SHIFT, push the encoder, then release SHIFT | Back one level. A confirmation is cancelled. It also works in MENU. |
-| Open TRACKS | Press PAD FX + KNOB FX together | Select and mix tracks; B1 TRACK SETUP changes the selected track's instrument/type. |
+| Open MIXER | Press PAD FX + KNOB FX together | Select and mix tracks; MENU → HERE → TRACK SETUP changes the selected track's instrument/type. |
 | Select a track | Hold PAD BANK, tap pad 1–16, release PAD BANK | The header changes to that track. This does not record a note. |
 | Play the selected instrument | Press SAMPLE | Pads play the selected instrument. |
 | Choose patterns for one track | Press SEQ, then B1 until PATTERNS is shown | Pads choose patterns, not notes. |
@@ -34,7 +60,7 @@ A single PAD BANK tap changes the pad bank. Holding it while selecting a track d
 | Item | Meaning | How to select it |
 | --- | --- | --- |
 | Project | The complete session: tracks, patterns, mix and arrangement | SHIFT + Pad 16 → SAVE / OPEN / NEW; SHIFT + B1 SAVE AS chooses a folder/name |
-| Track | One part of the session; its instrument/audio, patterns and mix | PAD BANK + pad 1–16, or TRACKS |
+| Track | One part of the session; its instrument/audio, patterns and mix | PAD BANK + pad 1–16, or MIXER |
 | Pattern | Notes and supported motion for one track; up to 128 per track | SEQ → B1 PATTERNS → pattern pad |
 | Sequence | A pattern number launched across tracks | SEQ → B1 SEQUENCES → sequence pad |
 
@@ -77,7 +103,7 @@ A first install starts in Basic. Settings → FEATURES = FULL shows MIDI/Audio a
 | Screen | What the pads do | Use it for |
 | --- | --- | --- |
 | SAMPLE sound screen | Play notes, kit sounds or sample chops | Audition, record notes, choose presets and edit sounds |
-| TRACKS | Select tracks | Track level/pan/send A, TRACK SETUP and type changes |
+| MIXER | Select tracks | Track faders, pan/sends, EQ and compression; MENU → HERE → TRACK SETUP changes type |
 | SEQUENCES | Launch one sequence across tracks | Change several tracks together |
 | PATTERNS | Launch patterns on the selected track | Pick the pattern you will edit or generate |
 | Step Edit / Roll | Edit steps or note events | Program or correct the selected pattern |
@@ -108,18 +134,18 @@ The type cards are **Drum / Keygroup / Plugin** in Basic. **MIDI / Audio** are a
 | Drum | A native sample kit with independently loaded pads | Samples, an MPC kit or input recording |
 | Keygroup | One sample or multisampled instrument across the keys | WAV, SFZ, MPC keygroup program, EXS, SoundFont or DecentSampler instrument |
 | Plugin | One plug-in instrument | An engine from the installed plug-in list; Rhythmer Kit is also here |
-| MIDI, Full | Notes sent to external equipment | Choose an output port/channel; connect the external instrument's audio separately |
-| Audio, Full | A recorded input take on the track's pattern | Configure INPUT, then record with SEQ RECORD + PLAY |
+| MIDI | Notes sent to external equipment | Choose an output port/channel; connect the external instrument's audio separately |
+| Audio | A recorded input take on the track's pattern | Configure INPUT, then record with SEQ RECORD + PLAY |
 
-Drum and MIDI have a second source-selection step. **B1 BACK / SHIFT + encoder push** returns from sources to types, then to the previous track screen. An entirely empty project can return to TRACKS.
+Drum and MIDI have a second source-selection step. **B1 BACK / SHIFT + encoder push** returns from sources to types, then to the previous track screen. An entirely empty project can return to MIXER.
 
-An intentionally empty **Sample Kit** is not the same as an EMPTY track. On its **SOUND / TRIM** page, encoder push opens **SAMPLES** for the selected empty pad, even when every pad is empty. To change this track’s type, use **TRACKS → B1 TRACK SETUP → TRACK TYPE**. The printed **SAMPLE SELECT** button opens the same sample browser; **SAMPLE RECORD** opens input recording.
+An intentionally empty **Sample Kit** is not the same as an EMPTY track. On its **SOUND / TRIM** page, encoder push opens **SAMPLES** for the selected empty pad, even when every pad is empty. To change this track’s type, use **MIXER → hold encoder → HERE → TRACK SETUP → TRACK TYPE**. The printed **SAMPLE SELECT** button opens the same sample browser; **SAMPLE RECORD** opens input recording.
 
 ## 4. Replace an instrument or change track type
 
 ![TRACK SETUP: replace an instrument, change type or delete separately](../images/rhythmer/020-trackactions.png)
 
-**Start:** select the target track, then press **PAD FX + KNOB FX → B1 TRACK SETUP**.
+**Start:** select the target track, then press **PAD FX + KNOB FX → hold encoder → HERE → TRACK SETUP**.
 
 | Item | What it changes | What it keeps |
 | --- | --- | --- |
@@ -176,6 +202,15 @@ To save a User Sound:
 
 The same slot is overwritten. User presets save instrument settings, not the song's notes or original sample files. Save the project separately and keep source samples on the card.
 
+### Factory presets and source sounds
+
+| Engine | Included original presets | Notes |
+| --- | --- | --- |
+| Amino | 324 | The original factory bank and embedded waves |
+| Fizzik | 31 | The original factory bank |
+
+Rhythmer Kit includes 32 Weird Dreams kits made by pairing its 64 original eight-voice banks, plus one KrautDrums kit with all 16 original voices. Source patches keep their original values. Pad routes are ordered for Rhythmer's GEN lanes. KrautDrums uses its second snare in the clap lane; the original source has no clap instrument. Both sources are selected inside Rhythmer Kit rather than as separate instruments in the main plug-in list.
+
 ## 7. Use Rhythmer Kit
 
 ![User Kit: choose a slot and save the complete kit](../images/rhythmer/020-kit-save.png)
@@ -184,7 +219,7 @@ The same slot is overwritten. User presets save instrument settings, not the son
 
 ![Rhythmer Kit: choose a pad engine and sound](../images/rhythmer/020-kit-source.png)
 
-Load **Rhythmer Kit** from the top of the plug-in list. It has **36 complete factory kits**, with pads 1–16 filled. Start with bank A.
+Load **Rhythmer Kit** from the top of the plug-in list. It has **69 complete factory kits**, with pads 1–16 filled. Start with bank A.
 
 | Task | Procedure | Check |
 | --- | --- | --- |
@@ -206,7 +241,7 @@ The tool's **B3** cycles **PAD SOURCE → SAVE → EDIT**. Its **B2 KIT PRESETS*
 3. While mute mode is active, **SHIFT + pad** solos that populated pad across banks A–D. Repeat on the soloed pad to restore the populated pads.
 4. Tap **MUTE** again to leave latched mute mode. Pad mute settings remain active while patterns and live notes play.
 
-Muted pad LEDs are red; a soloed pad is white. The screen says **Mute: pads** and shows the affected pad number after a change. **SHIFT + MUTE** clears all pad mutes and track mute/solo states across the project. On **TRACKS**, MUTE + pad still operates on whole tracks. Hold PAD BANK to select a different track as usual.
+Muted pad LEDs are red; a soloed pad is white. The screen says **Mute: pads** and shows the affected pad number after a change. **SHIFT + MUTE** clears all pad mutes and track mute/solo states across the project. On **MIXER**, MUTE + pad still operates on whole tracks. Hold PAD BANK to select a different track as usual.
 
 Pad mute blocks new notes from the pads, sequencer and incoming MIDI; existing release and effect tails decay naturally. It does not change pad volume, the sound design or the recorded pattern. Mutes belong to the project, survive project save/load and remain when changing the kit preset. User Kit presets do not store track mute settings. A frozen kit plays a stereo print: accept the existing UNFREEZE prompt, then repeat the mute action to edit its individual pads.
 
@@ -228,7 +263,7 @@ WAV, MP3, FLAC, Ogg Vorbis and AIFF are supported. A long file may be streamed o
 
 ### Load only a kit from another MPC project
 
-Select the destination track, open **TRACKS → B1 TRACK SETUP → LOAD MPC KIT** and choose the project/program. Use **B2** to choose card/internal storage when offered. This loads its kit onto the selected track; opening a project from the **Project OPEN** screen is a different action and replaces the current project.
+Select the destination track, open **MIXER → hold encoder → HERE → TRACK SETUP → LOAD MPC KIT** and choose the project/program. Use **B2** to choose card/internal storage when offered. This loads its kit onto the selected track; opening a project from the **Project OPEN** screen is a different action and replaces the current project.
 
 On the native sample track, press **B1/B2/B3 repeatedly until the required caption appears**: SOUND, TRIM, TUNE, AMP ENV, PLAY, MIX, FILTER and FILT ENV are available in Basic. Full adds layers, colour, sends, follow, cloud and kit-filter pages. A direct Trim shortcut can enter TRIM instead of SOUND.
 
@@ -375,22 +410,21 @@ Load A and Load B are different actions. On source B changes, the bar structure 
 
 ## 13. Mix and identify the filter/effect you are changing
 
-![TRACKS: select a track and balance LEVEL, PAN and SEND A](../images/rhythmer/020-tracks.png)
+![MIXER: select a track and balance LEVEL, PAN and SEND A](../images/rhythmer/020-tracks.png)
 
 ![Full mode: track sends to shared buses](../images/rhythmer/020-sends.png)
 
-### Open SENDS and choose bus A–D
+### Track levels and sends A–D
 
-1. Press **PAD FX + KNOB FX** together to open TRACKS, then **B2 SENDS**.
-2. In BASIC, **Switch to FULL?** appears. **B1 CANCEL** keeps BASIC and returns to the same mixer page. **B3 ENABLE FULL** enables FULL and opens SENDS. FULL also reveals the other advanced pages; it does not change your tracks, notes or sounds.
-3. Use **K2 BUS** to select A, B, C or D; **K1 SEND** adjusts the selected track’s send to that bus, and **K3 RETURN** adjusts the shared bus’s return level. Minus / Plus also select the bus.
-4. **B1 TRACKS** returns to the track mixer. FULL opens SENDS directly on subsequent B2 presses.
+1. Press **PAD FX + KNOB FX** together to open **MIXER**. Turn the encoder or press the track's pad to select it. Use the **fader** for that channel's level.
+2. In BASIC, **B1 SENDS** offers **ENABLE FULL** for the advanced mixer. **B1 CANCEL** keeps BASIC; **B3 ENABLE FULL** changes the existing FEATURES setting without changing sounds or patterns.
+3. In FULL, press **B1** until **SENDS** is selected. **K1 / K2 / K3** adjust this channel's sends **A / B / C** directly. Press **+** for the second row: **PAN / OUT / SEND D**; K3 adjusts D. Press **−** for A / B / C again. SHIFT temporarily shows the other row.
+4. Press **PAD BANK** to show the other mixer channels. Select the labelled bus A–D and use the **fader** for its shared return level. Press PAD BANK again for the tracks.
+5. **B1** switches SENDS and FX. **B2 EQ** and **B3 COMP** select the other mixer blocks in FULL. Turn NOTE REPEAT off to use those page buttons when its rate overlay is active.
 
 ![BASIC: confirm FULL mode before opening SENDS](../images/rhythmer/020-sends-enable-full.png)
 
-The encoder starts on CANCEL in the confirmation. **SHIFT + encoder push** cancels even if ENABLE FULL is selected. You can also choose BASIC or FULL at **SHIFT + Pad 8 → Settings → K1 FEATURES**. During a lesson, finish or leave the lesson before opening SENDS.
-
-On TRACKS, active **NOTE REPEAT / arp** still uses B1–B3 for repeat rates. Turn it off to restore TRACK SETUP / SENDS / FX. **SHIFT + B2 MOVE** and **SHIFT + B3 COPY** keep their track-selection actions.
+**SHIFT + encoder push** cancels the confirmation. In the Mixer itself, that gesture names a selected used track; press **SAMPLE** to return to its sound. **MENU → HERE → TRACK SETUP** opens instrument/type changes. Its BACK/SELECT buttons retain their own jobs while Note Repeat continues running.
 
 
 
@@ -401,12 +435,12 @@ On TRACKS, active **NOTE REPEAT / arp** still uses B1–B3 for repeat rates. Tur
 | Native sample FILTER | One sample pad | Sample track B3 FILTER |
 | Native sample KIT FILT / SOUND filter | All pads of that native sample kit | Its SOUND / KIT FILT pages |
 | DJ FILTER / ECHO / SPACE | Separate OS performance processing on the track | Plug-in B2 PERFORM |
-| SEND A–D | Sends to shared buses | TRACKS → B2 SENDS; BASIC offers FULL first. B3 FX edits effect chains |
+| SEND A–D | Sends to shared buses | MIXER → B1 SENDS; BASIC offers FULL first. B1 also switches to FX |
 | Engine FX / track inserts / bus FX | Different processing stages | Engine EDIT or the appropriate FX chain |
 
 **ECHO is not simply SEND A and SPACE is not simply SEND B.** If effects sound excessive, reduce PERFORM ECHO/SPACE and track sends, then check the engine's own FX and inserts. Turning an effect input down does not erase an existing tail; double STOP cuts current audio.
 
-TRACKS uses **K1 LEVEL / K2 PAN / K3 SEND A**. The default black-and-white screen keeps colour names/metadata for kits without requiring colour to identify the selected track or pad.
+MIXER uses the **fader** for level. In FULL SENDS, K1–K3 are A/B/C; the second row is PAN/OUT/D. The default black-and-white screen keeps colour names/metadata for kits without requiring colour to identify the selected track or pad.
 
 ## 14. Save, reopen and recover
 
@@ -482,7 +516,7 @@ MIDI clock display is stabilised, but the clock-following algorithm is unchanged
 | Kit knob changes the wrong sound | Selected P number | Hit the intended pad; check its Pxx label before turning the knob |
 | Sound is quiet or silent | Track/pad level, main filter, mute and outputs | Try a known factory preset; open cutoff; check native/engine effects and MIDI input/port |
 | Sound continues after STOP | Sustained notes/effect tails | Double STOP within 400 ms |
-| TRACK SETUP is replaced by rate buttons | NOTE REPEAT / ARP | Turn that feature off; return to TRACKS |
+| TRACK SETUP is replaced by rate buttons | NOTE REPEAT / ARP | Turn that feature off; return to MIXER |
 | Break is half/double speed | LOAD BARS | Reload using the source's actual bar count |
 | LOOP variation or Grain does nothing | CHOP vs LOOP; Hold; STRETCH status | Use the conditions in the six-page table above |
 | Save says error or a User preset is missing | Card space/write access; STATUS | Fix storage and save again. Do not assume the preset exists until READY |

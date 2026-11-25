@@ -16,11 +16,13 @@ inline unsigned name_suggestions(const NameEntry& e, std::array<const char*, max
     static const char* const projects[] {"Sketch", "Demo", "Beat", "Jam", "Live set", "Idea"};
     static const char* const sounds[] {"BASS", "LEAD", "PAD", "KEYS", "PLUCK", "BRASS", "FX"};
     static const char* const banks[] {"DRUMS", "BREAK", "PERC", "CHOPS", "VOX", "FX"};
+    static const char* const tracks[] {"DRUMS", "BASS", "KEYS", "LEAD", "PAD", "VOX", "GUITAR", "FX"};
     auto add = [&](const char* const* list, unsigned count) { for (unsigned k = 0; k < count && n < max_suggestions; ++k) out[n++] = list[k]; };
     switch (e.target) {
     case NameTarget::Marker: case NameTarget::Scene: add(Song::marker_names, Song::marker_name_count); break; // a scene: a part
     case NameTarget::Sound: add(sounds, 7); break;
     case NameTarget::Bank: add(banks, 6); break;
+    case NameTarget::Track: add(tracks, 8); break;
     case NameTarget::None: case NameTarget::Sample: break; // a sample keeps its own name first
     default: add(projects, 6); break;
     }

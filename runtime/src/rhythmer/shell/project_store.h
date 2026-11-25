@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 struct Hardware;
@@ -83,11 +84,14 @@ public:
     void save_settings(const std::string& text); // Rhythmer's settings (shell/settings.h), kept with the start project
     void rename(const std::string& path, const std::string& name); // a project, in its folder
     void save_sound(const std::string& name, std::vector<uint8_t> bytes); // Rhythmer/Sounds/<name>.mlds
+    void append_usage(const std::string& file, const std::string& text); // Rhythmer/Usage/<file> (shell/usage_log.h)
     void move(const std::string& path, const std::string& folder); // a project into a folder ("" the top), its name kept (" 2" on a clash)
-    // The project (`bytes` as save_project() makes them, its file `path` for its prints, "" unsaved) as an MPC 3
-    // project, Rhythmer/MPC 3/<name>.xpj on the card (" 2" on a clash; shell/mpc3_export.h), on a thread of its own:
-    // copying its samples can take a while. What came of it comes back through take_note().
+    // The project (`bytes` as save_project() makes them, its file `path` for its prints and takes, "" unsaved) as an
+    // MPC 3 project, Rhythmer/MPC 3/<name>.xpj on the card (shell/mpc3_export.h), or as an Ableton Live Set,
+    // Rhythmer/Ableton/<name> Project/<name>.als (shell/live_export.h); " 2" on a clash. On a thread of its own:
+    // copying its samples can take a while. One export at a time. What came of it comes back through take_note().
     void export_mpc3(const std::string& path, std::vector<uint8_t> bytes, const std::string& name);
+    void export_live(const std::string& path, std::vector<uint8_t> bytes, const std::string& name);
     std::unique_ptr<std::string> take_note(); // MIDI thread: an export's outcome, if one is waiting
     bool exporting() const { return export_busy.load(std::memory_order_acquire); }
     // A project path in the folder in view for a typed name: the name itself,
@@ -130,7 +134,7 @@ public:
 private:
     friend struct ProjectSavingChecks; // deterministic service-queue regression harness
     struct Request {
-        enum class Kind : uint8_t { List, Save, Load, Duplicate, Remove, NewFolder, OpenAtStart, Opened, Settings, Rename, SaveSound, Move, ExportMpc3, DismissRecovery } kind;
+        enum class Kind : uint8_t { List, Save, Load, Duplicate, Remove, NewFolder, OpenAtStart, Opened, Settings, Rename, SaveSound, Move, ExportMpc3, DismissRecovery, Usage, ExportLive } kind;
         std::string path;
         std::vector<uint8_t> bytes;
         std::string from = {};
@@ -159,6 +163,10 @@ private:
     void scan_sounds();
     bool started = false;
     unsigned ticks = 0;
+    // Service thread: what scan() read out of each project file, by its path, kept while the file's time and size
+    // stand, so a scan does not parse every project of the folder again.
+    struct Scanned { int64_t modified = 0; uint64_t bytes = 0; unsigned tracks = 0, tempo = 0; bool ok = false; };
+    std::unordered_map<std::string, Scanned> scanned;
     mutable std::mutex lock;
     View known;
     std::atomic<unsigned> changes {0}, saved {0};

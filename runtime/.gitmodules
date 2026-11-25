@@ -2,3 +2,7 @@
 	path = base
 	url = ../sample-base.git
 	branch = main
+[submodule "core"]
+	path = core
+	url = ../ellic-core.git
+	branch = main

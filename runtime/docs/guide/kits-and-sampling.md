@@ -8,6 +8,9 @@ memory is full, a sample longer than 2 seconds plays from the card instead. A
 shorter one is not loaded: its pad stays silent and **Memory full** shows on
 the screen.
 
+To empty a pad, or to close the gap an empty pad leaves, see
+[Erase and copy](basics.md#erase-and-copy).
+
 ## Stage on a kit
 
 Press **SAMPLE** to open Stage. On a kit, Stage shows the pages of the last
@@ -68,9 +71,9 @@ full hit, and softer hits quieter still. **SHIFT** + **K2** sets whether
 decay starts from the start or the end.
 
 **SENDS**: the last pad's own sends. **K1** sets the pad's send to the bus
-shown, **K2** selects bus A–D, **K3** the bus return, as on the mixer's
-Sends page. **SHIFT** + **K1** sets the send of the whole kit track
-(**KIT SEND**). A pad's send is taken after its
+shown, **K2** selects bus A–D, **K3** the bus return. The kit track's own
+sends are on the [mixer](mixer-and-effects.md#sends). A pad's send is taken
+after its
 Pad FX, volume and pan, and follows the kit's level, pan and mute. The pads
 light as bright as their send to the bus shown; pads that send nothing stay
 dark. With Seq Record on, turning a pad's send writes a lane of that pad.
@@ -131,6 +134,10 @@ Press **SAMPLE SELECT** on a kit to open the sample browser. Press it again
 to close it. The header shows the pad a file loads onto (→ A09), the last pad
 you hit.
 
+The browser opens at the top of the card the first time. After that it opens
+where you left it. Kits, keygroups, audio tracks and the rest each keep their
+own folder.
+
 ![The sample browser](../images/screens/samples.png)
 
 | Control | Action |
@@ -140,23 +147,40 @@ you hit.
 | Encoder push | Open a folder, or load the file onto the last pad you hit. The pad keeps its settings. |
 | **B1** | Go back out of a folder. At the top, **CANCEL** closes the browser. |
 | **B2** | Switch between the card (**CARD**) and the MPC's factory samples (**INTERNAL**). The key names the other drive. Each drive keeps its folder and row. The internal drive is read only. |
-| **B3** | **PREVIEW**: play each file when you move to it. |
+| **B3** | **PREVIEW**: play each file when you move to it. Rhythmer keeps this setting when you restart. |
+| **SHIFT** + **B3** | **STAR**: star the file under the cursor, or take its star off. The key's light shows whether it is starred. |
 | **SHIFT** + pad | Load the file onto the next empty pad. |
-| **ERASE** | Delete the file or folder under the cursor from the card. Rhythmer asks first: **B3 DELETE**, **B1 CANCEL**. |
+| **ERASE** | Delete the file or folder under the cursor from the card. Rhythmer asks first: **B3 DELETE**, **B1 CANCEL**. In **STARRED** or **RECENT**: take the file off that list. The file stays on the card. |
+
+In a folder, MPC kits come first, then instruments, then folders, then
+samples.
+
+The first two rows of `Rhythmer/Samples`, and of the card's top folder, are
+**STARRED** and **RECENT**. Each shows how many files it holds. Push opens
+one like a folder; **B1** goes back.
+
+- **STARRED**: the files you starred, by name. A starred file shows a star
+  in every folder.
+- **RECENT**: the last 16 files you loaded from the browser, newest first.
+
+Each row shows the folder its file is in. A file deleted or moved on the
+card is left out. Rhythmer keeps the two lists in `Rhythmer/Starred.txt` and
+`Rhythmer/Recent.txt`. Push on a MIDI file (a note icon, **MIDI**) puts its notes on the
+track's pattern in place of the notes there.
 
 **ERASE** deletes for good; undo does not bring a file back.
 
 - A folder goes with everything in it.
 - An MPC 3 track file (`.xty`) or program goes with its own data folder, so
   an auto sampled keygroup goes whole. To delete one, press **ERASE** on its
-  folder in `Samples/Keygroups`, or on its `.xty` inside.
+  folder in `Rhythmer/Samples/Keygroups`, or on its `.xty` inside.
 - A file the open project uses is not deleted (**In use by this project**).
   Take it off its pad or track first, or open another project.
 - Only files on the card can be deleted, and not the folders at the top of
-  the card or anything in the `Rhythmer` folder. Plug-ins are deleted in the
-  plug-in picker, projects on the Project page.
+  the card or anything in the `Rhythmer` folder outside `Rhythmer/Samples`.
+  Plug-ins are deleted in the plug-in picker, projects on the Project page.
 
-Put your samples in a folder named `Samples` at the top level of the card.
+Put your samples in `Rhythmer/Samples` on the card, or anywhere else on it.
 Rhythmer reads WAV (16, 24 or 32-bit), MP3, FLAC, Ogg Vorbis and AIFF files, any sample
 rate. A sample can be up to 6 hours long. One longer than 10 seconds plays
 from the card, not from memory: a WAV straight from its file, an MP3, FLAC,
@@ -165,7 +189,12 @@ card. Making that WAV takes a moment the first time the sample loads; later
 loads use it again. Your own file is not changed. Without a card, or with no
 room on it, a long MP3, FLAC, Ogg or AIFF is read into memory whole. MP3, FLAC, Ogg and AIFF rows show their format at
 the right. A row with a pad chip is a sample this kit already plays. Rhythmer
-writes recordings and edits into `Samples` too.
+writes recordings and edits into `Rhythmer/Samples` too. Rhythmer makes no
+folders at the top of the card: everything it writes is in `Rhythmer`.
+
+Older versions kept samples in a `Samples` folder at the top of the card.
+Those still load. To tidy the card, move what is in it into
+`Rhythmer/Samples`: projects then find their samples in the new place.
 
 To move samples without taking the card out, connect the MPC to a computer
 with USB-C and open **http://rhythmer.local** while Rhythmer runs. On
@@ -184,8 +213,8 @@ icon and its type at the right.
 | --- | --- |
 | SFZ | `.sfz`, shown as **SFZ** |
 | MPC keygroup program | `.xpm` (**XPM**), or `.xty` from MPC 3 (**XTY**) |
-| MPC drum program | `.xpm` or `.xty` with a pads icon: loads as the whole kit, with its pad colours and sends |
-| MPC expansion | `.xpn` with a down arrow: installs into `Samples/Expansions` |
+| MPC drum program | `.xpm` or `.xty` with a pads icon: Push opens **LOAD KIT** (see [Loading banks of an MPC kit](#loading-banks-of-an-mpc-kit)) |
+| MPC expansion | `.xpn` with a down arrow: installs into `Rhythmer/Samples/Expansions` |
 | Logic EXS24 / Sampler | `.exs` (**EXS**), with its samples in the same folder |
 | SoundFont | `.sf2` (**SF2**): opens as a folder of presets |
 | DecentSampler | `.dspreset` (**DS**): opens with its controls as its own screen sets them |
@@ -222,61 +251,260 @@ on its kit.
 A bank file saves one bank of 16 pads, with their settings and effects.
 
 - To save the bank in view: open the sample browser and press **SHIFT** +
-  **SAMPLE SELECT**. Name the bank. It is saved in `Samples/Banks`.
+  **SAMPLE SELECT**. Name the bank. It is saved in `Rhythmer/Samples/Banks`.
 - To load a bank: select the bank with **PAD BANK**, then push the encoder
   on a bank file (the stacked-layers icon) in the browser.
 
 ![Bank files in the browser](../images/screens/banks.png)
 
+### Loading banks of an MPC kit
+
+**LOAD KIT** puts banks of an MPC drum program (`.xpm` or `.xty`, a pads
+icon in the browser) into banks of your kit. Only the program's filled pads
+are loaded: the other pads and banks of your kit stay as they are.
+
+![LOAD KIT](../images/screens/samplesloadkit.png)
+
+1. Select bank C with **PAD BANK**.
+2. Press **SAMPLE SELECT**, move to the MPC kit and push the encoder.
+   **LOAD KIT** opens. **BANK C** reads `from A · 16 pads`: the kit's first
+   filled bank goes into the bank in view.
+3. To add the kit's bank B as your bank D, turn to **BANK D** and push
+   until it reads `from B`.
+4. Turn to **LOAD** and push.
+
+The header shows the kit's filled banks and how many pads each has. Turn
+the encoder to move between the cards; push it to press one.
+
+| Card | What it does |
+| --- | --- |
+| **LOAD** | Puts the banks picked below into your kit, as one undo. |
+| **WHOLE KIT** | Loads the whole program as the track's kit, with its pad colours and sends, in place of every pad you have. |
+| **BANK A** to **BANK H** | Your kit's banks. Push steps through the program's filled banks, then none. |
+
+A card in red replaces pads you already have. **B1** (**BACK**) closes the
+sheet without loading.
+
 ## Chop
 
-Press **CHOP** to slice the last pad's sample. The pads play the slices.
+Press **CHOP** to slice the last pad's sample. The pads play the slices: tap
+a pad to play its slice and select it. With Seq Record on, the slices you tap
+are recorded (see [Recording slices](#recording-slices)). Press **CHOP** again
+to go back to **TRIM**. Chop does not work on a sampled instrument.
 
 ![Chop](../images/screens/chop.png)
 
 | Control | Action |
 | --- | --- |
 | **K1** / **K2** | Start / end of the selected slice. |
-| **K3** | Chop type: Threshold, Regions, Beats or Manual. |
-| Encoder | Select a slice. After **K1** or **K2**, move that cut in fine steps. |
-| **SHIFT** + **K3** | The amount for that type (threshold, number of regions, beats). |
-| **SHIFT** + **K1** / **K2** | Zoom. |
-| **B2** (**SNAP**) | Snap cuts to zero crossings, so slices do not click. |
-| **B3** (**TO PADS**) | Put the slices on pads. |
+| **K3** | Chop type: Threshold, Regions, Beats, Manual or Auto. A sample with no slices yet opens on the type you picked last. |
+| **SHIFT** + **K3** | The amount for that type: threshold, number of slices or division. On Auto: **SLICES**. |
+| Encoder | Move the selected slice's start in fine steps (its end after **K2**). |
+| **SHIFT** + encoder | Move that cut to the next or previous hit. |
+| **−** / **+** | The slice before / after. |
+| **SHIFT** + **K1** / **K2** | Zoom in at the slice's start / end. |
+| **PAD BANK** | The next 16 slices on the pads (A: 1–16, B: 17–32, up to D). **SHIFT** + **PAD BANK**: the 16 before. |
 | **B1** (**CANCEL**) | Leave without changing the pads. |
-| **SHIFT** + **B1** | Extract the slice to a new file on the next empty pad. |
-| **SHIFT** + **B2** / **B3** | Split / merge slices. |
-| **ERASE** + pad | Remove a slice. |
+| **B3** (**TO PADS**) | Put the slices on pads, as Poly, Mono, Thru or Kit, with a pattern of them. |
+| **SHIFT** + **B1** (**EXTRACT**) | Save the slice as a new file in `Rhythmer/Samples/Edits` and put it on the next empty pad. **SHIFT** + **ERASE** does the same. |
+| **SHIFT** + **B2** (**SPLIT**) | Split the slice in two. |
+| **SHIFT** + **B3** (**MERGE**) | Join the slice to the one before. |
+| **ERASE** + pad | Take a slice out: it joins the one before (pad 1's joins the one after), and the pads after it move down one. **ERASE** on its own takes out the selected slice. |
+| **ERASE** + **CHOP** | Take every cut out. |
 
-**Threshold chop**: cuts at every hit at least as strong as the threshold.
-A hit is a change in the sound: a drum, a hat over a held note, or a chord
-change at the same loudness. Each cut lands just before the hit's attack.
+Every cut lands on a zero crossing, so slices do not click.
+
+A slice's pad plays it with the chopped pad's tuning and Warp, as it plays
+once it is on a pad. A Manual take plays the sample at its own speed.
+
+With more than 16 slices, the pads show the bank of the selected slice. The
+bank lights and the header (**BANK B**) show which. Selecting a slice with
+**−** / **+** moves the pads to its bank.
+
+### Fixing a cut
+
+1. Tap the slice's pad. It plays once and its start is selected: the wider
+   line, with **START** at the bottom left.
+2. Turn the encoder to move the start. The screen zooms in on the cut. When
+   you stop, you hear the cut once, from just before it into the slice.
+3. To jump the cut from hit to hit, hold **SHIFT** and turn the encoder. The
+   hits are the small marks along the bottom of the waveform.
+
+![Fixing a cut, zoomed in](../images/screens/chopfine.png)
+
+- To move the slice's end, turn **K2**. The encoder then moves the end
+  (**END**) until you select another slice. You hear the slice's last
+  second.
+- A jump stays between the cuts on either side. With no hit left that way,
+  the cut stays where it is.
+- The next pad, **−** / **+** or **K1** / **K2** zoom back out. **SHIFT** +
+  **K1** / **K2** set a zoom of your own, which stays.
+
+### Chop types
+
+**Threshold chop**: cuts at every hit at least as strong as the threshold
+(0–100 %: the higher, the fewer slices). A hit is a change in the sound: a
+drum, a hat over a held note, or a chord change at the same loudness. Each
+cut lands just before the hit's attack.
+
+**Regions chop**: cuts the region into 2 to 64 equal slices.
 
 **Beats chop**: Rhythmer finds the sample's own tempo and where its beats
-fall when it loads. Beats cuts a slice every 1–8 of those beats, counted from
-the beat nearest the region's start, so a lead-in before the first beat gets
-a slice of its own. A free intro or ending with no steady beat stays one
-slice. The tempo shows at the top right. Each cut lands on the hit at that
-beat. To cut on the bar, set the region's start near the bar's first beat. A
-sample with no steady beat uses the project's tempo.
+fall when it loads. Beats cuts a slice every division: 1/16, 1/8, 1/4 (one
+beat), 1/2, 1 bar, 2 bars or 4 bars (a bar follows the project's time
+signature). It counts from the beat nearest the region's start, so a
+lead-in before the first beat gets a slice of its own. A free intro or
+ending with no steady beat stays one slice. The tempo shows at the top
+right. Each cut lands on the hit at that place, if there is one. To cut on
+the bar, set the region's start near the bar's first beat. A sample with no
+steady beat uses the project's tempo.
 
-**Manual chop**: set **K3** to Manual, or push the encoder. Pad 1 plays the
-sample. Tap other pads while it plays to cut there.
+**Auto chop**: Rhythmer works out what the sample is and cuts it to suit.
+What it found shows at the top right:
 
-Slices put on pads keep the chopped pad's tune, Warp, mute group and other
-settings. Press **CHOP** again to return to **TRIM**.
+- **DRUMS**: a steady beat led by drums.
+- **MUSIC**: a steady beat led by notes or chords.
+
+  Both are cut on the beats Rhythmer finds in the sample, each cut on the hit
+  there: every beat, every 2, 4, 8 or 16 beats, or eighths (each beat, and
+  its strongest hit halfway to the next), whichever comes nearest
+  **SLICES**. The tempo shows too.
+- **SHOTS**: single sounds with silence between them. One slice for each
+  sound. Each slice ends where its sound ends, and the silence is left out.
+- **HITS**: anything else. A cut on the strongest hits, spread over the
+  region, at least 150 ms apart.
+
+**SHIFT** + **K3** sets **SLICES**: 8, 16 (to start), 32 or 64, the number of
+slices Auto aims for. SHOTS always makes one slice for each sound. No slice is
+shorter than 80 % of an eighth note (150 ms where there is no beat), and Auto
+keeps its cuts that far from your hand cuts.
+
+**B2** (**CLEAN**) on Auto finds the cuts on the sample's drums alone. The
+first time, Rhythmer separates the sample as **STEMS** does (with **BEST**
+off: about 15 seconds for 13 seconds of sound); the header shows
+**SEPARATING** and the time left, and **B1** (**CANCEL**) calls it off. Then
+the picture shows the drums stem and the cuts are found on it, so hits under
+chords or a voice count too. The pads still play the sample, and **KIT**
+lays the drums stem. Press **B2** again to cut from the sample. The four
+stems stay in `Rhythmer/Samples/Stems`.
+
+A chop holds at most 128 slices: if a type needs more, the last slice runs to
+the end, and Rhythmer says so.
+
+### Manual chop
+
+Manual cuts where you tap the pads while the sample plays.
+
+![A Manual take](../images/screens/chopmanual.png)
+
+1. Set **K3** to Manual. The cuts the other types made are taken out; your
+   hand cuts stay (see [Hand cuts](#hand-cuts)). With no cuts, pad 1 blinks
+   red. To start over on a chop with cuts, press **ERASE** + **CHOP**.
+2. Tap pad 1. The sample plays and pad 2 blinks red.
+3. Tap the red pad on each hit you want to cut at. The red moves on to the
+   next pad. After pad 16 the pads switch to bank B and its pad 1 blinks
+   red, up to bank H (128 slices).
+4. Let the sample play to the end. The take is done and the pads play the
+   slices.
+
+- While the take plays, only the red pad cuts. Each cut moves onto the
+  strongest hit just before your tap.
+- Tap a lit pad to go back: the sample plays again from that slice, and the
+  cuts after it are taken out.
+- To stop a take before the end, press another button, turn a knob or leave
+  Chop. The red stays on the next pad: tap it to play on from the last cut.
+- Undo (**SHIFT** + **−**) takes back a whole take.
+
+### Hand cuts
+
+A cut you make or move with **K1**, **K2**, the encoder, **SHIFT** + **B2**
+(**SPLIT**) or a Manual take is a hand cut. Hand cuts stay when you change
+the chop type, threshold, division or number of slices. They show in the
+track's colour with a tab on top. A cut you take out with **ERASE** or
+**SHIFT** + **B3** (**MERGE**) stays out. Where an automatic cut would
+land just next to a hand cut, the hand cut wins and no sliver is left.
+**ERASE** + **CHOP** takes out the hand cuts too.
+
+### Slices on pads
+
+1. Press **B3** (**TO PADS**). The sheet shows the number of slices and the
+   first empty pad they go on, such as **from A05**. It starts on your last
+   choice.
+2. Turn the encoder to **POLY**, **MONO**, **THRU** or **KIT**:
+   - **POLY**: slices play over each other.
+   - **MONO**: one slice at a time. The slices share a mute group.
+   - **THRU**: one slice at a time, and each plays on to the end of the
+     region, so a slice's pad carries the loop on from there.
+   - **KIT**: one pad for each sound. Slices that sound the same (the kicks
+     of a break, say) share one pad, which gets the longest of them. Kicks
+     come first, then snares, hats and the rest. The hats share a mute group.
+     The card shows how many sounds there are.
+3. Push the encoder. The slices go on the empty pads from that pad on, and
+   Stage opens.
+
+**B1** (**BACK**) closes the sheet. MONO, THRU and KIT's hats use the chopped
+pad's mute group, or the first free one. Slices put on pads keep the chopped pad's
+tune, Warp, mute group and other settings. With Warp on Seq and a number of
+beats set, each slice keeps the tempo those beats give the chopped pad, so it
+plays at the same speed.
+
+The **PATTERN** card turns the pattern on or off (push the encoder on it).
+When it is on, TO PADS also writes a pattern with a note for each slice where
+it falls, so **PLAY** gives you the loop back, now on pads you can change.
+With KIT, each slice's note plays the pad of its sound. The pattern goes into
+the track's pattern if that is empty, else into the first empty one, which
+then plays. The notes follow how the pads play: with Warp or Follow at the
+loop's own tempo, else as it was recorded. Undo takes back the pads, the
+pattern and which pattern plays in one step. If Seq Record is on, TO PADS
+turns it off first, so the recording is a step of its own before it.
+
+### Recording slices
+
+You can record slices into a pattern straight from Chop, as on the stock MPC
+Sample. The kit's pads stay as they are: no pad is taken for a slice.
+
+1. Select the pad and press **CHOP**.
+2. Press **SEQ RECORD**, then **PLAY**.
+3. Tap the slice pads. Each slice plays with the pad's own sound (tune,
+   envelope, filter, effects) and is recorded as a note of that pad. A note is
+   as long as you hold its pad. **PAD BANK** reaches slices 17–64.
+4. Press **SEQ RECORD** again to stop recording.
+
+While Seq Record is off or the transport is stopped, the pads only play the
+slices, as before. During a Manual take the pads still cut and nothing is
+recorded.
+
+A recorded slice note plays its slice as the chop is now. When you move a cut
+with **K1**, **K2** or the encoder, the notes on that slice follow it. On
+Step Edit and Roll the note shows its pad and slice, such as **A05 · 5**. A
+slice note on a slice the chop no longer has is silent.
+
+Changing the chop type or amount, **SPLIT**, **MERGE**, **ERASE** + pad and
+**ERASE** + **CHOP** change which part of the sample a slice number plays.
+When recorded slice notes use the slices that would change, Rhythmer asks
+first (**Rechop?**, with how many notes change sound). **B3** (**RECHOP**)
+goes ahead; it asks once a visit to Chop. Undo (**SHIFT** + **−**) takes the
+change back.
+
+An MPC 3 export puts each slice that is played on a free pad of the kit and
+moves its notes there, as TO PADS would. If the kit has no free pad left, the
+notes play the whole pad, and Rhythmer says how many.
+
+### Slices in the WAV file
 
 As on the MPC, slices belong to the sample and are stored in its WAV file.
-Slices made on an MPC load with the file, from an MPC project or from
-**Samples**. When you change the slices, Rhythmer writes them back into the
-WAV file, so the MPC and other projects using the file see the same slices.
-**CHOP** on any pad of a chopped sample shows its slices, with the pad's
-slice selected.
+Rhythmer also stores the chop type, its amount and your hand cuts there, so
+they are kept after a restart. When you change the slices, Rhythmer writes
+them back into the WAV file, so the MPC and other projects using the file
+see the same slices. Slices made on an MPC load with the file, from an MPC
+project or from the sample browser. They open as a Manual chop, with every
+cut a hand cut. **CHOP** on any pad of a chopped sample shows its slices,
+with the pad's slice selected. A sample that is not a WAV file keeps its
+slices only while the project is open.
 
 Each slice has its own start and end, so gaps between slices stay.
 **K1** or **K2** moves an edge alone across a gap, and moves both slices
-where two slices touch. A sample that is not a WAV file keeps its slices
-only while the project is open.
+where two slices touch.
 
 ## Record a sample
 
@@ -286,13 +514,14 @@ Press **SAMPLE RECORD** on a kit to open **Record**.
 
 1. Use **K1** to choose the source, **K2** the length (Free, Seq, or 1–16
    bars) and **K3** the threshold.
-2. Tap a pad. Recording starts at the threshold, or when the pattern comes
-   round if the length is Seq.
+2. Tap a pad, or push the encoder to record onto the first empty pad.
+   Recording starts at the threshold, or when the pattern comes round if
+   the length is Seq. To start at once, push the encoder again.
 3. Tap other pads during the take to cut it there.
 4. To stop, tap the pad again, press **STOP** or push the encoder. To stop
    and open **TRIM**, press **SAMPLE RECORD**.
 
-Takes are saved in `Samples/Recorded`. With a card, a take can run up to 6
+Takes are saved in `Rhythmer/Samples/Recorded`. With a card, a take can run up to 6
 hours; without one, 60 seconds. With the length Free, a take also ends by
 itself after a quiet stretch.
 
@@ -314,6 +543,11 @@ records it **Post FX** (with its effect chain) or **Pre FX**.
 - **B2** (**INPUT FX**): run Knob FX on the input. You hear them while the
   input is monitored, and they are recorded.
 
+The mic and the rear inputs cannot be used at the same time. While a MIDI
+track or a Looper loop uses the rear inputs, the source Mic shows **IN USE**,
+is silent and does not record. While one uses the mic and none uses the rear
+inputs, Rear shows **IN USE** the same way.
+
 ![Input Config](../images/screens/inputconfig.png)
 
 To sample a Rhythmer track, choose **Track** as the source. During the take
@@ -326,11 +560,13 @@ the pads play that track.
   the next empty pad.
 - **Resample** (**SHIFT** + **Pad 11**, then a pad): records the selected
   pattern with every track playing onto the pad you press. On the Song page,
-  it records the song.
+  it records the song. On a plug-in or MIDI track, **SHIFT** + **Pad 11**
+  opens **AUTO SAMPLE** instead (see
+  [Auto sample a plug-in](instrument-and-midi-tracks.md#auto-sample-a-plug-in)).
 - **Trim Sample** (**SHIFT** + **Pad 13**): save the pad's region as a new
-  file and set the pad to all of it.
-- **Save Sample** (**SHIFT** + **SAMPLE SELECT**): save the pad's region as
-  a WAV file in `Samples`.
+  file in `Rhythmer/Samples/Edits` and set the pad to all of it.
+- **Save Sample** (**SHIFT** + **SAMPLE SELECT**): name the pad's region and
+  save it as a WAV file in `Rhythmer/Samples`.
 
 ## Stems
 
@@ -341,22 +577,29 @@ its music (all other instruments) and its vocals.
 2. Press **SHIFT** + **B3** (**STEMS**). The STEMS sheet shows the four
    empty pads the stems go on, the sample's length and how long the job
    takes. **STEMS** in the Menu on Stage opens the same sheet.
-3. Press **B3** (**SEPARATE**) or **Push**.
+3. **B2** (**BEST**) is on at first: the stems are separated up to
+   16 kHz, in two passes. Turn it off for a job about three times
+   quicker that separates up to 11 kHz in one pass; the highs above that
+   are shared out as the band below them is.
+4. Press **B3** (**SEPARATE**) or **Push**.
 
 ![STEMS](../images/screens/stems.png)
 
-A 13-second sample takes about 15 seconds; a longer sample takes less
-than its own length. You can leave the sheet and keep playing while the
-job runs. To stop it, press **B1** (**CANCEL**) on the sheet.
+With **BEST** on, a 13-second sample takes about 40 seconds and a
+60-second sample under 2 minutes; with it off, about 15 and 40 seconds.
+You can leave the sheet and keep playing while the job runs. To stop it,
+press **B1** (**CANCEL**) on the sheet.
 
 When the job is done, **DRUMS**, **BASS**, **MUSIC** and **VOCALS** are on
 the next four empty pads after the sample's pad. Each plays as the
 sample's pad does: the same start, end, loop, tuning, warp, envelope and
 filter, and the same slices in Chop. Played together, the four give the
-sample back. One Undo removes all four. The files are in `Samples/Stems`.
+sample back. One Undo removes all four. The files are in `Rhythmer/Samples/Stems`.
 
 Stems needs a sample of one second or more and four empty pads on the
-track. It does not work on a sampled instrument.
+track. It does not work on a sampled instrument. **BEST** needs more
+memory: when a long sample does not fit, the notice says whether it fits
+with **BEST** off.
 
 ## 16 Levels
 
@@ -424,9 +667,16 @@ For Velocity, Filter and Tune, **K2** (**LOW**) sets pad 1's value and **K3**
 octave in Scale, Tune and Chords. Letting go after a hold does not turn 16
 Levels on or off.
 
+In Scale and Chords, a sample that holds one note, such as a bass note, a
+sung note or a synth note, plays from that note, so pad 1 plays the root of
+the key. A chord stab plays from its chord's root. Rhythmer finds the note
+when the sample is loaded or recorded. A drum or a phrase plays as if it
+were a C, as do the samples of projects saved with older versions.
+
 While 16 Levels is on a kit pad, a MIDI keyboard plays that pad on every key.
-C4 (key 60) plays a sample as the pad plays it; an instrument plays at its
-real pitch.
+On a sample that holds one note, each key plays its own note. On other
+samples, C4 (key 60) plays the sample as the pad plays it. An instrument
+plays at its real pitch.
 
 ![Holding 16 LEVELS: Scale](../images/screens/levelsscale.png)
 

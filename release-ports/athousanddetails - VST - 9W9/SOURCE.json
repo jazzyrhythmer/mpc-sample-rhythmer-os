@@ -1,0 +1,10 @@
+{
+  "repo": "sd88me/mpc-vst-TR-MPC",
+  "tag": "9w9-vst-v1.3.1",
+  "asset": "9W9-1.3.1-mpc-aarch64.zip",
+  "url": "https://github.com/sd88me/mpc-vst-TR-MPC/releases/download/9w9-vst-v1.3.1/9W9-1.3.1-mpc-aarch64.zip",
+  "sha256": "62a6f21f62e81900e792056a843cb850b35b5daa5b2b505bf9046c9534d52001",
+  "github_digest": "sha256:62a6f21f62e81900e792056a843cb850b35b5daa5b2b505bf9046c9534d52001",
+  "bytes": 5327722,
+  "source_commit": "e511f73f48f6205df804ccc5389374c97257c7df"
+}

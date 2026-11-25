@@ -7,7 +7,9 @@ in place of the stock app. It changes nothing on the MPC itself.
 
 A Rhythmer **project** has:
 
-- **16 tracks**, one for each pad. A track is one of these types:
+- **16 tracks**, one for each pad. A new project has none: it opens on
+  track 1 with the track types (see [Make a new track](tracks.md#make-a-new-track)).
+  A track is one of these types:
   - **Kit** (SAMPLER): 128 pads in 8 banks (A–H), each pad playing a sample
     or a sampled instrument.
   - **Keygroup** (KEYGROUP): one sampled instrument, or one sample, played
@@ -35,12 +37,16 @@ Around the project:
 
 - **The Menu**: hold the encoder on any page. It lists the page's jobs and
   the 16 places, and opens the lessons (see [The Menu](basics.md#the-menu)).
-- **Basic and Full**: a new install starts on Basic, which shows the stock
-  app's pages plus tracks, plug-ins, the mixer and Song. Full shows every
-  page in this guide (see [Basic and Full](settings.md#basic-and-full)).
+- **Basic and Full**: Rhythmer starts on Full, which shows every page in this
+  guide. Basic shows the stock app's pages plus tracks, plug-ins, the mixer
+  and Song (see [Basic and Full](settings.md#basic-and-full)).
 - **Plug-ins** go in `Rhythmer/Plugins` on the card. The plug-in picker
   can also load one from any folder on the card (see
   [Plug-ins](plug-ins.md)).
+- **The card**: everything Rhythmer makes is in the `Rhythmer` folder, such
+  as projects in `Rhythmer/Projects` and samples in `Rhythmer/Samples`. The
+  only other folder Rhythmer needs at the card's top is `autorun` (see
+  [Files on the card](projects-and-files.md#files-on-the-card)).
 - **The web page**: connect the MPC to a computer with USB-C and open
   **http://rhythmer.local** while Rhythmer runs. Its tabs are **Device**
   (updates and plug-in zips), **Files** (the card's files), **Quickstart**

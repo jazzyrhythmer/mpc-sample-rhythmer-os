@@ -255,6 +255,29 @@ unsigned roll_marks_ratchet(Pattern& pattern, const UiState& ui) {
     return next;
 }
 
+bool roll_marks_span(const Pattern& pattern, const UiState& ui, int& low, int& high) {
+    auto at = roll_marked_events(pattern, ui);
+    if (at.empty()) return false;
+    low = 127; high = 1;
+    for (auto n : at) {
+        int v = std::clamp<int>(pattern.events[n].velocity, 1, 127);
+        low = std::min(low, v); high = std::max(high, v);
+    }
+    return true;
+}
+
+bool roll_marks_velocity(Pattern& pattern, const UiState& ui, int low) {
+    int now = 0, high = 0;
+    if (!roll_marks_span(pattern, ui, now, high)) return false;
+    const int by = std::clamp(low, 1, 127 - (high - now)) - now;
+    if (!by) return false;
+    for (auto n : roll_marked_events(pattern, ui)) {
+        auto& v = pattern.events[n].velocity;
+        v = uint8_t(std::clamp(int(v) + by, 1, 127));
+    }
+    return true;
+}
+
 std::string roll_position(uint32_t tick, unsigned bar_ticks, unsigned beat_ticks, unsigned q) {
     bar_ticks = std::max(1u, bar_ticks); beat_ticks = std::max(1u, beat_ticks); q = std::max(1u, q);
     unsigned bar = tick / bar_ticks + 1, beat = tick % bar_ticks / beat_ticks + 1;

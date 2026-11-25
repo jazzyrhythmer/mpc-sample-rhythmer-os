@@ -58,9 +58,16 @@ public:
              const std::atomic<bool>* reopen = nullptr);
     const AudioFormat& format() const { return opened; }
     static std::string devices_json();
+    // Whether the playback buffer is lent to direct monitoring (drivers/direct_monitor.h) while run() runs:
+    // the codec's output, opened with mmap access.
+    bool direct() const { return lent != nullptr; }
 private:
-    static void configure(snd_pcm_t* pcm, bool capture, const AudioFormat& format);
+    // Mapped: the playback PCM opened with mmap access (snd_pcm_mmap_writei()), else read/write.
+    static void configure(snd_pcm_t* pcm, bool capture, const AudioFormat& format, bool mapped = false);
     AudioFormat opened;
     static int recover(snd_pcm_t* pcm, int error, bool capture);
     snd_pcm_t *output = nullptr, *input = nullptr;
+    bool mapped = false;
+    int32_t* lent = nullptr;       // the mapped playback buffer, interleaved stereo S32, when its layout is that
+    unsigned buffer_frames = 0;
 };

@@ -99,6 +99,7 @@ void seq_follow(Context& c) {
     ui.step_cursor = int16_t(std::min(to, 0x7fffu));
     ui.steps_bar = uint8_t(std::min(to / bar_steps, 255u));
     ui.step_event = 0;
+    ui.spare_step = -1;
     if (roll) { roll_follow(pattern, ui); roll_select(pattern, ui, roll_lane(c.track())); }
 }
 
@@ -193,15 +194,44 @@ void erase_event(Context& c) {
     c.notice(what);
 }
 
+bool grow_to_step(Context& c, unsigned step) {
+    auto& ui = c.ui;
+    auto& p = c.pattern();
+    uint32_t length = spare_length(c.project, p, step);
+    if (!length) return false;
+    c.stop_growing(ui.track, c.track().pattern); // a Free take's growing ends with a length set by hand
+    p.length = length;
+    p.free = false;
+    p.fit_lanes();
+    c.sync_pattern(ui.track, c.track().pattern);
+    ui.spare_step = -1;
+    ui.step_cursor = int16_t(std::min(step, 0x7fffu));
+    ui.steps_bar = uint8_t(std::min(step / bar_steps, 255u));
+    unsigned bars = pattern_bars(c.project, p);
+    c.notice("P" + std::to_string(c.track().pattern % pattern_count + 1) + ": " + std::to_string(bars) + (bars == 1 ? " bar" : " bars"));
+    return true;
+}
+
 namespace {
-unsigned caret_of(const Pattern& p, const UiState& ui) { return unsigned(std::max<int>(ui.step_cursor, 0)) % p.steps(); }
-// The caret onto `step`, round the pattern either way.
+unsigned caret_of(const Pattern& p, const UiState& ui) { return edit_caret(ui, p); }
+// The caret onto `step`: past the last step into the spare steps while the pattern can grow (shell/spare_bar.h),
+// else round the pattern either way.
 void caret_to(Context& c, int step) {
-    int steps = int(c.pattern().steps());
+    const auto& p = c.pattern();
+    int steps = int(p.steps()), end = int(spare_end(c.project, p));
+    auto& ui = c.ui;
+    ui.spare_step = -1;
+    ui.step_event = 0;
+    if (step >= steps && step < end && ui.page == PageId::StepEdit) {
+        ui.spare_step = int16_t(step);
+        ui.step_cursor = int16_t(std::min(steps - 1, 0x7fff));
+        ui.steps_bar = uint8_t(std::min(step / int(bar_steps), 255));
+        return;
+    }
+    if (step >= end) step = 0; // past the spare steps: the start
     step = ((step % steps) + steps) % steps;
-    c.ui.step_cursor = int16_t(std::min(step, 0x7fff));
-    c.ui.steps_bar = uint8_t(std::min(step / int(bar_steps), 255));
-    c.ui.step_event = 0;
+    ui.step_cursor = int16_t(std::min(step, 0x7fff));
+    ui.steps_bar = uint8_t(std::min(step / int(bar_steps), 255));
 }
 constexpr uint32_t entry_gesture = 0xE7700000u; // a step's entry, one undo however many pads it writes (| the step)
 constexpr uint32_t roll_midi_gesture = 0x3D1D0000u; // a key played into Roll: one undo (| the key)
@@ -212,6 +242,7 @@ void entry_write(Context& c, int key, const Level& level, uint8_t velocity) {
     auto& p = c.pattern();
     unsigned q = p.q(), caret = caret_of(p, ui);
     c.touch_scope(pattern_scope(c.project, ui), entry_gesture | caret);
+    if (caret >= p.steps() && !grow_to_step(c, caret)) return; // a spare step: the pattern grows to hold it, in this undo
     Event e;
     e.tick = caret * q;
     e.key = uint8_t(key);

@@ -55,9 +55,11 @@ struct Hardware {
 // What an app may send from the MIDI thread, in App::midi_output(): MIDI to
 // an external port open now (DIN or USB, never the control surface) and the
 // CV_CLK_OUT sync line. The runtime calls the hook on every pass of its MIDI
-// loop: at least every 5 ms, as soon as input arrives, and as close after
-// the time asked for with wake_at() as the kernel wakes it (well under a
-// millisecond), so an app can keep its own schedule of timed messages.
+// loop: at least every 5 ms, as soon as input arrives, as close after the
+// time asked for with wake_at() as the kernel wakes it (well under a
+// millisecond), so an app can keep its own schedule of timed messages, and at
+// once after session().wake_midi(), which any thread may call (render() too)
+// for a message that should go out now.
 class MidiOutput {
 public:
     using Clock = std::chrono::steady_clock;
@@ -117,6 +119,11 @@ public:
     // mix (channels 3 to 18), or null for silence there. The app owns the
     // block and writes it in render().
     virtual const UsbStems* stems() const { return nullptr; }
+    // Audio thread, right after each render(): the main mix a computer
+    // records over USB-C (channels 1 and 2) when it is not what the jacks
+    // play, such as the mix before the app's own volume, or null for the
+    // block render() wrote. The app owns the block and writes it in render().
+    virtual const AudioBlock* usb_mix() const { return nullptr; }
 
     // MIDI thread: a channel message from the control surface. Wheel Push
     // never arrives while it returns to the stock app.

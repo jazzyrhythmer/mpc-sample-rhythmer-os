@@ -15,7 +15,7 @@
 // and the tests.
 namespace rhythmer {
 
-// The kit a new project starts with, and a lesson plays: one of the MPC's own, on its internal storage.
+// The kit New project's KIT starts with, and a lesson plays: one of the MPC's own, on its internal storage.
 constexpr const char* factory_kit_path = "/content/Projects/Kits/Kit-SFM MPC60 Bang 75.xpj";
 constexpr const char* factory_kit_name = "MPC60 Bang";
 
@@ -68,7 +68,7 @@ inline const Lesson& lesson_at(unsigned n) {
         {"PRESS SEQ RECORD", K::Button, b(B::SeqRecord)},
         {"PRESS STOP", K::Button, b(B::Stop)},
     };
-    // Sequences: two sequences launched from their page, then with Seq held from another page.
+    // Sequences: two sequences launched from their page, then the track's pattern 2 with Seq held from another page.
     static const LessonStep sequences[] {
         {"LOADING KIT", K::Wait},
         {"PRESS PLAY", K::Button, b(B::Play)},
@@ -79,14 +79,14 @@ inline const Lesson& lesson_at(unsigned n) {
         {"SEQ + PAD 2", K::Pad, 1, w(B::Seq)},
         {"PRESS STOP", K::Button, b(B::Stop)},
     };
-    // Mix: the mixer opened, a track's level and pan, its effects, and back.
+    // Mix: the mixer opened, a track's send, another track picked, its effects, and back (docs/MIXER_PLAN.md).
     static const LessonStep mix[] {
         {"LOADING KIT", K::Wait},
-        {"PAD FX + KNOB FX", K::Button, b(B::KnobFx), w(B::PadFx), PageId::Tracks},
+        {"PAD FX + KNOB FX", K::Button, b(B::KnobFx), w(B::PadFx), PageId::Mixer},
         {"TURN K1", K::Knob, 0},
-        {"TURN K2", K::Knob, 1},
-        {"PRESS B3", K::Button, b(B::TopRight), -1, PageId::Rack},
-        {"PRESS B1", K::Button, b(B::TopLeft), -1, PageId::Tracks},
+        {"TAP PAD 2", K::Pad, 1},
+        {"SHIFT + KNOB FX", K::Button, b(B::KnobFx), w(B::Shift), PageId::Rack},
+        {"PRESS B1", K::Button, b(B::TopLeft), -1, PageId::Mixer},
         {"PRESS SAMPLE", K::Button, b(B::Sample), -1, PageId::Stage},
     };
     // Shape a pad: its end on Trim, then its tune.

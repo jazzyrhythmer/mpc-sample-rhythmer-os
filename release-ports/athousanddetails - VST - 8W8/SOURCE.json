@@ -1,0 +1,10 @@
+{
+  "repo": "sd88me/mpc-vst-TR-MPC",
+  "tag": "8w8-vst-v1.3.1",
+  "asset": "8W8-1.3.1-mpc-aarch64.zip",
+  "url": "https://github.com/sd88me/mpc-vst-TR-MPC/releases/download/8w8-vst-v1.3.1/8W8-1.3.1-mpc-aarch64.zip",
+  "sha256": "0389c69670cd41b965ce3006d8940e6de0489aa037fd4e40b60622306e0cdfd0",
+  "github_digest": "sha256:0389c69670cd41b965ce3006d8940e6de0489aa037fd4e40b60622306e0cdfd0",
+  "bytes": 6158851,
+  "source_commit": "e511f73f48f6205df804ccc5389374c97257c7df"
+}

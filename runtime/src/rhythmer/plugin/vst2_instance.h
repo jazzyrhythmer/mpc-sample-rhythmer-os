@@ -4,19 +4,28 @@
 // AudioPluginInstance, so a host treats it like a JUCE-loaded VST3: same
 // prepareToPlay/processBlock/parameters/state calls. JUCE's own VST2 host
 // needs Steinberg's withdrawn SDK headers; this uses vst2_abi.h instead.
+//
+// Threads: processBlock() (its processEvents and processReplacing) runs on the
+// audio thread; every other dispatcher call is made under one lock, so a
+// plug-in's own screen (plugin/screen_source.h) is never drawn while the rack
+// or the MIDI thread is in it.
 #pragma once
 
+#include "rhythmer/plugin/screen_source.h"
 #include "rhythmer/plugin/vst2_abi.h"
 
 #include <juce_audio_processors_headless/juce_audio_processors_headless.h>
 
 #include <array>
 #include <atomic>
+#include <mutex>
 #include <vector>
+
+struct rhythmer_screen;
 
 namespace rhythmer {
 
-class Vst2Instance final : public juce::AudioPluginInstance
+class Vst2Instance final : public juce::AudioPluginInstance, public ScreenSource
 {
 public:
     // dlopens the library and opens its effect; nullptr and a reason on failure.
@@ -49,6 +58,16 @@ public:
     // Opcodes the plug-in sent that this host does not answer, for the probe.
     juce::String unansweredHostOpcodes() const;
 
+    // Its own screen (plugin/screen_source.h): asked for once it is open, by effCanDo("melodeeScreen") and then the
+    // vendor call (sdk/rhythmer-screen/rhythmer_screen.h), so a plug-in that answers unknown vendor calls with
+    // anything is never asked for one.
+    bool hasScreen() const override { return screen != nullptr; }
+    bool screenDraw (const rhythmer_screen_frame& frame, bool& changed) override;
+    bool screenInput (const rhythmer_screen_input& input, bool& used) override;
+    bool screenControls (std::array<int, 3>& indices) override;
+    bool takeRedraw() override { return redraw.exchange (false, std::memory_order_acq_rel); }
+    bool wantsProcess() const override { return runAsked.load (std::memory_order_acquire); }
+
 private:
     class Parameter;
     friend class Parameter;
@@ -72,6 +91,9 @@ private:
     std::vector<vst2::MidiEvent> midiEvents;
     vst2::Events<512> events {};
     std::array<std::atomic<bool>, 64> unanswered {};
+    mutable std::recursive_mutex mainLock; // every dispatcher call but the audio thread's
+    const rhythmer_screen* screen = nullptr;
+    std::atomic<bool> redraw { false }, runAsked { false };
 };
 
 } // namespace rhythmer

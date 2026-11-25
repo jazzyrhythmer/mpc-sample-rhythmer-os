@@ -41,7 +41,7 @@ inline int break_p1_check(){
     // Tone frequency remains 220 Hz while duration follows source/project tempo.
     for(unsigned tempo:{600u,1200u,2400u}){
         SamplerEngine sampler;SamplerEngine::Table table{};table[preview_slot]=&tone;sampler.set_samples(&table);sampler.set_tempo(tempo);
-        sampler.audition(preview_slot,0,0,100,1200);
+        sampler.audition(preview_slot,0,0,100,-1,1200);
         unsigned last=0,crossings=0;float previous=0;double square=0;unsigned measured=0;
         std::vector<float> result;const unsigned expected=unsigned(uint64_t(tone.frames)*1200/tempo);
         std::array<float,128> l{},r{};

@@ -18,15 +18,15 @@
 // thread owns it; the screen gets a copy in each Snapshot.
 namespace rhythmer {
 
+// Sends and Tracks are gone with the mixer (docs/MIXER_PLAN.md step 6): opening either opens it; kept so the numbers stay.
 enum class PageId : uint8_t { Stage, Keys, Sounds, Edit, Roll, Motion, Patterns, Song, InputConfig, Rack, Sends, Bus, Master, Pads, Samples, Trim, Chop, Record, Project, Tempo, PadPage, PlayPage, EnvelopePage, FilterPage, FollowPage, CloudPage, Punch, SettingsPage, About, PadFx, TimeCorrect, StepEdit,
                             PadMix, PadFilterPage, FilterEnvPage, // parity phase 4: the MPC's Mix, Filter and Filt Env for a kit pad
                             KnobFx, Compressor, FlexBeat,      // parity phase 7 and 7b
                             FaderPage,                         // parity phase 8: Shift + Pad 9
                             MidiConfig,                        // parity phase 9: Shift + Pad 8
                             CardAccess,                        // parity phase 10b: Project's SD card access
-                            Tracks,                            // Sample's second stop: the sixteen tracks and the strip in hand
-                            Looper,                            // LOOPER on Tracks: the four loops (docs/LOOPER.md)
-                            RecQuantize,                       // Shift + Pad 10: Rec Quantize on or off, and its grid
+                            Tracks,                            // gone with the mixer (docs/MIXER_PLAN.md step 6): opens it; kept so the numbers stay
+                            Looper,                            // the four loops (Loop + 16 Levels; docs/LOOPER.md)
                             Plugins,                           // the plug-in picker: the card's Plugins folder (docs/RHYTHMER.md)
                             PluginPresets,                     // PRESETS: a plug-in's programs (docs/RHYTHMER.md)
                             LayersPage,                        // roadmap P3: a kit pad's four layers
@@ -36,6 +36,7 @@ enum class PageId : uint8_t { Stage, Keys, Sounds, Edit, Roll, Motion, Patterns,
                             Scenes,                            // roadmap P5: the bank's scenes (B1 again on Patterns)
                             AutoSample,                        // the AUTO SAMPLE sheet: Resample (Shift + Pad 11) on a plug-in track
                             Stems,                             // the STEMS sheet: Shift + B3 on a kit pad's TRIM (shell/stems_jobs.cpp)
+                            Mixer,                             // the mixer (docs/MIXER_PLAN.md): Pad FX + Knob FX
                             Count };
 
 // Takeover (shell/takeover.h): a pot or the fader drives its value once it has
@@ -58,6 +59,11 @@ struct CardView {
     CardNote note = CardNote::None;
     uint64_t returns = 0;
 };
+
+// Song's Export, what B2 makes (UiState::export_kind), in the wheel's order.
+namespace export_kinds {
+constexpr uint8_t mix32 = 0, mix24 = 1, mix16 = 2, stems = 3, midi = 4, mpc3 = 5, live = 6, count = 7;
+}
 
 // Trim's and Chop's view zoomed in, kept while its handle moves inside it (shell/zoom_view.h); key 0: none kept.
 struct ZoomView {
@@ -117,6 +123,9 @@ struct UiState {
     // The MENU (shell/menu.h), the encoder held: 0 closed, 1 HERE (the page's jobs as cards), 2 GO (the sixteen
     // places as the pads sit); the tile the wheel is on (a pad's index) and the card.
     uint8_t menu = 0, menu_tile = 0, menu_row = 0;
+    // The undo list (shell/history_list.h), Shift + Minus held: open, and the row the cursor is on.
+    bool history = false;
+    uint8_t history_row = 0;
     // A lesson (shell/lesson.h): which (0 none, else its number + 1), the step in hand, the button held with the
     // step's control (-1 none), where the step's knob stood when it first moved (-1 not yet), when the step began.
     uint8_t lesson = 0, lesson_step = 0;
@@ -128,8 +137,12 @@ struct UiState {
     uint8_t key_list_key = 0;
     uint32_t key_list_at = 0;
     bool rec_armed = false;        // Seq Record pressed while stopped: Play starts the take (its light flashes)
+    // Free length (shell/free_length.h), for K1's card: the longest pattern with notes on another track in the
+    // selected pattern's sequence (0: none, Free is offered), and a take growing the selected pattern now.
+    uint32_t column_ticks = 0;
+    bool free_growing = false;
     uint8_t lead_pattern = 0;      // the pattern launched last: whose tempo plays with BPM per pattern on
-    uint32_t locate = 0;           // Patterns: where Shift + Play carries on from, ticks (the wheel moves it)
+    uint32_t locate = 0;           // Patterns: where Shift + Play carries on from, ticks of the track in view's pattern as written (the wheel moves it)
     bool bpm_tenths = false;       // Seq held + Push: the wheel's tempo by whole BPM or tenths
     // Time Correct (Shift + Pad 14): shift in ticks and swing for the notes moved, and the keys chosen.
     int16_t tc_shift = 0;
@@ -168,6 +181,7 @@ struct UiState {
     uint8_t recent_count = 0;
     uint8_t steps_bar = 0;
     int16_t step_cursor = 0, held_step = -1;
+    int16_t spare_step = -1; // Step Edit: the caret past the last step, where a step makes the pattern longer (shell/spare_bar.h)
     // Settings > SEQ > Follow (shell/step_edit.cpp seq_follow): the bar (Page) or step (Step) the caret last went to; -1 none.
     int16_t follow_step = -1;
     uint8_t step_event = 0;                   // Step Edit: which of the cursor step's events (shell/step_edit.h)
@@ -192,7 +206,6 @@ struct UiState {
     Pot fader;
     uint32_t fader_moved_at = 0;
     uint8_t midi_cursor = 0;                  // MIDI Config: the row under the cursor (shell/midi_config_rows.h)
-    bool midi_editing = false;                // and its value open (the wheel changes it)
     uint32_t midi_in_at = 0, midi_out_at = 0; // ms: MIDI last came in, went out (the page's lights)
     std::array<uint32_t, track_count> track_out_at {}; // ms: a MIDI track last sent on its own port (Edit's DEVICE picture)
     // midi-track A (round 2): the last notes MIDI tracks sent, for their DEVICE picture: the track, key and velocity,
@@ -212,13 +225,24 @@ struct UiState {
     bool sysex_listed = false;
     std::array<uint8_t, track_count> sysex_percent {};
     uint16_t midi_in_use = 0;
-    // Roadmap P4, Song's Export: what B2 makes, the wheel's pick: a mixdown as 32-bit float, 24-bit or 16-bit (both
-    // dithered), the stems, or a MIDI file.
+    // What the loops and MIDI tracks need of the inputs (InputRoute::need_line, need_mic, need_usb): a source on the ADC
+    // side they did not get is IN USE (InputRoute::adc_taken).
+    uint8_t adc_needs = 0;
+    // Roadmap P4, Song's Export: what B2 makes, the wheel's pick (export_kinds): a mixdown as 32-bit float, 24-bit or
+    // 16-bit (both dithered), the stems, a MIDI file, an MPC 3 project or an Ableton Live Set.
     uint8_t export_kind = 0;
     uint32_t held_since = 0;                  // when the held step's pad went down, ms
     bool held_created = false, held_edited = false;
     bool sheet_open = false;  // a sheet behind Push: Roll's note, a chain's device, a project's file
     uint8_t sheet_row = 0;
+    // Samples' LOAD KIT sheet (Push on a KIT over a kit track, shell/project_jobs.cpp): the kit read, how many pads
+    // each of its banks fills, and which of its banks goes into each bank of the track (-1 none).
+    struct KitSheet {
+        char name[32] {};
+        std::array<uint8_t, sampler_banks> pads {};
+        std::array<int8_t, sampler_banks> into {-1, -1, -1, -1, -1, -1, -1, -1};
+    };
+    KitSheet kit_sheet;
     // Roll (shell/roll.h): the cursor is step_cursor (a step of Q) and roll_key (a pitch), and the note
     // starting there on that key is in focus. roll_view: the first step in view; roll_top: the top row's key;
     // roll_new: the length a pad's new note gets, in ticks (0: one step of Q).
@@ -253,12 +277,22 @@ struct UiState {
     uint8_t song_zoom = 2;      // index into song_zooms
     uint8_t song_pattern = 0;   // what Push places on empty time
     uint8_t song_length = 4;    // bars
+    // Jam capture (model/jam_log.h): the bars of the run being logged and whether one is (Song's foot), the jams
+    // kept; JAMS (Song's Shift + B1): open, the jam picked (its index, oldest first), its bars, the part FROM-TO
+    // (bars, TO not included), and whether B2 plays it.
+    uint16_t jam_bars = 0;
+    bool jam_logging = false;
+    uint8_t jam_count = 0;
+    bool jam_sheet = false;
+    uint8_t jam_pick = 0;
+    uint16_t jam_pick_bars = 0, jam_from = 0, jam_to = 0;
+    bool jam_audition = false;
     // Freeze plan F3: an audio track's take armed or recording (its track, -1 none), and whether it runs now.
     int8_t audio_rec_track = -1;
     bool audio_rec_running = false;
     // Per chain: the slot (or + ADD) and parameter row; the pad chains share the last entry (cursor_of()).
-    std::array<uint8_t, chain_count + 1> fx_cursor {}, fx_row {};
-    static unsigned cursor_of(unsigned chain) { return chain < chain_count ? chain : chain_count; }
+    std::array<uint8_t, mix_chain_count + 1> fx_cursor {}, fx_row {};
+    static unsigned cursor_of(unsigned chain) { return chain < mix_chain_count ? chain : mix_chain_count; } // the pads' chains share the last
     bool picker_open = false, picker_items = false;           // the effect picker; focus on its effects column
     uint8_t picker_family = 0, picker_item = 0;
     bool picker_replaces = false;                              // Change on a device, not + ADD
@@ -273,8 +307,8 @@ struct UiState {
     bool scene_capture = false;  // Scenes' Shift + B2 CAPTURE: the next pad picks the scene the playing patterns go to
     PluginTarget plugin_target = PluginTarget::Instrument;
     uint8_t plugin_chain = 0, plugin_slot = 0;  // Effect: where it goes
-    PageId plugin_back = PageId::Stage;          // where B1 (Back) at the top and a load go
-    PageId plugin_from = PageId::Stage;          // the page it opened over: B1 at the top while the track is not PLUGIN yet
+    PageId plugin_back = PageId::Stage;          // where a load goes, and an effect's B1 (CANCEL) at the top
+    PageId plugin_from = PageId::Stage;          // the page it opened over: an instrument's B1 (CANCEL) at the top
     PluginPanel plugin_panel;
     std::array<uint16_t,max_plugins> plugin_design_page {};
     std::array<uint8_t,max_plugins> plugin_design_half {};
@@ -282,6 +316,8 @@ struct UiState {
     std::array<uint16_t, max_plugins> plugin_row {};
     int sound_tools_track = -1; // transient return bookmark; not project state
     uint16_t sound_tools_row = 2;
+    // A plug-in's own screen (shell/screen_view.h): an effect slot's full page open on a chain page (Push on it).
+    bool fx_panel = false;
     DrumVoices drum_voices; // the selected track's Drums pads: its drum plug-in's voices (Keys, the pad lights)
     // PRESETS: the entry whose programs it lists, the row under the cursor, and where B1 goes back to.
     uint8_t presets_entry = no_plugin;
@@ -292,7 +328,6 @@ struct UiState {
     uint16_t files_cursor = 0;  // Samples, the browser: the row under the cursor
     uint16_t files_count = 0;   // rows in the folder listed, copied in by the shell
     uint8_t files_drive = 0;    // B2: 0 the card, 1 the internal drive (Drive in sample_library.h)
-    bool preview = false;       // B3: each file plays as the cursor lands on it
     uint8_t trim_zoom = 0;      // Trim: 0 the whole sample .. 100 a few hundred frames (shell/zoom_view.h)
     ZoomView trim_view;         // and the view it keeps
     uint8_t pad_layer = 0;      // Layers (roadmap P3): the layer in hand, 0-3
@@ -313,17 +348,27 @@ struct UiState {
     uint8_t warp_stretch = 0;   // Shift + Pad 15: the Follow how (Beats or Tones) Time stretch goes back to
     // Chop (parity phase 5): the last pad's region cut into slices.
     ChopMode chop_mode = ChopMode::Threshold;
-    std::array<int, 4> chop_amount {{50, 8, 1, 0}}; // per mode: threshold, slice count, beats a slice (Manual: none)
+    std::array<int, 5> chop_amount {{50, 8, int(quarter_division), 0, int(auto_default_count)}}; // per mode: threshold, slice count, Beats' division (shell/chop.h; Manual: none), Auto's SLICES (8 << it)
     Slices slices;              // Chop's slices of the sample in hand
+    HandCuts chop_hand;         // its cuts made or moved by hand: a new chop keeps them (model/chop_slices.h)
     uint16_t chop_sample = no_sample;
     uint32_t chop_from = 0, chop_to = 0; // the pad's region it chops (to 0: the end)
     uint8_t chop_slice = 0;
     uint8_t chop_zoom = 0;      // Shift + K1 / K2: 0 the whole region .. 100 a few hundred frames (shell/zoom_view.h)
-    uint8_t chop_focus = 0;     // and where: 0 the slice's start, 1 its end
-    bool chop_fine = false;     // K1 / K2 touched: the wheel fine-edits the handle in focus until a pad picks another slice
+    uint8_t chop_focus = 0;     // and where: 0 the slice's start, 1 its end (K2 touched); the wheel moves it
+    bool chop_fine = false;     // K1 / K2 or the wheel touched: that handle drawn wider
+    bool chop_zoom_auto = false; // the zoom is the wheel's (closed in on the cut it moves); the next pad opens it again
+    uint32_t chop_heard_at = 0; // ms the slice in hand plays once, a moved cut gone still (0: none due)
     ZoomView chop_view;         // the view zoomed in, kept
-    bool chop_armed = false;    // Manual: pad 1 plays the region and the pads tapped meanwhile cut it
-    uint32_t chop_take_at = 0;  // ms when pad 1 started that take, 0 none
+    uint32_t chop_take_at = 0;  // ms when the take (or its part from a slice: a lit pad, the red one after) began, 0 none
+    uint32_t chop_take_from = 0; // the frame it plays from
+    bool chop_more = false;     // a take played out: the red stays on the next slice's pad, and tapped it plays on
+    bool chop_rechop_ok = false; // issue 24 (3b): Rechop asked and answered on this visit to Chop: no more asking
+    // Auto's CLEAN (B2): its cuts found on the sample's DRUMS stem (shell/stems.h), separated once for that sample.
+    bool chop_clean = false;     // on, with the stem in
+    bool chop_cleaning = false;  // its stems being separated, or the DRUMS stem being read
+    int16_t chop_clean_slot = -1; // the DRUMS stem's sample slot; -1: none yet
+    uint16_t chop_clean_for = 0;  // the sample (slot) that stem was made from
     int8_t levels_hit = -1;     // Levels: the pad played last, 0..15
     int16_t levels_value = 0;   // and what it played: a velocity or semitones
     // Sample Record (parity phase 6; Input Config itself is in settings.input).
@@ -345,12 +390,24 @@ struct UiState {
     bool song_export = false;            // Song, B1: Cancel, Audio mixdown, New pattern
     bool project_save_picker = false, project_save_as = false;
     bool project_list = false;    // Project: the list behind OPEN (else SAVE, OPEN and NEW as tiles)
-    bool sends_pads = false;      // MIX hub SENDS on a kit: the kit's pads and their own sends (B2 again), not the tracks
-    uint8_t sends_bus = 0;        // the bus in view on Sends and Bus (round 2: a track sends into all four; K2 on Sends picks)
+    // The mixer (docs/MIXER_PLAN.md): the block the card shows and K1-K3 turn (0 SENDS, 1 EQ, 2 COMP), and the EQ's
+    // three bands in hand (0 LOW 63-250 Hz, 1 MID 500 Hz-2 kHz, 2 HIGH 4-16 kHz).
+    uint8_t mixer_block = 0, mixer_eq_group = 0;
+    // The mixer's pad bank (shell/mixer_channels.h): 0 the tracks (the one in hand ui.track), 1 the submixes, buses,
+    // input and master, `mixer_other` the one in hand there (its place in that row).
+    uint8_t mixer_bank = 0, mixer_other = 0;
+    // B1's two pages on a track or submix (0 SENDS, 1 FX: its chain in the card), and the row − / + put SENDS and
+    // COMP on (0 the first, 1 the second, as Shift shows it).
+    uint8_t mixer_b1 = 0, mixer_row = 0;
+    // The mixer's view: every channel of the row as a strip as Rhythmer starts; the channel in hand's card (its
+    // block, the neighbours narrow) once Plus is held, until Minus held (shell/mixer_channels.h MixerViewHold).
+    bool mixer_card = false;
+    float mixer_card_from = 0;   // the view on its way from here (0 the strips, 1 the card) ...
+    uint32_t mixer_card_at = 0;  // ... since then, ms (0: still)
+    uint8_t sends_bus = 0;        // the bus in view on Bus (its chain page), and on a kit's Stage SENDS
     // Roadmap P4, the MOD page: modulators (0) or macros (1), the one in hand and its target in hand; the lane a pot
     // turned last (-1 none) and its track, which ADD takes (shell/mod_jobs.h).
     uint8_t mod_view = 0, mod_index = 0, mod_target = 0, macro_index = 0, macro_target = 0;
-    uint8_t scene = 0; // roadmap P5: the scene in hand: Patterns' cursor (its place in the bank) and the one launched last
     uint8_t patterns_cards = 0; // Patterns' cards: 0 the pattern's, 1 SCENE (Shift + B1), 2 FOLLOW (Shift + B2)
     uint8_t step_cards = 0;     // Step Edit's B1: 0 NOTE, 1 LOCK, 2 TRIG, 3 EUCLID (a kit or Drums lane)
     bool step_pads = false;     // Step Edit's Shift + B1 PADS: false PLAY (entry at the caret), true STEPS (the bar's steps)
@@ -392,7 +449,10 @@ struct UiState {
     uint16_t move_cursor = 0;
     uint16_t user_sound_count = 0;            // sounds of one's own for the track's engine, copied in by the shell
     uint8_t settings_cursor = 1;              // the row (Settings::Row) in hand behind a door
-    bool settings_editing = false;            // Push opened the value under the cursor
+    // K1 on a row that reopens the audio device or the USB camera (Settings::reopens): the value it waits to set
+    // until the knob rests (Context::settings_tick); -1 none.
+    int8_t settings_wait_row = -1;
+    uint8_t settings_wait_value = 0;
     uint8_t settings_door = 0;                // Settings: the door in hand (pages/settings_page.cpp)
     bool settings_in = false;                 // and behind it: its rows
     bool settings_look = false;               // SCREEN's Palette or Font row: its cards over the rows, the look turned live
@@ -418,7 +478,7 @@ struct UiState {
     // A question over the page that B1 (Cancel) or B3 (Do it) answers, as the
     // MPC asks before erasing: Erase + pad on Step Edit (`ask_target` the
     // key), Erase + pot on Motion (the lane, bindings.h). shell/ask.cpp.
-    enum class Ask : uint8_t { None, ProjectChanges, OverwriteProject, RecoverProject, EraseKeyEvents, EraseLane, ResetSettings, NewProject, TakeCardBack, ClearLoop, LooperOff, ClearPattern, ErasePunches, ClearTrack, InstallUpdate, Unfreeze, BreakLength, DeleteFile, ReplacePlugin, CaptureScene, EnableFullSends }; // CaptureScene (shell/scene_jobs.cpp): CAPTURE onto a column with notes; target the column // ReplacePlugin (shell/plugin_jobs.cpp): a picked plug-in over one in use; target the picker's row, `ask_name` the old plug-in's name // DeleteFile (shell/delete_jobs.h): Erase in a browser; target what it is (DeleteWhat), `ask_name` its name // Unfreeze (freeze plan F2c): an edit of a frozen track; target the track // InstallUpdate: newer release on the card (shell/update.h); ClearLoop: target the loop; ClearPattern (Seq held + Erase + pad): target the pattern; ClearTrack (Pad Bank held + Erase + pad): target the track // NewProject (phase 10): target 0 nothing unsaved, 1 saved first, 2 lost; TakeCardBack (10b): the computer still holds the card
+    enum class Ask : uint8_t { None, ProjectChanges, OverwriteProject, RecoverProject, EraseKeyEvents, EraseLane, ResetSettings, NewProject, TakeCardBack, ClearLoop, LooperOff, ClearPattern, ErasePunches, ClearTrack, InstallUpdate, Unfreeze, BreakLength, DeleteFile, ReplacePlugin, CaptureScene, EnableFullSends, Rechop }; // CaptureScene (shell/scene_jobs.cpp): CAPTURE onto a column with notes; target the column // ReplacePlugin (shell/plugin_jobs.cpp): a picked plug-in over one in use; target the picker's row, `ask_name` the old plug-in's name // DeleteFile (shell/delete_jobs.h): Erase in a browser; target what it is (DeleteWhat), `ask_name` its name // Unfreeze (freeze plan F2c): an edit of a frozen track; target the track // InstallUpdate: newer release on the card (shell/update.h); ClearLoop: target the loop; ClearPattern (Seq held + Erase + pad): target the pattern; ClearTrack (Pad Bank held + Erase + pad): target the track // NewProject (phase 10): target 0 nothing unsaved, 1 saved first, 2 lost; TakeCardBack (10b): the computer still holds the card
     Ask ask = Ask::None;
     int32_t ask_target = 0;
     std::array<char, 48> ask_name {}; // DeleteFile: the file's or the folder's name
@@ -441,6 +501,8 @@ struct UiState {
     int8_t loop_clear = -1;
     uint32_t loop_clear_at = 0;
     int8_t fx_loop = -1;
+    int8_t fx_sub = -1; // the effect page (Rack) on a mixer submix's chain (Shift + Knob FX on the mixer), -1 none
+    bool mixer_picker = false; // the effect picker came from the mixer's FX block (its plus): done or backed out, back there
     // SD card access (shell/card_access.h): the card as the service thread
     // last saw it, copied in on the MIDI thread.
     CardView card;
@@ -477,6 +539,10 @@ struct UiState {
         // The check is still to start: once the track's plug-in is open and the print engine is free
         // (Context::autosample_tick()).
         bool check_wanted = false;
+        // Why the last check or sampling failed, its first words ("G#3 clips", "card full"), until the next starts;
+        // the key it is about (an input that clips there), -1 none.
+        char error[48] {};
+        int16_t error_key = -1;
     };
     AutoSheet auto_sheet;
     // The STEMS sheet (shell/stems_jobs.cpp): the kit pad whose sample is separated, the sample it held when the
@@ -519,5 +585,10 @@ struct UiState {
     char notice[32] {};
     uint32_t notice_at = 0;   // ms
 };
+
+// Chop's Manual chop with no cut yet (one slice, the region) is armed: pad 1 blinks red and starts the take. With cuts
+// it is not, however it came to be (K3 onto Manual, a restore, an undo, Split): the cuts show and pad 1 plays slice 1.
+inline bool chop_fresh(const UiState& ui) { return ui.chop_mode == ChopMode::Manual && ui.slices.count <= 1; }
+inline bool chop_armed(const UiState& ui) { return chop_fresh(ui) && !ui.chop_take_at; }
 
 } // namespace rhythmer

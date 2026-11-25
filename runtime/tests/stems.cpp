@@ -3,7 +3,7 @@
 // arguments, print its lines and write its four files. A job copies the program into its work folder, gives it the
 // model and the sample as a WAV file, writes what it made to the paths asked for at the sample's length and leaves
 // nothing else behind; a job cancelled, a program that fails, one that makes too little and one that is not there each say so
-// and leave no file.
+// and leave no file. A BEST job hands the program "best" after the file; the others hand it nothing more.
 #include "rhythmer/shell/stems.h"
 #include "rhythmer/engine/sample_data.h"
 #include <chrono>
@@ -65,18 +65,23 @@ bool none_left(const StemsResult& r) {
 int main(int argc, char** argv) {
     if (argc != 2) return 2;
     const fs::path folder = argv[1];
-    // The program's arguments are the model, its threads and the file; it prints how far it is.
+    // The program's arguments are the model, its threads and the file, then "best" for BEST; it prints how far it is.
     std::ofstream(folder / "model.f16") << "MLST";
     const char* lines = "[ -f \"$1\" ] && [ \"$2\" = 3 ] || exit 9\n"
+                        "[ $# = 3 ] || [ $# = 4 -a \"$4\" = best ] || exit 7\n"
                         "echo 'progress 5'\n"
                         "echo 'progress 50'\n";
     const auto good = script(folder, "good.sh", (std::string(lines) + "for stem in Drums Bass Music Vocals; do cp \"$3\" \"$3_$stem.wav\" || exit 8; done\n").c_str());
     const auto slow = script(folder, "slow.sh", (std::string(lines) + "sleep 30\n").c_str());
     const auto failing = script(folder, "failing.sh", "echo 'rhythmer-stems: cannot read the file' >&2\nexit 1\n");
     const auto half = script(folder, "half.sh", (std::string(lines) + "cp \"$3\" \"$3_Drums.wav\"\n").c_str());
+    const auto best = script(folder, "best.sh", (std::string(lines) + "[ \"$4\" = best ] || exit 6\n"
+                                                 "for stem in Drums Bass Music Vocals; do cp \"$3\" \"$3_$stem.wav\" || exit 8; done\n").c_str());
 
-    check(stems_memory(60 * 44100) > uint64_t(656 + 100) << 20 && stems_memory(13 * 44100) > uint64_t(478 + 22) << 20, "a job counts the memory measured and its files in RAM");
-    check(stems_seconds(60 * 44100) > stems_seconds(13 * 44100), "a longer sample takes longer");
+    check(stems_memory(60 * 44100, false) > uint64_t(656 + 100) << 20 && stems_memory(13 * 44100, false) > uint64_t(478 + 22) << 20, "a job counts the memory measured and its files in RAM");
+    check(stems_memory(60 * 44100, true) > uint64_t(841 + 100) << 20 && stems_memory(13 * 44100, true) > uint64_t(655 + 22) << 20, "BEST counts its own");
+    check(stems_seconds(60 * 44100, false) > stems_seconds(13 * 44100, false), "a longer sample takes longer");
+    check(stems_seconds(13 * 44100, true) > 2 * stems_seconds(13 * 44100, false) && stems_seconds(60 * 44100, true) > 2 * stems_seconds(60 * 44100, false), "BEST takes over twice as long");
 
     StemSeparator separator;
     StemsResult result;
@@ -98,6 +103,16 @@ int main(int argc, char** argv) {
         check(fs::path(result.paths[0]).filename() == "LOOP DRUMS.wav" && fs::path(result.paths[1]).filename() == "LOOP BASS.wav"
               && fs::path(result.paths[2]).filename() == "LOOP MUSIC.wav" && fs::path(result.paths[3]).filename() == "LOOP VOCALS.wav", "the files are the ones asked for");
         check(!fs::exists(folder / "work"), "the work folder is gone");
+    }
+    {
+        auto asked = job(folder, best, "BEST");
+        asked.best = true;
+        check(separator.start(std::move(asked)), "a BEST job starts");
+        check(finished(separator, result, 20) && result.error.empty(), "the program is told best, and the job ends");
+        check(fs::path(result.paths[3]).filename() == "BEST VOCALS.wav" && fs::exists(result.paths[3]), "its files are written");
+        check(separator.start(job(folder, best, "NOTBEST")), "a job that is not BEST starts");
+        check(finished(separator, result, 20) && result.error == "program failed", "the program is not told best");
+        check(none_left(result), "and it leaves nothing");
     }
     {
         check(separator.start(job(folder, slow, "CUT")), "a second job starts once the first is taken");

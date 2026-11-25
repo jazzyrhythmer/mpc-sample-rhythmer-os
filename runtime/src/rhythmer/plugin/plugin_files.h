@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #pragma once
 #include "rhythmer/plugin/drum_map.h"
+#include "rhythmer/plugin/plugin_pages.h"
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -15,8 +17,11 @@
 // - a VST3 bundle (Name.vst3/, its library in Contents/aarch64-linux);
 // - an LV2 bundle (Name.lv2/, its manifest.ttl beside its library);
 // - a CLAP library (Name.clap, a shared library on Linux);
-// - an Open MPC plug-in folder (open-mpc.github.io: plugin-meta.xml beside a
-//   VST2 .so, its Q-Link pages in Plugin Skins/Q-Links.json);
+// - an MPC plug-in folder ("Maker - VST - Name/"): Akai's plugin.json naming
+//   its VST2 builds (the MPC plug-in SDK's folder, MPC OS 3.10.1 and MPC
+//   Sample 1.4 read it from VST2 Plugins), or an Open MPC folder
+//   (open-mpc.github.io: plugin-meta.xml beside a VST2 .so); either has its
+//   Q-Link pages in Plugin Skins/Q-Links.json;
 // - a VST2 library (.so) on its own.
 //
 // Only builds for this MPC can load: aarch64 Linux, or a 32-bit ARM (armv7)
@@ -38,7 +43,7 @@ struct PluginFile {
     std::string library;       // the shared library inside (absolute), empty when there is none for this MPC
     std::string why;           // why it cannot load here ("Windows and Mac builds only"); empty when it can
     int8_t instrument = -1;    // 1 instrument, 0 effect, -1 not known until it is opened once
-    // The rate it runs at whatever it is opened at, 0 none: an Open MPC plug-in, written to MPC OS's 44.1 kHz
+    // The rate it runs at whatever it is opened at, 0 none: an MPC plug-in folder, written to MPC OS's 44.1 kHz
     // (plugin/rate_bridge.h converts it to the device's)
     unsigned fixed_rate = 0;
     // A bundle holding several plug-ins (LSP's VST3 or LV2, a CLAP collection) lists as one row with how many;
@@ -90,23 +95,30 @@ inline std::string card_plugin_path(const std::string& card_top, const std::stri
     return fs::exists(moved, e) || !fs::exists(path, e) ? moved.string() : path.string();
 }
 
-// An Open MPC plug-in's Q-Link pages: its parameter indices in the order the
-// skin lays them out, tab by tab, each once. Empty: none given.
-std::vector<int> qlink_order(const std::string& plugin_folder);
+// An Open MPC plug-in's Q-Link pages (plugin/plugin_pages.h), each named after
+// the skin's tab it is on (Plugin Skins/TUI.json; a tab's second page gets " 2"),
+// else "Q-LINKS n". Empty: none given.
+std::vector<PluginPage> qlink_pages(const std::string& plugin_folder);
 
-// The same from Plugin Skins/Q-Links.json's text. A page with "Bank Direction":
-// "Column" (every Open MPC skin, mpc-vst-plugins tools/shadow_skin.py
-// qlink_for_slot()) holds its layout's slots 0-15, left to right and row 1
-// then row 2, on Q-Links 13, 9, 5, 1, 14, 10, 6, 2, 15, 11, 7, 3, 16, 12, 8, 4:
-// read in that order, each three are one K1-K3 row as the skin shows them.
-// Any other direction: Q-Link number order. -1 (no parameter) is skipped.
-// Plain C++, no JUCE: the host tests read it too.
-inline std::vector<int> qlink_order_in(std::string_view json) {
+// One page of Plugin Skins/Q-Links.json: the tab it is on (1 up, 0 not said),
+// and its parameter indices as the skin lays them out. A page with "Bank
+// Direction": "Column" (every Open MPC skin, mpc-vst-plugins
+// tools/shadow_skin.py qlink_for_slot()) holds its layout's slots 0-15, left
+// to right and row 1 then row 2, on Q-Links 13, 9, 5, 1, 14, 10, 6, 2, 15, 11,
+// 7, 3, 16, 12, 8, 4: read in that order, each three are one K1-K3 row as the
+// skin shows them. Any other direction: Q-Link number order. -1 (no
+// parameter) is skipped. Plain C++, no JUCE: the host tests read it too.
+struct QLinkPage {
+    int tab = 0;
+    std::vector<int> params;
+};
+inline std::vector<QLinkPage> qlink_pages_in(std::string_view json) {
     static constexpr int by_slot[16] = {13, 9, 5, 1, 14, 10, 6, 2, 15, 11, 7, 3, 16, 12, 8, 4};
-    std::vector<int> order;
+    std::vector<QLinkPage> out;
     drum_map_detail::Reader r {json};
     auto page = [&] {
         bool column = false;
+        long tab = 0;
         long links[16];
         std::fill(links, links + 16, -1L);
         bool ok = r.object([&](const std::string& key) {
@@ -116,6 +128,7 @@ inline std::vector<int> qlink_order_in(std::string_view json) {
                 column = direction == "Column";
                 return true;
             }
+            if (key == "Tab" && !r.peek('"') && !r.peek('{') && !r.peek('[')) return r.number(&tab) || r.skip();
             if (key != "Q-Links" || !r.peek('{')) return r.skip();
             return r.object([&](const std::string& name) {
                 constexpr std::string_view prefix = "Q-Link ";
@@ -131,10 +144,13 @@ inline std::vector<int> qlink_order_in(std::string_view json) {
                 return true;
             });
         });
+        QLinkPage p;
+        p.tab = tab > 0 && tab < 1000 ? int(tab) : 0;
         for (int n = 0; ok && n < 16; ++n) {
             long index = links[(column ? by_slot[n] : n + 1) - 1];
-            if (index >= 0 && std::find(order.begin(), order.end(), int(index)) == order.end()) order.push_back(int(index));
+            if (index >= 0 && std::find(p.params.begin(), p.params.end(), int(index)) == p.params.end()) p.params.push_back(int(index));
         }
+        if (ok) out.push_back(std::move(p));
         return ok;
     };
     auto pages = [&] {
@@ -152,7 +168,115 @@ inline std::vector<int> qlink_order_in(std::string_view json) {
         if (key != "Screen Mode Q-Links" || !r.peek('{')) return r.skip();
         return r.object([&](const std::string& field) { return field == "map" ? pages() : r.skip(); });
     });
-    return ok ? order : std::vector<int> {};
+    return ok ? out : std::vector<QLinkPage> {};
+}
+
+// Every page's parameters in one list, each once.
+inline std::vector<int> qlink_order_in(std::string_view json) {
+    std::vector<int> order;
+    for (const auto& page : qlink_pages_in(json))
+        for (int p : page.params)
+            if (std::find(order.begin(), order.end(), p) == order.end()) order.push_back(p);
+    return order;
+}
+
+// The tab names of an Open MPC skin's Plugin Skins/TUI.json ("pageData":
+// {"tabs": [{"tabName": "OSC"}, ...]}), tab 1 first; "" for a tab with none.
+inline std::vector<std::string> skin_tab_names_in(std::string_view json) {
+    std::vector<std::string> names;
+    drum_map_detail::Reader r {json};
+    auto tabs = [&] {
+        if (!r.peek('[')) return r.skip();
+        if (++r.depth > 32) return false;
+        r.eat('[');
+        if (!r.eat(']')) {
+            do {
+                if (!r.peek('{')) { if (!r.skip()) return false; names.emplace_back(); continue; }
+                std::string name;
+                if (!r.object([&](const std::string& key) { return key == "tabName" && r.peek('"') ? r.string(&name) : r.skip(); })) return false;
+                names.push_back(name);
+            } while (r.eat(','));
+            if (!r.eat(']')) return false;
+        }
+        --r.depth;
+        return true;
+    };
+    bool ok = r.object([&](const std::string& key) {
+        if (key != "pageData" || !r.peek('{')) return r.skip();
+        return r.object([&](const std::string& field) { return field == "tabs" ? tabs() : r.skip(); });
+    });
+    return ok ? names : std::vector<std::string> {};
+}
+
+// Q-Link pages named: after their tab in `tabs` (a tab's second page " 2", third " 3"), else "Q-LINKS n".
+inline std::vector<PluginPage> named_qlink_pages(const std::vector<QLinkPage>& pages, const std::vector<std::string>& tabs) {
+    std::vector<PluginPage> out;
+    std::vector<int> seen;
+    for (size_t n = 0; n < pages.size(); ++n) {
+        const auto& q = pages[n];
+        std::string name;
+        if (q.tab > 0 && size_t(q.tab) <= tabs.size() && !tabs[size_t(q.tab) - 1].empty()) {
+            name = tabs[size_t(q.tab) - 1];
+            int again = int(std::count(seen.begin(), seen.end(), q.tab));
+            if (again) name += " " + std::to_string(again + 1);
+            seen.push_back(q.tab);
+        } else {
+            name = "Q-LINKS " + std::to_string(n + 1);
+        }
+        out.push_back({name, q.params});
+    }
+    return out;
+}
+
+// A path plugin.json gives, as a path inside the plug-in's folder ("x-arm64.so", "VST/x-arm64.so"; a backslash read
+// as a slash). Empty when it is empty or leads out of the folder (absolute, a drive, or "..").
+inline std::string folder_path_in(std::string path) {
+    std::replace(path.begin(), path.end(), '\\', '/');
+    if (path.empty() || path[0] == '/' || path.find(':') != std::string::npos) return {};
+    for (size_t from = 0; from <= path.size();) {
+        size_t end = std::min(path.find('/', from), path.size());
+        if (path.compare(from, end - from, "..") == 0) return {};
+        from = end + 1;
+    }
+    return path;
+}
+
+// Akai's plugin.json, as an MPC plug-in folder has it: the plug-in's name, whether it is an instrument
+// ("isInstrument", else "kind" "instrument" or "effect"; -1 not said) and its libraries by build, each inside the
+// folder (folder_path_in(); empty: not given). Empty when it is not a JSON object. Plain C++, no JUCE: the host tests
+// read it too.
+struct PluginJson {
+    std::string name;
+    int8_t instrument = -1;
+    std::string file64; // the aarch64 build
+    std::string file32; // the armv7 build
+    std::string file;   // a build not said which
+};
+inline PluginJson plugin_json_in(std::string_view json) {
+    PluginJson out;
+    std::string kind;
+    int8_t flag = -1;
+    drum_map_detail::Reader r {json};
+    auto text = [&](std::string& to) { return r.peek('"') ? r.string(&to) : r.skip(); };
+    bool ok = r.object([&](const std::string& key) {
+        if (key == "name") return text(out.name);
+        if (key == "kind") return text(kind);
+        if (key == "file64") return text(out.file64);
+        if (key == "file32") return text(out.file32);
+        if (key == "file") return text(out.file);
+        if (key != "isInstrument") return r.skip();
+        long number = 0;
+        if (r.word("true")) flag = 1;
+        else if (r.word("false")) flag = 0;
+        else if (r.number(&number)) flag = number != 0;
+        else return r.skip();
+        return true;
+    });
+    if (!ok) return {};
+    for (auto& c : kind) c = char(std::tolower(static_cast<unsigned char>(c)));
+    out.instrument = flag >= 0 ? flag : kind == "instrument" ? 1 : kind == "effect" ? 0 : -1;
+    for (auto* file : {&out.file64, &out.file32, &out.file}) *file = folder_path_in(*file);
+    return out;
 }
 
 // 1: a 32-bit ARM ELF, 2: a 64-bit ARM (aarch64) ELF, 0: anything else.

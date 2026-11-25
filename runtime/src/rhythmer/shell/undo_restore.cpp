@@ -6,6 +6,7 @@
 #include "rhythmer/shell/mod_jobs.h"
 #include "rhythmer/shell/undo_scope.h"
 #include "rhythmer/shell/context.h"
+#include "rhythmer/shell/zoom_view.h"
 #include <cstring>
 
 namespace rhythmer {
@@ -82,6 +83,7 @@ void Context::touch_gesture(const Binding& b) {
 }
 
 void Context::touch_scope(const UndoScope& scope, uint32_t key) {
+    end_take(); // a Chop take ends with any other edit, one step
     if (ui.recording) { close_gesture(); return; } // a take keeps its own moves
     if (held(scope)) { close_gesture(); return; }  // the held pad's step takes it in
     if (gesture.edit && gesture.key == key && gesture.scope == scope && now - gesture.last < gesture_quiet_ms) { gesture.last = now; return; }
@@ -120,8 +122,27 @@ void Context::restore_mix(const MixState& m) {
         if (x.pan != m.pan[t]) { x.pan = m.pan[t]; send({Type::Pan, uint8_t(t), 0, 0, int16_t(x.pan)}); }
         for (unsigned b = 0; b < bus_count; ++b)
             if (x.sends[b] != m.sends[t][b]) { x.sends[b] = m.sends[t][b]; send({Type::Send, uint8_t(t), 0, uint16_t(b), int16_t(x.sends[b])}); }
+        if (x.out != m.outs[t]) { x.out = m.outs[t]; send({Type::TrackOut, uint8_t(t), 0, 0, int16_t(x.out)}); }
+    }
+    for (unsigned n = 0; n < strip_channels; ++n) { // the mixer's strips, a value at a time
+        Strip& now = project.strip(n);
+        for (unsigned p = 0; p < unsigned(StripPart::Count); ++p) {
+            const int was = strip_get(m.strips[n], StripPart(p));
+            if (strip_get(now, StripPart(p)) == was) continue;
+            strip_set(now, StripPart(p), was);
+            send({Type::StripValue, uint8_t(n), 0, uint16_t(p), int16_t(was)});
+        }
     }
     for (unsigned b = 0; b < bus_count; ++b) if (project.buses[b].level != m.returns[b]) set_return(b, m.returns[b]);
+    for (unsigned sub = 0; sub < sub_count; ++sub) {
+        auto& x = project.subs[sub].mix;
+        auto put = [&](unsigned part, int v) { send({Type::SubMix, uint8_t(sub), 0, uint16_t(part), int16_t(v)}); };
+        if (x.level != m.sub_level[sub]) { x.level = m.sub_level[sub]; put(Command::SubLevel, x.level); }
+        if (x.pan != m.sub_pan[sub]) { x.pan = m.sub_pan[sub]; put(Command::SubPan, x.pan); }
+        for (unsigned b = 0; b < bus_count; ++b)
+            if (x.sends[b] != m.sub_sends[sub][b]) { x.sends[b] = m.sub_sends[sub][b]; put(Command::SubSend0 + b, x.sends[b]); }
+    }
+    if (project.input_wet != m.input_wet) { project.input_wet = m.input_wet; send({Type::InputWet, 0, 0, 0, int16_t(m.input_wet)}); }
 }
 
 void Context::restore_sound(unsigned t, const SoundState& s) {
@@ -149,6 +170,7 @@ void Context::restore_master(const MasterState& m) {
         send({Type::KnobFx, 0, uint8_t(q), 1, k.params[q]});
     }
     if (k.bypass != m.knob_bypass) { k.bypass = m.knob_bypass; send_knob_state(); }
+    if (k.pads != m.knob_pads) { k.pads = m.knob_pads; send_knob_targets(); }
     const auto& c = m.compressor;
     set_compressor(0, c.on); set_compressor(1, c.color); set_compressor(2, c.attack); set_compressor(3, c.release);
     set_compressor(4, c.amount); set_compressor(5, c.boost); set_compressor(6, c.sidechain); set_compressor(7, c.key);
@@ -170,13 +192,15 @@ void Context::restore_chain(unsigned n, const Chain& value) {
 }
 
 void Context::restore_chop(const ChopState& c) {
-    ui.slices = c.slices; ui.chop_mode = ChopMode(c.mode); ui.chop_slice = c.slice; ui.chop_amount = c.amount;
+    ui.slices = c.slices; ui.chop_hand = c.hand; ui.chop_mode = ChopMode(c.mode); ui.chop_slice = c.slice; ui.chop_amount = c.amount;
     ui.chop_sample = c.sample; ui.chop_from = c.from; ui.chop_to = c.to;
-    ui.chop_armed = false;
+    ui.chop_take_at = 0; ui.chop_more = false;
+    chop_unfollow(ui); ui.chop_view = {}; ui.chop_heard_at = 0; // the view as the restored slices are, not zoomed where it was
 }
 
 PageEdit::PageEdit(Context& context, SurfaceButton button, bool pad) : c(context) {
     c.close_gesture(); // a pot's turns end with any press
+    if (!(pad && c.ui.page == PageId::Chop)) c.end_take(); // and a Chop take with any but its pads
     if (c.ui.recording || c.ui.name.open() || c.ui.exit_open || c.ui.ask != UiState::Ask::None) return;
     auto scope = press_scope(c.project, c.ui, button, pad);
     if (c.held(scope)) return; // part of the held pad's step

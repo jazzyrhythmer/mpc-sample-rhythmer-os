@@ -29,6 +29,7 @@ bool new_track_lock(Context& c, SurfaceButton button, bool pressed) {
     }
     if (!new_track_locked(c) || ui.menu) return false;
     if (ui.ask != UiState::Ask::None) return false; // a question on screen (Erase on the picker): its keys answer it
+    if (ui.menu && (button == B::TopMiddle || button == B::TopRight)) return false; // the MENU's HERE and GO: its places with every track empty
     bool carousel = ui.page == PageId::Stage;
     switch (button) {
     case B::Play: case B::Stop: case B::TapTempo: case B::TopLeft: return false;
@@ -71,19 +72,19 @@ void offer_new_track(Context& c) {
     }
     if (ui.recording) return;
     bool doors = ui.new_for >= 0 && ui.page == PageId::Stage; // another empty track picked on the doors: the same page to go back to
-    if (!doors) ui.new_back = (ui.page == PageId::Tracks || ui.page == PageId::Patterns || ui.page == PageId::Roll || ui.page == PageId::Motion) ? ui.page : PageId::Stage;
+    if (!doors) ui.new_back = ui.page; // native v0.8: Mixer/Song callers return to their actual page.
     ui.new_for = int8_t(ui.track % track_count);
     c.open(PageId::Stage);
     if (!doors) { // the types, the last one made in the middle; the cards slide in
-        if (ui.new_sources) { ui.new_sources = false; ui.new_pick = uint8_t(ui.new_type % new_types_shown(ui)); }
-        ui.new_pick_from = float(ui.new_pick % new_types_shown(ui)) + 0.9f; ui.new_pick_at = c.now ? c.now : 1;
+        if (ui.new_sources) { ui.new_sources = false; ui.new_pick = uint8_t(ui.new_type % new_type_count); }
+        ui.new_pick_from = float(ui.new_pick % new_type_count) + 0.9f; ui.new_pick_at = c.now ? c.now : 1;
     }
 }
 
 void new_track_push(Context& c) {
     auto& ui = c.ui;
     if (ui.new_sources) { make_new_track(c, new_pick_choice(ui)); return; }
-    ui.new_type = uint8_t(ui.new_pick % new_types_shown(ui));
+    ui.new_type = uint8_t(ui.new_pick % new_type_count);
     auto list = type_sources(NewType(ui.new_type));
     if (list.count == 1) { make_new_track(c, list.items[0]); return; } // Keygroup, Plugin: nothing to pick
     ui.new_sources = true;
@@ -94,7 +95,7 @@ void new_track_push(Context& c) {
 void new_track_types(Context& c) {
     auto& ui = c.ui;
     ui.new_sources = false;
-    ui.new_pick = uint8_t(ui.new_type % new_types_shown(ui));
+    ui.new_pick = uint8_t(ui.new_type % new_type_count);
     ui.new_pick_from = float(ui.new_pick) - 0.9f; ui.new_pick_at = c.now ? c.now : 1; // the types slide back in
 }
 

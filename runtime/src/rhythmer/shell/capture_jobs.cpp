@@ -7,7 +7,8 @@
 // less the output latency, on the nearest tick). Shift + Seq Record lays the
 // last of it into patterns after the fact: the phrase (or as many bars as
 // Settings keeps) the same bars for every track that played in it, each
-// track's into its next empty pattern, which then plays; one undo for all.
+// track's into the pattern it plays when that is empty, else its next empty
+// pattern, which then plays; one undo for all.
 #include "rhythmer/shell/context.h"
 #include "rhythmer/engine/engine_host.h"
 #include <algorithm>
@@ -58,13 +59,11 @@ void Context::capture() {
         if (!(ask.tracks >> t & 1)) continue;
         Pattern laid;
         if (!lay_capture(*capture_ring, t, window, ask, laid)) continue;
-        int into = -1; // the next empty pattern after the one playing, round to the first
-        unsigned from = project.tracks[t].pattern;
-        for (unsigned n = 1; n <= pattern_count && into < 0; ++n)
-            if (patterns.at[t][(from + n) % pattern_count].empty()) into = int((from + n) % pattern_count);
+        int into = capture_into(patterns.at[t], project.tracks[t].pattern); // the one playing when empty, else the next empty
         if (into < 0) { ++full; continue; }
         laid.feel = patterns.at[t][size_t(into)].feel; // an empty pattern's own settings stay
         laid.follow = patterns.at[t][size_t(into)].follow;
+        laid.free = false; // its length is the phrase's (shell/free_length.h)
         if (t == ui.track) selected = into;
         edit.patterns_before.push_back({uint8_t(t), uint8_t(into), patterns.at[t][size_t(into)]});
         edit.patterns_after.push_back({uint8_t(t), uint8_t(into), std::move(laid)});
@@ -72,7 +71,7 @@ void Context::capture() {
     if (edit.patterns_after.empty()) { notice(full ? "No empty pattern to capture into" : "Nothing played to capture"); return; }
     for (const auto& p : edit.patterns_after) {
         restore_pattern(p.track, p.pattern, p.value);
-        launch(p.track, p.pattern); // and it plays from here (the next bar while playing)
+        pick(p.track, p.pattern); // and it plays from here (the next bar while playing), kept in the sequence in hand
     }
     unsigned count = unsigned(edit.patterns_after.size());
     ui.captured_pattern = uint8_t(selected >= 0 ? selected : edit.patterns_after.front().pattern);

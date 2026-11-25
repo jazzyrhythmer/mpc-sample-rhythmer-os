@@ -50,7 +50,7 @@ void Context::vary(Variation v) {
         patterns.at[ui.track][unsigned(into)] = made;
         sync_pattern(ui.track, unsigned(into));
     });
-    launch(ui.track, unsigned(into)); // it plays from the next bar (stopped: at once)
+    pick(ui.track, unsigned(into)); // it plays from the next bar (stopped: at once), kept in the sequence in hand
     notice(what);
 }
 

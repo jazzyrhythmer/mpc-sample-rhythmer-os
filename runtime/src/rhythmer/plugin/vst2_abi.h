@@ -57,7 +57,7 @@ constexpr int32_t open = 0, close = 1, setProgram = 2, getProgram = 3, getProgra
                   getParamLabel = 6, getParamDisplay = 7, getParamName = 8, setSampleRate = 10,
                   setBlockSize = 11, mainsChanged = 12, getChunk = 23, setChunk = 24, processEvents = 25,
                   getProgramNameIndexed = 29, getEffectName = 45, getVendorString = 47,
-                  getProductString = 48, getVendorVersion = 49, canDo = 51, getTailSize = 52,
+                  getProductString = 48, getVendorVersion = 49, vendorSpecific = 50, canDo = 51, getTailSize = 52,
                   getVstVersion = 58, startProcess = 71, stopProcess = 72;
 }
 
@@ -67,7 +67,7 @@ namespace host
 constexpr int32_t automate = 0, version = 1, currentId = 2, idle = 3, getTime = 7, processEvents = 8,
                   ioChanged = 13, sizeWindow = 15, getSampleRate = 16, getBlockSize = 17,
                   getCurrentProcessLevel = 23, getAutomationState = 24, getVendorString = 32,
-                  getProductString = 33, getVendorVersion = 34, canDo = 37, getLanguage = 38,
+                  getProductString = 33, getVendorVersion = 34, vendorSpecific = 35, canDo = 37, getLanguage = 38,
                   updateDisplay = 42, beginEdit = 43, endEdit = 44;
 }
 
@@ -118,4 +118,13 @@ inline void setTime (TimeInfo& t, bool isPlaying, double samplePos, double ppq, 
 }
 
 constexpr int hostVersion = 2400;
+
+// Rhythmer's own state of a VST2 plug-in (Vst2Instance and Vst2BridgeInstance get/setStateInformation): "MVS2", a
+// kind byte, then the plug-in's chunk (for setChunk as a bank, or as one program) or each parameter's value as a
+// native float. A project keeps it; plugin/xpl_preset.h makes it from an MPC preset.
+namespace state
+{
+constexpr char tag[4] = { 'M', 'V', 'S', '2' };
+constexpr uint8_t chunk = 1, parameters = 2, programChunk = 3;
+}
 } // namespace vst2

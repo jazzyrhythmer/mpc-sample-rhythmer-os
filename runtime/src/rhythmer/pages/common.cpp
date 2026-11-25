@@ -3,13 +3,16 @@
 #include "rhythmer/shell/lesson.h"
 #include "rhythmer/shell/levels_keys.h"
 #include "rhythmer/shell/mix_hub.h"
+#include "rhythmer/shell/mixer_channels.h"
 #include "rhythmer/shell/features.h"
 #include "rhythmer/shell/ask.h"
 #include "rhythmer/shell/pad_bank.h"
 #include "rhythmer/shell/pad_job.h"
 #include "rhythmer/pages/common.h"
+#include "rhythmer/shell/free_length.h"
 #include "rhythmer/shell/undo_scope.h"
 #include "rhythmer/shell/midi_ports.h"
+#include "rhythmer/shell/midi_config_rows.h"
 #include "rhythmer/engine/punch.h"
 #include "rhythmer/engine/arp.h"
 #include "rhythmer/engine/effect_info.h"
@@ -30,6 +33,7 @@
 #include "rhythmer/engine/midi_engine.h"
 #include "rhythmer/shell/stage_map.h"
 #include "rhythmer/shell/sample_mode.h"
+#include "rhythmer/shell/input_route.h"
 #include <algorithm>
 #include "rhythmer/model/break_filter.h"
 #include "rhythmer/model/gen8_tables.h"
@@ -40,6 +44,14 @@
 namespace rhythmer {
 
 juce::Colour colour_of(const Snapshot& s) { return ui::track_colour(s.ui.track); }
+juce::Colour channel_shade(unsigned strip, unsigned knob) {
+    switch (channel_kind(strip)) {
+    case ChannelKind::Track: return ui::knob_shade(strip, knob);
+    case ChannelKind::Submix: return ui::sub_shade(channel_sub(strip), knob);
+    case ChannelKind::Bus: return ui::loop_shade(channel_bus(strip), knob);
+    default: return channel_kind(strip) == ChannelKind::Input ? ui::colour::ice : ui::colour::text; // neutral, as the Bus and Master pages
+    }
+}
 juce::Colour load_colour(float load) { return load >= 0.85f ? ui::colour::rec : load >= 0.6f ? ui::colour::amber : ui::colour::play; }
 
 bool external_clock_tempo(const Snapshot& s) { return s.display_tempo || (s.following && !s.following_mtc); }
@@ -181,6 +193,14 @@ std::array<ui::KnobCard, 3> cards_of(const Snapshot& s) {
         c.knob_fx = b.kind == Binding::Kind::KnobParam; // Knob FX owns the pot: white, never the track's colours
         c.shade = neutral || c.knob_fx ? ui::colour::text : loop ? ui::loop_shade(l, n) : ui::knob_shade(s.ui.track, n);
         c.track = neutral || c.knob_fx ? ui::colour::text : loop ? ui::loop_colour(l) : colour_of(s);
+        if (s.ui.page == PageId::Rack && s.ui.fx_sub >= 0) { // a submix's chain: its colours
+            c.shade = channel_shade(strip_sub(unsigned(s.ui.fx_sub)), n);
+            c.track = channel_shade(strip_sub(unsigned(s.ui.fx_sub)), 0);
+        }
+        if (s.ui.page == PageId::Mixer && s.ui.mixer_bank == 1) { // the mixer's second row: the channel in hand's colours
+            c.shade = channel_shade(mixer_strip(s.ui), n);
+            c.track = channel_shade(mixer_strip(s.ui), 0);
+        }
         c.fill = b.fraction();
         c.frozen = print_covers(s.freeze, freeze_scope(s.project, s.ui, b)); // freeze plan F2c
         const auto& pot = s.ui.pots[n];
@@ -250,6 +270,7 @@ void describe_card(const Snapshot& s, const Binding& b, ui::KnobCard& c) {
         break;
     }
     case Kind::PadSend: c.label = juce::String("SEND ") + char('A' + unsigned(b.id) % bus_count); c.value = juce::String(b.value); c.unit = "%"; break;
+    case Kind::PadOut: c.label = "OUTPUT"; c.value = b.value ? "SUB " + juce::String(b.value) : juce::String("KIT"); break;
     case Kind::Root: c.label = "ROOT"; c.value = note_letter(unsigned(b.value)); break;
     case Kind::Scale: c.label = "SCALE"; c.value = scales()[size_t(b.value)].name; break;
     case Kind::Layout: c.label = "LAYOUT"; c.value = layout_name(PadLayout(b.value)); break;
@@ -271,6 +292,11 @@ void describe_card(const Snapshot& s, const Binding& b, ui::KnobCard& c) {
     case Kind::StepLength: c.label = "LENGTH"; c.value = juce::String(b.value); c.unit = b.value == 1 ? "step" : "steps"; break;
     case Kind::StepVelocity: c.label = "VELOCITY"; c.value = juce::String(b.value); break;
     case Kind::EventVelocity: c.label = "VELOCITY"; c.value = juce::String(b.value); break;
+    case Kind::MarksVelocity: { // Roll's K2 over marked notes: lowest to highest, moving together
+        int high = b.value + 127 - b.max;
+        c.label = "VELOCITY"; c.value = juce::String(b.value) + (high > b.value ? "-" + juce::String(high) : juce::String());
+        break;
+    }
     case Kind::EventLength: c.label = "LENGTH"; c.value = juce::String(b.value); c.unit = b.value == 1 ? "step" : "steps"; break;
     case Kind::StepChance: case Kind::EventChance: c.label = "CHANCE"; c.value = juce::String(b.value); c.unit = "%"; break;
     case Kind::EntryLength: c.label = "LENGTH"; c.value = juce::String(b.value); c.unit = b.value == 1 ? "step" : "steps"; break;
@@ -322,7 +348,13 @@ void describe_card(const Snapshot& s, const Binding& b, ui::KnobCard& c) {
     case Kind::AutoLow: c.label = "LOW"; c.value = juce::String(note_name(b.value)); break; // the AUTO SAMPLE sheet
     case Kind::AutoHigh: c.label = "HIGH"; c.value = juce::String(note_name(b.value)); break;
     case Kind::AutoStep: c.label = "STEP"; c.value = juce::String(b.value); c.unit = b.value == 1 ? "semitone" : "semitones"; break;
-    case Kind::AutoLayers: c.label = "LAYERS"; c.value = juce::String(b.value); c.unit = "velocity"; break;
+    case Kind::AutoLayers: { // Auto: as many as the check heard the tone needs, shown beside it once heard
+        const auto& a = s.ui.auto_sheet.settings;
+        c.label = "LAYERS";
+        c.value = b.value ? juce::String(b.value) : juce::String("Auto");
+        if (!b.value && a.found.heard) c.unit = juce::String(a.layer_count());
+        break;
+    }
     case Kind::AutoHold: // Auto: as long as the check found the sound needs, shown beside it once heard
         c.label = "HOLD";
         if (b.value > 0) { c.value = juce::String(b.value / 10.0, 1); c.unit = "s"; }
@@ -343,6 +375,7 @@ void describe_card(const Snapshot& s, const Binding& b, ui::KnobCard& c) {
     case Kind::PrintTailPick: c.label = "TAIL"; c.value = b.value == 2 ? "Cut" : b.value == 1 ? "Ring" : "Loop"; break;
     case Kind::FollowAfter: c.label = "AFTER"; c.value = juce::String(b.value % 64 + 1); c.unit = b.value >= 64 ? (b.value == 64 ? "play" : "plays") : (b.value == 0 ? "bar" : "bars"); break;
     case Kind::FollowChance: c.label = "CHANCE"; c.value = juce::String(b.value); c.unit = "%"; break;
+    case Kind::SceneColour: c.label = "COLOUR"; c.value = b.value ? juce::String(ui::track_colour_names[size_t(b.value - 1) % 16]) : juce::String("None"); break;
     case Kind::SceneTempo: c.label = "SEQ " + juce::String(b.id + 1) + " TEMPO"; c.label_mixed = "Seq " + juce::String(b.id + 1) + " tempo"; c.value = b.value < 30 ? juce::String("None") : juce::String(b.value); c.unit = b.value < 30 ? "" : "BPM"; break;
     case Kind::PatternProgram: { // the pattern in hand's own program, as PROGRAM shows one
         const auto& p = engine_info(EngineKind::Midi).params[midi_track::PatternProgram0];
@@ -388,12 +421,21 @@ void describe_card(const Snapshot& s, const Binding& b, ui::KnobCard& c) {
         c.label = "AMOUNT"; c.bipolar = true;
         c.value = (b.value > 0 ? "+" : b.value < 0 ? juce::String::fromUTF8("\xe2\x88\x92") : juce::String()) + juce::String(std::abs(b.value));
         break;
-    case Kind::PatternBars: case Kind::PatternLength: { // by the bar; a length that is not whole bars by the step of Q
-        unsigned bar = s.project.bar_ticks();
+    case Kind::PatternSteps: case Kind::PatternLength: { // by the bar; a length not whole bars in sixteenths (issue 27), else steps of Q
+        unsigned bar = std::max(s.project.bar_ticks(), 1u);
         juce::String which = "P" + juce::String(s.track().pattern % pattern_count + 1) + " "; // the pattern it belongs to
         c.label = which + "LENGTH"; c.label_mixed = which + "Length"; // mixed case where capitals don't fit (P128)
-        if (s.pattern.length % bar) { c.value = juce::String(s.pattern.steps()); c.unit = "steps"; break; }
-        unsigned bars = s.pattern.length / bar;
+        if (s.ui.free_growing) { // Free length: the bars the take has reached, growing (shell/free_length.h)
+            unsigned bars = s.position / bar + 1;
+            c.label = which + "FREE"; c.label_mixed = which + "Free";
+            c.value = juce::String(bars); c.unit = bars == 1 ? "bar" : "bars";
+            break;
+        }
+        uint32_t length = free_shown(s.pattern, s.ui.column_ticks); // a Free pattern: the take's length (0 Free)
+        if (!length) { c.value = "Free"; break; }
+        if (length % bar && length % sixteenth_ticks == 0) { c.value = juce::String(length / sixteenth_ticks) + "/16"; break; }
+        if (length % bar) { c.value = juce::String((length + s.pattern.q() - 1) / s.pattern.q()); c.unit = "steps"; break; }
+        unsigned bars = length / bar;
         c.value = juce::String(bars); c.unit = bars == 1 ? "bar" : "bars";
         break;
     }
@@ -409,6 +451,70 @@ void describe_card(const Snapshot& s, const Binding& b, ui::KnobCard& c) {
         break;
     case Kind::TcSwing: c.label = "SWING"; c.value = juce::String(b.value); c.unit = "%"; break;
     case Kind::Swing: c.label = "SWING"; c.value = juce::String(b.value); c.unit = "%"; break;
+    case Kind::JamFrom: c.label = "FROM"; c.value = juce::String(b.value); c.unit = "bar"; break;
+    case Kind::JamTo: c.label = "TO"; c.value = juce::String(b.value); c.unit = "bar"; break;
+    case Kind::PadMute: { // issue 32: a kit pad's mute lane on Motion
+        char label[4];
+        pad_label(unsigned(b.id), label);
+        c.label = juce::String(label) + " MUTE"; c.value = b.value ? "On" : "Off";
+        break;
+    }
+    case Kind::Strip: { // the mixer (docs/MIXER_PLAN.md): one value of a strip, as the mock names it
+        static const char* const bands[] {"63 Hz", "125 Hz", "250 Hz", "500 Hz", "1 kHz", "2 kHz", "4 kHz", "8 kHz", "16 kHz"};
+        static const char* const speeds[] {"FAST", "MED", "SLOW", "AUTO"};
+        const auto part = StripPart(b.id & 0xff);
+        const juce::String minus = juce::String::fromUTF8("\xe2\x88\x92");
+        auto tenths = [&](int v) { return (v > 0 ? juce::String("+") : v < 0 ? minus : juce::String()) + juce::String(std::abs(v) / 10.0, 1); }; // -5.0, +4.0
+        const unsigned p = unsigned(part);
+        if (p >= unsigned(StripPart::Eq0) && p <= unsigned(StripPart::Eq8)) {
+            c.label = bands[p - unsigned(StripPart::Eq0)]; c.value = tenths(b.value); c.unit = "dB"; c.bipolar = true;
+            break;
+        }
+        switch (part) {
+        case StripPart::Trim: c.label = "TRIM"; c.value = tenths(b.value); c.unit = "dB"; c.bipolar = true; break;
+        case StripPart::Width: c.label = "WIDTH"; c.value = juce::String(b.value); c.unit = "%"; break;
+        case StripPart::Amount: c.label = "AMOUNT"; c.value = b.value ? minus + juce::String(b.value) : juce::String("OFF"); c.unit = b.value ? "dB" : ""; break;
+        case StripPart::Ratio: c.label = "RATIO"; c.value = (b.value % 10 ? juce::String(b.value / 10.0, 1) : juce::String(b.value / 10)) + ":1"; break;
+        case StripPart::Speed: c.label = "SPEED"; c.value = speeds[unsigned(b.value) % 4]; break;
+        case StripPart::Key: { // what the compressor hears: its own channel, a track, a bus, a submix
+            c.label = "KEY";
+            const unsigned k = unsigned(b.value);
+            if (!k) c.value = "OWN";
+            else if (fx_key_is_track(k)) c.value = "TRACK " + juce::String(k);
+            else if (fx_key_is_bus(k)) c.value = juce::String("BUS ") + char('A' + (k - 17));
+            else c.value = "SUB " + juce::String(k - fx_keys + 1);
+            break;
+        }
+        case StripPart::Mix: c.label = "MIX"; c.value = juce::String(b.value); c.unit = "%"; break;
+        case StripPart::Gain: c.label = "GAIN"; c.value = tenths(b.value); c.unit = "dB"; break;
+        default: c.label = "STRIP"; c.value = juce::String(b.value); break;
+        }
+        break;
+    }
+    case Kind::SubMix: { // a submix's level, pan or send (engine/command.h SubPart)
+        const unsigned part = unsigned(b.id) & 0xff;
+        if (part == Command::SubPan) {
+            c.label = "PAN"; c.bipolar = true;
+            c.value = b.value == 0 ? juce::String("C") : (b.value < 0 ? "L" : "R") + juce::String(std::abs(b.value));
+        } else if (part >= Command::SubSend0) {
+            c.label = juce::String("SEND ") + char('A' + (part - Command::SubSend0) % bus_count);
+            c.value = juce::String(b.value); c.unit = "%";
+        } else { c.label = "LEVEL"; c.value = juce::String(b.value); }
+        break;
+    }
+    case Kind::InputMonitor: { // the mixer's input, K2: Input Config's monitor
+        static const char* const words[] {"OFF", "AUTO", "ON"};
+        c.label = "MONITOR"; c.value = words[unsigned(b.value) % 3];
+        break;
+    }
+    case Kind::InputWet: c.label = "RECORD"; c.value = b.value ? "WET" : "DRY"; break; // takes after the input's strip, or before
+    case Kind::TrackOut: { // where the track plays: the master or a submix, by its name when it has one
+        c.label = "OUTPUT";
+        if (!b.value) { c.value = "MASTER"; break; }
+        const auto& sub = s.project.subs[unsigned(b.value - 1) % sub_count];
+        c.value = sub.name[0] ? name_case(sub.name) : "SUB " + juce::String(b.value);
+        break;
+    }
     case Kind::SongZoom: c.label = "ZOOM"; c.value = juce::String(song_zooms[b.value]); c.unit = "bars"; break;
     case Kind::SongPattern: c.label = "PATTERN"; c.value = "P" + juce::String(b.value + 1); break;
     case Kind::SongLength: c.label = "LENGTH"; c.value = juce::String(b.value); c.unit = b.value == 1 ? "bar" : "bars"; break;
@@ -603,8 +709,9 @@ void describe_card(const Snapshot& s, const Binding& b, ui::KnobCard& c) {
     case Kind::ChopMode: c.label = "CHOP TYPE"; c.value = chop_mode_name(ChopMode(b.value)); break;
     case Kind::ChopAmount: {
         auto mode = ChopMode(b.id);
-        c.label = mode == ChopMode::Threshold ? "THRESHOLD" : mode == ChopMode::Regions ? "SLICES" : "BEATS";
-        c.value = juce::String(b.value); c.unit = mode == ChopMode::Threshold ? "%" : "";
+        c.label = mode == ChopMode::Threshold ? "THRESHOLD" : mode == ChopMode::Regions || mode == ChopMode::Auto ? "SLICES" : "DIVISION";
+        c.value = juce::String(mode == ChopMode::Auto ? int(auto_slice_count(b.value)) : b.value); c.unit = mode == ChopMode::Threshold ? "%" : "";
+        if (mode == ChopMode::Beats) { c.value = division_value(unsigned(b.value)); c.unit = division_unit(unsigned(b.value)); } // 1/16 ... 4 bars
         break;
     }
     case Kind::FileJump:
@@ -650,11 +757,24 @@ void describe_card(const Snapshot& s, const Binding& b, ui::KnobCard& c) {
     case Kind::PunchTail: c.label = "TAIL"; c.value = punch_tails[b.value % 3]; break;
     case Kind::ClickLevel: c.label = "CLICK"; c.value = juce::String(b.value); c.unit = "%"; break;
     case Kind::Features: c.label = "FEATURES"; c.value = b.value ? "Full" : "Basic"; break;
-    case Kind::RecGrid: // the pattern's Q, named, or a grid of its own
-        c.label = "GRID";
-        if (b.value) c.value = division_name(grid_division(unsigned(b.value), s.pattern.division));
-        else { c.value = "Q"; c.unit = division_name(s.pattern.division); }
+    case Kind::UsageLog: c.label = "USAGE LOG"; c.value = b.value ? "On" : "Off"; break;
+    case Kind::SettingRow: { // Settings: the row under the cursor, at the card's value (one that waits for K1 to rest too)
+        Settings shown = s.ui.settings;
+        shown.set_choice(unsigned(b.id), unsigned(b.value));
+        c.label = juce::String(Settings::row_name(unsigned(b.id))).toUpperCase(); c.label_mixed = Settings::row_name(unsigned(b.id));
+        c.value = shown.value_text(unsigned(b.id));
         break;
+    }
+    case Kind::MidiRow: { // MIDI Config: the same; the track's own two rows read off the card's value (no copy of the track)
+        unsigned row = unsigned(b.id);
+        c.label = juce::String(midi_row_name(row)).toUpperCase(); c.label_mixed = midi_row_name(row);
+        if (row == TrackChannelRow) { c.value = midi_channel_text(uint8_t(b.value), "Off"); break; }
+        if (row == TrackInRow) { c.value = track_midi_in_name(TrackMidiIn(b.value)); break; }
+        Settings shown = s.ui.settings;
+        midi_row_set(shown, row, unsigned(b.value));
+        c.value = midi_row_value(shown, track, row);
+        break;
+    }
     case Kind::ArpMode: c.label = "MODE"; c.value = arp_mode_name(ArpMode(b.value)); break;
     case Kind::ArpRate: c.label = "RATE"; c.value = arp_rate_name(unsigned(b.value)); break;
     case Kind::ArpOctaves: c.label = "OCTAVES"; c.value = juce::String(b.value); break;
@@ -675,14 +795,23 @@ void describe_card(const Snapshot& s, const Binding& b, ui::KnobCard& c) {
     case Kind::RecSource: {
         c.label = "SOURCE";
         unsigned code = input_choices(s.project, s.ui.track, s.ui.settings.input).code_at(b.value);
-        if (code < input_track_code) { c.value = input_source_name(InputSource(code)); break; }
+        if (code < input_track_code) {
+            c.value = input_source_name(InputSource(code));
+            if (source_in_use(s, InputSource(code))) c.unit = "IN USE"; // the ADC is on the other input: silent
+            break;
+        }
         unsigned t = code - input_track_code; // the track on the label, its engine as the value
         c.label = "TRACK " + juce::String(t + 1);
         c.value = sounding_track(s.project.tracks[t]) ? engine_word(s.project.tracks[t].engine) : juce::String("Silent");
         break;
     }
     case Kind::RecTap: c.label = "TAP"; c.value = b.value ? "Post FX" : "Pre FX"; break;
-    case Kind::AudioSource: c.label = "SOURCE"; c.value = audio_source_label(audio_sources[unsigned(b.value) % audio_source_count]); break; // freeze plan F3
+    case Kind::AudioSource: { // freeze plan F3
+        const InputSource source = audio_sources[unsigned(b.value) % audio_source_count];
+        c.label = "SOURCE"; c.value = audio_source_label(source);
+        if (source_in_use(s, source)) c.unit = "IN USE";
+        break;
+    }
     case Kind::AudioMonitorMode: c.label = "MONITOR"; c.value = track_monitor_name(TrackMonitor(b.value)); break;
     case Kind::KnobParam: {
         if (unsigned(b.id) == knob_morph) { // the fader on Knob FX (knob fx C): the way from A to B
@@ -695,7 +824,7 @@ void describe_card(const Snapshot& s, const Binding& b, ui::KnobCard& c) {
         break;
     }
     case Kind::PluginParam: { // as the shell last read it from the plug-in (plugin/plugin_panel.h)
-        const auto& panel=s.ui.plugin_panel;unsigned slot=plugin_binding_shown(b.id)%3;
+        const auto& panel=s.ui.plugin_panel;unsigned slot=plugin_binding_k(b.id);
         if(panel.design)for(unsigned k=0;k<3;++k)if(panel.params[k].used&&panel.params[k].shown==int(plugin_binding_shown(b.id))){slot=k;break;}
         const auto* quick=plugin_card(panel,b.id);const bool front=s.ui.page==PageId::Stage&&stage_page_now(s.ui,s.track(),false).kind==StageKind::PluginSound;
         const auto& card=front&&quick?*quick:panel.params[slot];
@@ -859,17 +988,7 @@ FaderShown fader_shown(const Snapshot& s) {
 }
 
 void frame(ui::Paint& p, const Snapshot& s, const ui::SoftKeys& keys, const ui::Header& header) {
-    if (s.ui.pad_bank && !track_overlay_shown(s.ui)) { // Pad Bank held: its keys over the page's (shell/pad_bank.h)
-        ui::SoftKeys held {{"TRACKS", "MOVE", "COPY"}, -1, colour_of(s)};
-        held.glyphs[1] = ui::Icon::Swap; held.glyphs[2] = ui::Icon::Copy;
-        ui::soft_keys(p, held);
-    } else if (auto k = levels_keys(s.track()); levels_held_cards(s.project, s.ui) && k.key[0] != LevelsKey::None
-               && (s.ui.levels_used || s.now - s.ui.levels_down >= levels_hold_ms)) { // 16 Levels held: its keys, by the type (shell/levels_keys.h)
-        ui::SoftKeys held {{levels_key_name(k.key[0]), levels_key_name(k.key[1]), levels_key_name(k.key[2])}, k.lit, colour_of(s)};
-        ui::soft_keys(p, held);
-    } else {
-        ui::soft_keys(p, keys);
-    }
+    frame_keys(p, s, keys);
     auto cards = cards_of(s);
     bool knob_fx = std::any_of(cards.begin(), cards.end(), [](const ui::KnobCard& c) { return c.knob_fx; });
     if (knob_fx && s.ui.page != PageId::KnobFx) { // the pots are Knob FX's: the header names its effect first
@@ -881,6 +1000,20 @@ void frame(ui::Paint& p, const Snapshot& s, const ui::SoftKeys& keys, const ui::
         ui::header(p, header);
     }
     ui::knob_strip(p, cards);
+}
+
+void frame_keys(ui::Paint& p, const Snapshot& s, const ui::SoftKeys& keys) {
+    if (s.ui.pad_bank && !track_overlay_shown(s.ui)) { // Pad Bank held: its keys over the page's (shell/pad_bank.h)
+        ui::SoftKeys held {{"TRACKS", "MOVE", "COPY"}, -1, colour_of(s)};
+        held.glyphs[1] = ui::Icon::Swap; held.glyphs[2] = ui::Icon::Copy;
+        ui::soft_keys(p, held);
+    } else if (auto k = levels_keys(s.track()); levels_held_cards(s.project, s.ui) && k.key[0] != LevelsKey::None
+               && (s.ui.levels_used || s.now - s.ui.levels_down >= levels_hold_ms)) { // 16 Levels held: its keys, by the type (shell/levels_keys.h)
+        ui::SoftKeys held {{levels_key_name(k.key[0]), levels_key_name(k.key[1]), levels_key_name(k.key[2])}, k.lit, colour_of(s)};
+        ui::soft_keys(p, held);
+    } else {
+        ui::soft_keys(p, keys);
+    }
 }
 
 void play_pad(Context& c, unsigned pad, uint8_t velocity, bool down) { c.play_pad(pad, velocity, down); }
@@ -911,8 +1044,16 @@ unsigned key_pages(const Snapshot& s, unsigned key, std::array<juce::String, 6>&
             if (here.group == key && here.sub == sub) at = n;
             names[n++] = g.groups[key].pages[sub].key;
         }
-    } else if (mix_section(s.ui.page) != MixSection::None) { // SENDS: the tracks, a kit's pads; FX: along the signal
-        if (key == 1 && kit) { names[0] = "TRACKS"; names[1] = "PADS"; n = 2; at = mix_sends_pads(s.ui, kit) ? 1 : 0; }
+    } else if (s.ui.page == PageId::Mixer) { // B1: SENDS and FX on a track or submix; B2: the EQ's three groups (pages/mixer_page.cpp)
+        if (key == 0 && full_features(s.ui) && channel_sends(channel_kind(mixer_strip(s.ui)))) {
+            names[0] = "SENDS"; names[1] = "FX"; n = 2;
+            at = s.ui.mixer_b1 ? 1 : 0;
+        }
+        if (key == 1 && full_features(s.ui)) {
+            names[0] = "LOW"; names[1] = "MID"; names[2] = "HIGH"; n = 3;
+            at = s.ui.mixer_eq_group % 3;
+        }
+    } else if (mix_section(s.ui.page) != MixSection::None) { // FX: along the signal
         if (key == 2) {
             std::array<PageId, 4> fx {};
             unsigned count = mix_fx_pages(kit, fx);
@@ -933,23 +1074,26 @@ ui::SoftKeys mix_keys(const Snapshot& s) {
     auto here = mix_section(s.ui.page);
     std::array<PageId, 4> fx {};
     unsigned count = mix_fx_pages(kit, fx);
-    ui::SoftKeys keys {{"TRACKS", "SENDS", "FX"}, here == MixSection::None ? -1 : int(here), colour_of(s)};
+    ui::SoftKeys keys {{"MIXER", "", "FX"}, here == MixSection::None ? -1 : int(here), colour_of(s)}; // decision 8
     keys.dots[2] = uint8_t(count);
     keys.dot_at[2] = uint8_t(here == MixSection::Fx ? mix_fx_at(s.ui.page, kit) : 0);
-    if (kit) { keys.dots[1] = 2; keys.dot_at[1] = uint8_t(mix_sends_pads(s.ui, kit)); } // SENDS: the tracks, then the kit's pads
-    if (!sends_shown(s.ui) && here != MixSection::Sends) keys.dots[1] = 0; // Basic keeps SENDS visible as a Full-mode doorway
+    const bool own_track = s.ui.page == PageId::PadFx || (s.ui.page == PageId::Rack && s.ui.fx_loop < 0 && s.ui.fx_sub < 0);
+    if (own_track) keys.labels[1] = "TRACK SETUP";
     return keys;
 }
 void mix_soft(Context& c, int key) {
     bool kit = c.track().engine == EngineKind::Sampler;
-    if (key == 1 && !sends_shown(c.ui) && c.ui.page != PageId::Sends) {
-        if (c.ui.lesson) c.notice("Finish lesson to use Sends");
-        else ask(c, UiState::Ask::EnableFullSends, int(c.ui.page));
+    if (key == 1) {
+        if (c.ui.page == PageId::PadFx || (c.ui.page == PageId::Rack && c.ui.fx_loop < 0 && c.ui.fx_sub < 0)) c.open(PageId::TrackActions);
         return;
     }
-    if (key == 1) mix_sends_key(c.ui, kit); // B2 again on a kit's Sends: its pads (or back to the tracks)
     PageId next = mix_next(c.ui.page, unsigned(key), kit);
-    if (next == PageId::Rack) c.ui.fx_loop = -1; // the track's own chain, not a loop's
+    if (next == PageId::Rack) { c.ui.fx_loop = -1; c.ui.fx_sub = -1; } // the track's own chain, not a loop's or a submix's
+    if (next == PageId::Mixer) { // B1 MIXER: the mixer on the channel whose chain this is
+        if (c.ui.page == PageId::Bus) pick_other(c.ui, bus_chain(c.ui.sends_bus % bus_count));
+        else if (c.ui.page == PageId::Master) pick_other(c.ui, master_chain);
+        else if (c.ui.page == PageId::Rack || c.ui.page == PageId::PadFx) c.ui.mixer_bank = 0;
+    }
     if (next != c.ui.page) c.open(next);
 }
 
@@ -1046,6 +1190,8 @@ juce::String engine_word(EngineKind kind) {
     juce::String name = engine_info(kind).name;
     return name.length() > 3 ? name.substring(0, 1) + name.substring(1).toLowerCase() : name;
 }
+
+bool source_in_use(const Snapshot& s, InputSource source) { return InputRoute::adc_taken(source, s.ui.adc_needs); }
 
 juce::String input_name(const Snapshot& s, bool with_tap) {
     const auto& in = s.ui.settings.input;

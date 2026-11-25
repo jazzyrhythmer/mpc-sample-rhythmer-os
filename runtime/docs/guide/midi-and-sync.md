@@ -2,10 +2,11 @@
 
 Previous: [Mixer and effects](mixer-and-effects.md) · [Contents](../GUIDE.md) · Next: [Projects and files](projects-and-files.md)
 
-Press **SHIFT** + **Pad 8**, then open **MIDI**. Turn the encoder to a row
-and push to open it. Turn the encoder to change it and push again to keep
-it. **−** / **+** change the row under the cursor at once. **B1** goes
-back. The header lights **IN** and **OUT** as MIDI passes.
+Press **SHIFT** + **Pad 8**, then open **MIDI**. Turn the encoder to a row.
+**K1** sets it: its card shows the row's name and value. **−** / **+** step
+it one value at a time. **MIDI panic** and **Reset factory settings** are
+done with **Push**. **B1** goes back. The header lights **IN** and **OUT**
+as MIDI passes.
 
 ![MIDI Config](../images/screens/midiconfig.png)
 
@@ -17,18 +18,19 @@ back. The header lights **IN** and **OUT** as MIDI passes.
 | Track channel | Off or 1–16: the selected track's own channel. It plays that track whichever track is selected, and the track's notes go out on it. |
 | Track MIDI in | Where the track's own channel is heard: Any, External or USB |
 | Pad MIDI in | On or off: whether notes and pressure in play the tracks |
-| Pad MIDI out | Never, Always or Empty |
+| Scale on white keys | On or off. On a Scale or Chords track, the white keys play the scale with the root on C4, and the black keys play nothing. See [Play the scale on the white keys](#play-the-scale-on-the-white-keys). |
+| Pad MIDI out | Never, Always or Empty (only pads and tracks with no sound of their own send notes) |
 | MIDI sync in / out | Off, MIDI Clock or MTC |
 | MIDI thru | On or off |
-| Receive program change | Off or Sequence: a program change launches that pattern on every track |
+| Receive program change | Off or Sequence: a program change launches that sequence, as a pad on Sequences does |
 | Remote channel | Off or 1–16: the channel of the Remote CCs |
 | Remote track CC | Selects a track. Value 0 is track 1. Default CC 102. |
 | Remote pattern CC | Launches a pattern on the selected track. Value 0 is A01. Default CC 103. |
 | Remote sequence CC | Launches a sequence. Value 0 is the first sequence. Default CC 104. |
 | CV/sync out | On or off: clock pulses on the sync output. **CV/sync base** (1–8) and **CV/sync division** (1–24) set how many a quarter note. |
-| Takeover rows | Knob, Knob FX and fader takeover |
+| Parameter, Knob FX and Fader takeover | As in Settings, **KNOBS**: Pickup, Scaled or Instant |
 | MIDI panic | Push: ends every note on every channel and port |
-| Reset factory settings | Push, then **B3** to reset or **B1** to keep |
+| Reset factory settings | Push, then **B3** to reset or **B1** to keep. Your starred sounds and Basic or Full are kept. |
 
 - **MIDI in**: notes, pressure, CC 1 (mod wheel), the pitch wheel, the
   sustain pedal and other CCs, and All Notes Off, on every page and every
@@ -48,12 +50,19 @@ back. The header lights **IN** and **OUT** as MIDI passes.
   - On **Step Edit** and **Roll**, keys write notes as the pads do. Step Edit
     writes at the caret and moves on when every key is let go. With a step
     held on Step Edit's pads, the keys played go into that step.
-- **MIDI clock in**: Start, Continue, Stop and tempo. The header shows **EXT
-  CLOCK**.
+- **MIDI clock in**: Start, Continue, Stop, Song Position and tempo. The
+  header shows **EXT CLOCK**. Continue plays on from the Song Position,
+  counted at the selected track's speed (see
+  [Track speed](tracks.md#track-speed)), as **SHIFT** + **PLAY**
+  counts it.
 - **MTC in** (24, 25, 29.97 drop-frame and 30 fps): Rhythmer follows the
-  timecode. The header shows **EXT MTC**.
-- **MIDI out**: pads, patterns, the arpeggiator, MIDI clock, MTC and the CV
-  clock.
+  timecode: the song on Song, else the patterns. The header shows **EXT
+  MTC**. A cue while stopped moves the playhead there, counted the same way.
+- **MIDI out**: pads, patterns, the arpeggiator, MIDI clock (with Start,
+  Continue, Stop and Song Position), MTC and the CV clock. What you play
+  (pads, keys, MIDI in, the fader, knobs) goes out at once. Patterns, the
+  arpeggiator and the clocks go out as their sound is heard, so outside
+  gear plays in time with Rhythmer's own tracks.
 
 ## Using a MIDI controller
 
@@ -94,6 +103,20 @@ The MPC's USB-C port is for a computer; a controller cannot plug into it.
 
 On **Step Edit**, each key writes a note at the caret. On **Roll**, a key
 writes at the cursor.
+
+#### Play the scale on the white keys
+
+1. Hold **SAMPLE** on an instrument track to see **Keys**. Set the root
+   with **K1**, the scale with **K2** and the layout to **Scale** or
+   **Chords** with **K3**.
+2. On **MIDI Config**, set **Scale on white keys** to **On**.
+3. Play the white keys. C4 plays the root, D4 the second note of the
+   scale, and so on. The black keys play nothing.
+
+In a scale of seven notes, every C plays the root. A scale with fewer or
+more notes, such as Minor pent, goes on up the white keys one note a key.
+With the Chromatic scale, every key plays as it is. Kits, and tracks on
+the Chromatic, Drums or Prog layout, are not changed.
 
 ### Example 2: keys on a synth track, pads on a kit
 
@@ -147,7 +170,7 @@ screen. Option names can differ between versions of MIDI Control Center.
 
 Use a channel for Remote that no track plays on. Remote CCs do not reach the
 tracks. With **Receive program change** on, a pad set to send Program Change
-launches that pattern on every track.
+launches that sequence.
 
 ---
 

@@ -3,11 +3,14 @@
 #include "rhythmer/plugin/clap_instance.h"
 #include "rhythmer/plugin/host_time.h"
 #include "rhythmer/plugin/plugin_files.h"
+#include "rhythmer/plugin/preset_rows.h"
 
 #include <clap/clap.h>
+#include <rhythmer_screen.h>
 
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cmath>
 #include <cctype>
 #include <cstdio>
@@ -106,6 +109,10 @@ struct ClapInstance::Host
     clap_host host {};
     ClapInstance* owner = nullptr;
     std::atomic<bool> callback { false }, rescan { false }, latencyChanged { false };
+    std::atomic<bool> tailChanged { false };
+    std::atomic<bool> remoteChanged { false }; // remote-controls changed(): its pages to be read again
+    std::atomic<bool> process { false }; // request_process or request_flush: run the next block even if it sleeps
+    std::atomic<bool> redraw { false };  // its screen asked to be drawn (sdk/rhythmer-screen/rhythmer_screen.h)
 
     Host()
     {
@@ -117,7 +124,8 @@ struct ClapInstance::Host
         host.version = "1";
         host.get_extension = &extension;
         host.request_restart = [] (const clap_host*) {}; // not while it plays: a reload (picked again) restarts it
-        host.request_process = [] (const clap_host*) {}; // it is processed every block
+        // The rack does not run a silent plug-in (plugin/idle_gate.h): asked, it runs the next block anyway.
+        host.request_process = [] (const clap_host* h) { of (h).process.store (true, std::memory_order_release); };
         host.request_callback = [] (const clap_host* h) { of (h).callback = true; };
     }
     static Host& of (const clap_host* h) { return *static_cast<Host*> (h->host_data); }
@@ -138,10 +146,11 @@ struct ClapInstance::Host
                     of (h).rescan = true;
             },
             [] (const clap_host*, clap_id, clap_param_clear_flags) {},
-            [] (const clap_host*) {}, // request_flush: its next block takes the changes
+            // request_flush: its next block takes the changes, run even if it sleeps (as request_process)
+            [] (const clap_host* h) { of (h).process.store (true, std::memory_order_release); },
         };
         static const clap_host_latency latency { [] (const clap_host* h) { of (h).latencyChanged = true; } };
-        static const clap_host_tail tail { [] (const clap_host*) {} };
+        static const clap_host_tail tail { [] (const clap_host* h) { of (h).tailChanged.store (true, std::memory_order_release); } };
         static const clap_host_state state { [] (const clap_host*) {} };
         static const clap_host_audio_ports audioPorts {
             [] (const clap_host*, uint32_t) { return false; },
@@ -166,7 +175,22 @@ struct ClapInstance::Host
         if (std::strcmp (id, CLAP_EXT_STATE) == 0) return &state;
         if (std::strcmp (id, CLAP_EXT_AUDIO_PORTS) == 0) return &audioPorts;
         if (std::strcmp (id, CLAP_EXT_NOTE_PORTS) == 0) return &notePorts;
+        // Its pages of controls (plugin/plugin_pages.h): read again once it says they changed; a page it suggests
+        // (what its own GUI is on) means nothing here, with no GUI.
+        static const clap_host_remote_controls remote {
+            [] (const clap_host* h) { of (h).remoteChanged = true; },
+            [] (const clap_host*, clap_id) {},
+        };
         if (std::strcmp (id, CLAP_EXT_PRESET_LOAD) == 0 || std::strcmp (id, CLAP_EXT_PRESET_LOAD_COMPAT) == 0) return &presetLoad;
+        if (std::strcmp (id, CLAP_EXT_REMOTE_CONTROLS) == 0 || std::strcmp (id, CLAP_EXT_REMOTE_CONTROLS_COMPAT) == 0) return &remote;
+        // Its own screen: a draw asked for (any thread), and maybe a block run for an input its audio side takes.
+        static const rhythmer_screen_host screenHost { [] (const void* h, uint32_t flags) {
+            if (h == nullptr) return;
+            auto& self = of (static_cast<const clap_host*> (h));
+            self.redraw.store (true, std::memory_order_release);
+            if ((flags & RHYTHMER_SCREEN_RUN) != 0) self.process.store (true, std::memory_order_release);
+        } };
+        if (std::strcmp (id, RHYTHMER_SCREEN_CLAP_HOST) == 0) return &screenHost;
         return nullptr;
     }
 };
@@ -191,7 +215,21 @@ public:
     Parameter (ClapInstance& owner, const clap_param_info& info, double current)
         : owner (owner), id (info.id), cookie (info.cookie), flags (info.flags),
           minimum (info.min_value), maximum (info.max_value), initial (normalise (info.default_value)),
-          label (text (info.name)), value ((float) normalise (current)) {}
+          label (text (info.name)), module (moduleOf (info.module)), value ((float) normalise (current)) {}
+
+    // clap_param_info.module as a path, "/" between levels, without empty levels ("" none).
+    static std::string moduleOf (const char* m)
+    {
+        std::string out, level;
+        auto end = [&] { if (! level.empty()) { if (! out.empty()) out += '/'; out += level; } level.clear(); };
+        for (size_t i = 0; m != nullptr && i < CLAP_PATH_SIZE && m[i] != 0; ++i)
+        {
+            if (m[i] == '/') end();
+            else level += m[i];
+        }
+        end();
+        return out;
+    }
 
     double normalise (double plain) const { return maximum > minimum ? std::clamp ((plain - minimum) / (maximum - minimum), 0.0, 1.0) : 0.0; }
     double plain (double normalised) const
@@ -248,6 +286,7 @@ public:
     const uint32_t flags;
     const double minimum, maximum, initial;
     const String label;
+    const std::string module;
     std::atomic<float> value;
     std::atomic<bool> pending { false };
 };
@@ -354,6 +393,9 @@ ClapInstance::ClapInstance (std::unique_ptr<Host> h, Library* l, const clap_plug
     presetLoad = static_cast<const clap_plugin_preset_load*> (plugin->get_extension (plugin, CLAP_EXT_PRESET_LOAD));
     if (presetLoad == nullptr)
         presetLoad = static_cast<const clap_plugin_preset_load*> (plugin->get_extension (plugin, CLAP_EXT_PRESET_LOAD_COMPAT));
+    screen = static_cast<const rhythmer_screen*> (plugin->get_extension (plugin, RHYTHMER_SCREEN_CLAP));
+    if (screen != nullptr && (screen->draw == nullptr || screen->input == nullptr || screen->controls == nullptr))
+        screen = nullptr; // a table missing a call: no screen
     events.resize (maxEvents);
     std::lock_guard<std::recursive_mutex> held (mainLock);
     readParameters();
@@ -412,6 +454,79 @@ void ClapInstance::idle()
     if (host->callback.exchange (false)) plugin->on_main_thread (plugin);
     if (host->rescan.exchange (false)) refreshValues();
     if (host->latencyChanged.exchange (false)) readLatency();
+}
+
+std::string ClapInstance::module (int index) const
+{
+    return index >= 0 && index < (int) parameters.size() ? parameters[(size_t) index]->module : std::string();
+}
+
+std::vector<ClapInstance::RemotePage> ClapInstance::remotePages()
+{
+    std::lock_guard<std::recursive_mutex> held (mainLock);
+    host->remoteChanged = false;
+    auto* remote = static_cast<const clap_plugin_remote_controls*> (plugin->get_extension (plugin, CLAP_EXT_REMOTE_CONTROLS));
+    if (remote == nullptr)
+        remote = static_cast<const clap_plugin_remote_controls*> (plugin->get_extension (plugin, CLAP_EXT_REMOTE_CONTROLS_COMPAT));
+    std::vector<RemotePage> out;
+    if (remote == nullptr || remote->count == nullptr || remote->get == nullptr) return out;
+    for (uint32_t i = 0, n = std::min<uint32_t> (remote->count (plugin), 256); i < n; ++i)
+    {
+        clap_remote_controls_page page {};
+        if (! remote->get (plugin, i, &page)) continue;
+        RemotePage p;
+        p.section = text (page.section_name).toStdString();
+        p.name = text (page.page_name).toStdString();
+        for (clap_id id : page.param_ids)
+        {
+            if (id == CLAP_INVALID_ID) continue;
+            auto it = std::lower_bound (byId.begin(), byId.end(), std::make_pair (id, INT_MIN));
+            if (it != byId.end() && it->first == id) p.params.push_back (it->second);
+        }
+        out.push_back (std::move (p));
+    }
+    return out;
+}
+
+bool ClapInstance::remotePagesChanged() const { return host->remoteChanged.load(); }
+
+bool ClapInstance::screenDraw (const rhythmer_screen_frame& frame, bool& changed)
+{
+    std::unique_lock<std::recursive_mutex> held (mainLock, std::try_to_lock);
+    if (! held.owns_lock() || screen == nullptr) return false;
+    changed = screen->draw (plugin, &frame);
+    return true;
+}
+
+bool ClapInstance::screenInput (const rhythmer_screen_input& input, bool& used)
+{
+    std::unique_lock<std::recursive_mutex> held (mainLock, std::try_to_lock);
+    if (! held.owns_lock() || screen == nullptr) return false;
+    used = screen->input (plugin, &input);
+    return true;
+}
+
+bool ClapInstance::screenControls (std::array<int, 3>& indices)
+{
+    std::unique_lock<std::recursive_mutex> held (mainLock, std::try_to_lock);
+    if (! held.owns_lock() || screen == nullptr) return false;
+    uint32_t ids[3] { RHYTHMER_SCREEN_NO_CONTROL, RHYTHMER_SCREEN_NO_CONTROL, RHYTHMER_SCREEN_NO_CONTROL };
+    screen->controls (plugin, ids);
+    for (size_t k = 0; k < 3; ++k)
+    {
+        indices[k] = -1;
+        if (ids[k] == RHYTHMER_SCREEN_NO_CONTROL) continue;
+        auto it = std::lower_bound (byId.begin(), byId.end(), std::make_pair ((clap_id) ids[k], INT_MIN));
+        if (it != byId.end() && it->first == ids[k]) indices[k] = it->second;
+    }
+    return true;
+}
+
+bool ClapInstance::takeRedraw() { return host->redraw.exchange (false, std::memory_order_acq_rel); }
+
+bool ClapInstance::wantsProcess() const
+{
+    return host->process.load (std::memory_order_acquire) || anyPending.load (std::memory_order_acquire);
 }
 
 AudioProcessorParameter* ClapInstance::getBypassParameter() const { return bypass; }
@@ -486,6 +601,8 @@ bool ClapInstance::pushOut (const clap_output_events* list, const clap_event_hea
 void ClapInstance::processBlock (AudioBuffer<float>& buffer, MidiBuffer& midi)
 {
     const int frames = std::min (buffer.getNumSamples(), block);
+    // This block answers any request to be run so far; one made from here on wants the next.
+    host->process.store (false, std::memory_order_release);
     if (! active || frames <= 0) { buffer.clear(); return; }
     AudioScope audioThread;
     if (! processing) processing = plugin->start_processing (plugin);
@@ -601,6 +718,8 @@ void ClapInstance::processBlock (AudioBuffer<float>& buffer, MidiBuffer& midi)
         {
             if (i == 0 && (int) c < buffer.getNumChannels() && (int) c < getTotalNumInputChannels())
                 std::memcpy (inputPointers[at], buffer.getReadPointer ((int) c), sizeof (float) * (size_t) frames);
+            else if (c < 64) // silent, and flagged constant: zeroed once on prepareToPlay, not cleared every block
+                inBuffers[i].constant_mask |= uint64_t (1) << c;
             else
                 std::memset (inputPointers[at], 0, sizeof (float) * (size_t) frames);
         }
@@ -636,9 +755,24 @@ void ClapInstance::processBlock (AudioBuffer<float>& buffer, MidiBuffer& midi)
 
 double ClapInstance::getTailLengthSeconds() const
 {
+    std::lock_guard<std::recursive_mutex> held (mainLock);
+    return readTailSeconds();
+}
+
+bool ClapInstance::takeTailChange (double& seconds)
+{
+    if (! host->tailChanged.load (std::memory_order_acquire)) return false;
+    host->tailChanged.exchange (false, std::memory_order_acq_rel);
+    AudioScope audioThread;
+    seconds = readTailSeconds();
+    return true;
+}
+
+double ClapInstance::readTailSeconds() const
+{
     if (tail == nullptr || ! active) return 0.0;
     const uint32_t samples = tail->get (plugin);
-    if (samples == UINT32_MAX) return 60.0; // "infinite"
+    if (samples >= INT32_MAX) return 60.0; // "infinite"
     return samples > 1 ? (double) samples / rate : 0.0;
 }
 
@@ -694,7 +828,7 @@ int64_t fileTime (const fs::path& p, std::error_code& e)
 
 // The cache file: a first line naming it, then each file read ("F", path, size, time) and its presets after it
 // ("P", name, key), tab separated. Names never hold a tab or a line break (clean() makes them spaces).
-constexpr char cacheHeader[] = "rhythmer clap presets 1";
+constexpr char cacheHeader[] = "melodee clap presets 1";
 
 std::string clean (const char* s)
 {
@@ -884,7 +1018,8 @@ std::vector<ClapInstance::Preset> ClapInstance::findPresets (const File& cache) 
             const size_t at = locationNames.size();
             auto shown = String (location.name);
             if (shown.startsWithIgnoreCase (name + " ")) shown = shown.substring (name.length() + 1); // "Surge XT Factory Presets"
-            locationNames.push_back ((shown.isEmpty() ? String ("Presets") : shown).replaceCharacter ('/', '-').toStdString());
+            const auto folder = preset_location_folder (shown.toStdString()); // "PPG/Factory": PPG, then Factory
+            locationNames.push_back (folder.empty() ? std::string ("Presets") : folder);
 
             Receiver receiver (info.id);
             if (location.inside)
@@ -997,6 +1132,7 @@ void ClapInstance::setCurrentProgram (int index)
     {
         currentPreset = index;
         refreshValues();
+        host->process.store (true, std::memory_order_release); // apply the preset even if the rack was asleep
     }
 }
 

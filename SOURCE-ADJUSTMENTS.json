@@ -1,0 +1,11 @@
+{
+  "description": "Personal home paths in public upstream build examples were replaced with /upstream-home/. Original-file SHA-256 records are listed below; algorithm and licence notices are retained.",
+  "original_file_sha256": {
+    "third_party/runtime/JUCE/docs/CMake API.md": "2289752a62c8b85fe1ad8503f5e08598d02c0fd73f71261ed6b891b39e32bd57",
+    "third_party/runtime/JUCE/modules/juce_core/native/juce_Files_linux.cpp": "13a73ba4add499947d279820c503bacd21bd43d1c1c62a29b63610aebe702c94",
+    "third_party/runtime/openblas/README.md": "bc7145f6857b9db532cb365f85c5ef4f849d2ef0461c919a8fefbdaead23f9d8",
+    "third_party/runtime/openblas/benchmark/Makefile": "da11d61483f069a7ac29293443ae92932e33b5cee299264367e3cac4c8459e2d",
+    "third_party/runtime/openblas/benchmark/pybench/scipy_openblas.pc": "67ec6ce25563bedb0c58135fa4b54974c6b34ecb6227aa4f1afe58663713d98d",
+    "third_party/runtime/openblas/lapack-netlib/DOCS/lawn81.tex": "cc0a57f2d875624ad42646838cd1061d715cea3c40e4691e6915776761e137fa"
+  }
+}

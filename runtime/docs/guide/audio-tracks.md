@@ -9,8 +9,11 @@ in the **Song**. The pads play nothing on an audio track.
 
 ## Make an audio track
 
-Pick **Audio**, the last of the [new track cards](tracks.md#make-a-new-track).
-Stage opens on **INPUT**.
+1. Select an empty track with **PAD BANK** + pad. Stage shows the
+   [track types](tracks.md#make-a-new-track). A new project opens on track 1
+   with the track types.
+2. Turn the encoder to **Audio**, the last card, and push it. Stage opens on
+   **INPUT**.
 
 ![The Audio card](../images/screens/stageemptyaudio.png)
 
@@ -28,12 +31,16 @@ bars under it show the input's level, left over right.
 | Control | Action |
 | --- | --- |
 | **K1** (**SOURCE**) | What the track records: Rear L+R, Rear L, Rear R, Mic, USB L+R, USB L or USB R. |
-| **K2** (**MONITOR**) | **On**: you hear the input while the track is armed or recording. **Off**: you never hear it. |
+| **K2** (**MONITOR**) | **Auto**: you hear the input while the track is armed or recording. **On**: you always hear it, also while you play or stop, and while a track that is not an audio track is selected (the first audio track set to On). **Off**: you never hear it. |
 | **K3** (**GAIN**) | The input's gain, −12 to +24 dB (the same gain as Input Config's). |
 
 With the built-in mic as the source, the speaker goes quiet while you hear
 the mic, so it does not feed back. The header then shows **SPEAKER OFF**.
 Plug in headphones to hear yourself.
+
+While a MIDI track or a Looper loop uses the other input (the rear inputs
+for Mic, the mic for Rear), the source shows **IN USE**, is silent and does
+not record.
 
 ## Record
 
@@ -68,7 +75,8 @@ the recording it plays. Turn the encoder for fine steps.
 | **FADES** (**B1** again) | **FADE IN** | **FADE OUT** | **REVERSE** |
 | **WARP** (**B1** a third time) | **WARP**: Off, Stretch or Repitch | **BPM** | **SEMI** (**SHIFT**: **FINE**) |
 
-**B3** opens **MIX**, **SENDS** and **FX**, as on other tracks.
+**B3** opens **FX**, as on other tracks. The track's level, pan and sends are on the
+[mixer](mixer-and-effects.md#the-mixer).
 
 ## Patterns and the Song
 

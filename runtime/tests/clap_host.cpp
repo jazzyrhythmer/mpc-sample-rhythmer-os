@@ -3,11 +3,14 @@
 // Rhythmer's CLAP host (plugin/clap_instance.h) against tests/clap_fixture.cpp:
 // listing a library, notes as CLAP notes and CCs as MIDI, parameters both ways,
 // state, latency, the main-thread callback, presets found (with their folders,
-// kept in a cache) and loaded, and every call on the right thread.
+// kept in a cache) and loaded, a plug-in's own screen, and every call on the right
+// thread.
 // Built and run by tests/test_plugin_hosts.py on aarch64 Linux, with Rhythmer's objects.
 #include "rhythmer/plugin/clap_instance.h"
 #include "rhythmer/plugin/plugin_files.h"
+#include <rhythmer_screen.h>
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <dlfcn.h>
@@ -75,6 +78,12 @@ int main(int argc, char** argv) {
         auto* wave = param(*sine, "Wave");
         CHECK(level && wave && std::abs(level->getValue() - 0.5f) < 1e-6f && level->getText(0.5f, 32) == "50 %");
         CHECK(wave && wave->isDiscrete() && wave->getNumSteps() == 3);
+        // Pages (plugin/plugin_pages.h): its module paths, and its remote-controls page as parameter indices.
+        CHECK(sine->module(0) == "Voice/Amp" && sine->module(1).empty() && sine->module(2).empty());
+        auto remote = sine->remotePages();
+        CHECK(remote.size() == 1 && remote[0].section == "Sound" && remote[0].name == "Main");
+        CHECK(remote.size() == 1 && (remote[0].params == std::vector<int> {1, 0})); // Wave, Level; unused slots left out
+        CHECK(!sine->remotePagesChanged());
 
         CHECK(peak(run(*sine)) == 0.0f);
         run(*sine, {juce::MidiMessage::noteOn(1, 69, 1.0f)});
@@ -82,7 +91,9 @@ int main(int argc, char** argv) {
 
         level->setValue(1.0f); // the next block hears it
         CHECK(level->getValue() == 1.0f);
+        CHECK(sine->wantsProcess()); // a value waits for it: the rack runs it even asleep
         CHECK(std::abs(peak(run(*sine)) - 1.0f) < 0.01f);
+        CHECK(!sine->wantsProcess());
 
         run(*sine, {juce::MidiMessage::controllerEvent(1, 1, 64)}); // MIDI: the plug-in sets Level and says so
         CHECK(std::abs(level->getValue() - 64.0f / 127.0f) < 1e-4f);
@@ -103,6 +114,38 @@ int main(int argc, char** argv) {
         sine->idle(); // its request_callback from init()
         counts(&wrong, &callbacks, &inits);
         CHECK(callbacks == 1 && inits == 1);
+        CHECK(sine->remotePagesChanged()); // its on_main_thread said its pages changed
+        CHECK(sine->remotePages().size() == 1 && !sine->remotePagesChanged());
+        CHECK(sine->wantsProcess()); // the fixture's on_main_thread asked to be run
+        run(*sine);
+        CHECK(!sine->wantsProcess());
+
+        // Its own screen (sdk/rhythmer-screen/rhythmer_screen.h): the fixture's bar is as wide as Level.
+        CHECK(sine->hasScreen());
+        std::vector<uint32_t> pixels(320 * 218, 0x123456u);
+        rhythmer_screen_frame_t frame {};
+        frame.pixels = pixels.data();
+        frame.width = 320; frame.height = 218; frame.stride = 320;
+        frame.redraw_all = 1;
+        frame.colour = 0xff8000u;
+        bool changed = false, used = false;
+        CHECK(sine->screenDraw(frame, changed) && changed);
+        CHECK(pixels[0] == 0xff8000u && pixels[150] == 0xff8000u && pixels[200] == 0x101010u && pixels[320 * 217] == 0x101010u);
+        frame.redraw_all = 0;
+        CHECK(sine->screenDraw(frame, changed) && !changed); // nothing new to draw
+        CHECK(!sine->takeRedraw());
+        rhythmer_screen_input_t wheel {RHYTHMER_SCREEN_WHEEL, 10, 0};
+        CHECK(sine->screenInput(wheel, used) && used);
+        CHECK(sine->takeRedraw() && !sine->takeRedraw()); // it asked once
+        CHECK(sine->wantsProcess());                      // and to be run: its audio side takes the new Level
+        sine->idle();                                     // its values moved: read again
+        CHECK(std::abs(level->getValue() - (64.0f / 127.0f + 0.1f)) < 1e-3f);
+        CHECK(sine->screenDraw(frame, changed) && changed && pixels[190] == 0xff8000u);
+        rhythmer_screen_input_t step {RHYTHMER_SCREEN_STEP, 1, 0};
+        CHECK(sine->screenInput(step, used) && !used); // Minus / Plus are not its
+        std::array<int, 3> controls {};
+        CHECK(sine->screenControls(controls) && controls[0] == 0 && controls[1] == 1 && controls[2] == -1); // Level, Wave
+        run(*sine);
         sine->releaseResources();
     }
 
@@ -111,6 +154,19 @@ int main(int argc, char** argv) {
         CHECK(gain != nullptr);
         if (!gain) return 1;
         CHECK(gain->getName() == "Test Gain" && !gain->acceptsMidi() && gain->getTotalNumInputChannels() == 2);
+        CHECK(gain->module(0) == "Out" && gain->remotePages().empty()); // no remote-controls
+        CHECK(gain->hasScreen()); // its strip: a frame of the strip's height, its bar half Gain's width
+        std::vector<uint32_t> strip(320 * 144, 0u);
+        rhythmer_screen_frame_t frame {};
+        frame.pixels = strip.data();
+        frame.width = 320; frame.height = 144; frame.stride = 320;
+        frame.area = RHYTHMER_SCREEN_STRIP;
+        frame.redraw_all = 1;
+        frame.colour = 0x00ff00u;
+        bool drew = false;
+        CHECK(gain->screenDraw(frame, drew) && drew && strip[150] == 0x00ff00u && strip[170] == 0x101010u && strip[320 * 143] == 0x101010u);
+        std::array<int, 3> knobs {};
+        CHECK(gain->screenControls(knobs) && knobs[0] == 0 && knobs[1] == -1 && knobs[2] == -1);
         gain->prepareToPlay(rate, block);
         CHECK(gain->getLatencySamples() == 32);
         CHECK(std::abs(peak(run(*gain, {}, 0.25f)) - 0.25f) < 1e-6f); // Gain 1
@@ -176,6 +232,18 @@ int main(int argc, char** argv) {
         if (!gain) return 1;
         auto its = gain->findPresets({}); // no cache: every file read
         CHECK(its.size() == 2 && its[0].name == "Loud" && its[1].name == "Soft");
+        gain->prepareToPlay(rate, block);
+        gain->setPresets(its);
+        double seconds = -1;
+        CHECK(gain->getTailLengthSeconds() == 0 && !gain->takeTailChange(seconds));
+        gain->setCurrentProgram(0);
+        CHECK(gain->wantsProcess());
+        run(*gain);
+        CHECK(gain->takeTailChange(seconds) && seconds == 2);
+        CHECK(!gain->takeTailChange(seconds));
+        gain->setCurrentProgram(1);
+        run(*gain);
+        CHECK(gain->takeTailChange(seconds) && seconds == 0);
     }
     CHECK(ClapInstance::load(file, 12345, rate, block, error) == nullptr && error == "No longer in its library");
 

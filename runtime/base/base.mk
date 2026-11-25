@@ -54,27 +54,39 @@ endef
 $(foreach m,$(MODULE_C),$(eval $(call c_module_rule,$(m))))
 # The panel's own driver (kernel/panel, docs/HARDWARE.md, Display), embedded
 # for src/drivers/panel_driver.cpp to load. The module is kept beside its
-# source (tools/build_kernel_modules.sh rebuilds it); a build without it keeps
-# the panel on the stock driver.
+# source (tools/build_kernel_modules.sh rebuilds it), one for firmware
+# 1.3.0.12's kernel and one (-6.18) for 1.4's; a build without one for the
+# running kernel keeps the panel on the stock driver.
 PANEL_MODULE ?= $(BASE_SRC)/../kernel/panel/sample_base_panel.ko
-ifneq ($(wildcard $(PANEL_MODULE)),)
+PANEL_MODULE_6_18 ?= $(BASE_SRC)/../kernel/panel/sample_base_panel-6.18.ko
+PANEL_FILES := $(wildcard $(PANEL_MODULE) $(PANEL_MODULE_6_18))
+PANEL_DEFINES := $(if $(wildcard $(PANEL_MODULE)),-DPANEL_MODULE='"$(PANEL_MODULE)"') \
+	$(if $(wildcard $(PANEL_MODULE_6_18)),-DPANEL_MODULE_6_18='"$(PANEL_MODULE_6_18)"')
+ifneq ($(PANEL_FILES),)
 OBJECTS += build/obj/base/drivers/panel_module.o
 $(TARGET): build/obj/base/drivers/panel_module.o
-build/obj/base/drivers/panel_module.o: $(BASE_SRC)/drivers/panel_module.S $(PANEL_MODULE)
+build/obj/base/drivers/panel_module.o: $(BASE_SRC)/drivers/panel_module.S $(PANEL_FILES)
 	@mkdir -p $(@D)
-	$(CC) -c -DPANEL_MODULE='"$(PANEL_MODULE)"' $< -o $@
+	$(CC) -c $(PANEL_DEFINES) $< -o $@
 endif
 # Screen Mirror's modules (kernel/uvc, kernel/vepu; src/drivers/screen_mirror.h),
-# embedded the same way; a build without them has no Screen Mirror.
+# embedded the same way, a pair for each kernel (1.4's uvc from
+# kernel/uvc-6.18); a build without a pair for the running kernel has no
+# Screen Mirror.
 UVC_MODULE ?= $(BASE_SRC)/../kernel/uvc/sample_base_uvc.ko
 VEPU_MODULE ?= $(BASE_SRC)/../kernel/vepu/sample_base_vepu.ko
-ifneq ($(wildcard $(UVC_MODULE)),)
-ifneq ($(wildcard $(VEPU_MODULE)),)
+UVC_MODULE_6_18 ?= $(BASE_SRC)/../kernel/uvc-6.18/sample_base_uvc-6.18.ko
+VEPU_MODULE_6_18 ?= $(BASE_SRC)/../kernel/vepu/sample_base_vepu-6.18.ko
+MIRROR_6_12 := $(and $(wildcard $(UVC_MODULE)),$(wildcard $(VEPU_MODULE)))
+MIRROR_6_18 := $(and $(wildcard $(UVC_MODULE_6_18)),$(wildcard $(VEPU_MODULE_6_18)))
+MIRROR_FILES := $(if $(MIRROR_6_12),$(UVC_MODULE) $(VEPU_MODULE)) $(if $(MIRROR_6_18),$(UVC_MODULE_6_18) $(VEPU_MODULE_6_18))
+MIRROR_DEFINES := $(if $(MIRROR_6_12),-DUVC_MODULE='"$(UVC_MODULE)"' -DVEPU_MODULE='"$(VEPU_MODULE)"') \
+	$(if $(MIRROR_6_18),-DUVC_MODULE_6_18='"$(UVC_MODULE_6_18)"' -DVEPU_MODULE_6_18='"$(VEPU_MODULE_6_18)"')
+ifneq ($(strip $(MIRROR_FILES)),)
 OBJECTS += build/obj/base/drivers/kernel_modules.o
 $(TARGET): build/obj/base/drivers/kernel_modules.o
-build/obj/base/drivers/kernel_modules.o: $(BASE_SRC)/drivers/kernel_modules.S $(UVC_MODULE) $(VEPU_MODULE)
+build/obj/base/drivers/kernel_modules.o: $(BASE_SRC)/drivers/kernel_modules.S $(MIRROR_FILES)
 	@mkdir -p $(@D)
-	$(CC) -c -DUVC_MODULE='"$(UVC_MODULE)"' -DVEPU_MODULE='"$(VEPU_MODULE)"' $< -o $@
-endif
+	$(CC) -c $(MIRROR_DEFINES) $< -o $@
 endif
 -include $(OBJECTS:.o=.d)

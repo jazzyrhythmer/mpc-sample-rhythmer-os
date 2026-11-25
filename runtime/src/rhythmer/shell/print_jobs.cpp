@@ -37,12 +37,10 @@ void Context::print(const PrintAsk& ask) {
     if (none) job.patterns.push_back(project.tracks[t].pattern); // the one it plays
     if (job.patterns.empty()) { printer->note("track " + std::to_string(t + 1) + " has no pattern with notes"); return; }
     job.project = std::make_unique<Project>(project);
+    if (ui.chop_sample < sample_slots && ui.slices.count) job.project->chops.edit(ui.chop_sample).slices = ui.slices; // slice hits as Chop has them (issue 24)
     job.bank = std::make_unique<PatternBank>(patterns);
     if (plugins) job.states = plugins->states();
-    if (library) {
-        auto root = library->root();
-        job.card_top = root.empty() ? std::string() : std::filesystem::path(root).parent_path().string();
-    }
+    if (library) job.card_top = library->card();
     job.known = prints;
     if (!printer->start(std::move(job))) printer->note("busy: a print is under way");
 }
@@ -54,6 +52,9 @@ void Context::freeze(const PrintAsk& ask) {
     const auto& tr = project.tracks[t];
     if (project_path.empty()) { printer->note("save the project first: its prints go beside its file"); return; }
     if (!tr.used() || tr.engine == EngineKind::Midi) { printer->note("track " + std::to_string(t + 1) + " has no sound to freeze"); return; }
+    if (tr.engine == EngineKind::Sampler) // a print holds the kit, not pads sent to submixes
+        for (const auto& pad : tr.pads)
+            if (pad.used() && pad.out) { printer->note("track " + std::to_string(t + 1) + " has pads sent to submixes: set them to KIT to freeze it"); return; }
     TrackFreeze f;
     f.state = ask.deep ? FreezeState::Deep : FreezeState::Frozen;
     f.tap = ask.deep ? PrintTap::PostFx : ask.tap; // freeze plan F2d: the chain's plug-ins go too, so the print holds them
@@ -180,12 +181,10 @@ void Context::print_tick() {
         for (unsigned p = 0; p < pattern_count; ++p)
             if (f.plays(p) && !patterns.at[t][p].empty()) job.patterns.push_back(uint8_t(p));
         job.project = std::make_unique<Project>(project);
+        if (ui.chop_sample < sample_slots && ui.slices.count) job.project->chops.edit(ui.chop_sample).slices = ui.slices; // slice hits as Chop has them (issue 24)
         job.bank = std::make_unique<PatternBank>(patterns);
         if (plugins) job.states = plugins->states();
-        if (library) {
-            auto root = library->root();
-            job.card_top = root.empty() ? std::string() : std::filesystem::path(root).parent_path().string();
-        }
+        if (library) job.card_top = library->card();
         job.known = prints;
         bool empty = job.patterns.empty();
         if (empty || printer->start(std::move(job))) freeze_waiting &= ~(1u << t);

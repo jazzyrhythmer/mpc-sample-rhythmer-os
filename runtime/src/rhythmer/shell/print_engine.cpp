@@ -11,6 +11,7 @@
 #include "rhythmer/engine/loop_find.h"
 #include "rhythmer/engine/stream_pager.h"
 #include "rhythmer/engine/sample_data.h"
+#include "rhythmer/model/scales.h"
 #include "rhythmer/plugin/plugin_rack.h"
 #include "rhythmer/shell/mpc3_export.h"
 #include "rhythmer/shell/sample_library.h"
@@ -355,10 +356,13 @@ void PrintEngine::run() {
         }
         if (job->autosample) { // the auto sampler: notes, not patterns
             std::string check_failed; // its check found no sound, an input that clips, or was called off: nothing is sampled
+            std::unique_ptr<NoteSource> checked; // an instrument outside: the check's notes, sampled with next
+            int check_key = -1;
             if (job->probe_first) { // as the sheet does: the check first, its findings sampled with
-                AutoProbeResult heard = probe_track(*job, samples);
+                AutoProbeResult heard = probe_track(*job, samples, job->external ? &checked : nullptr);
                 if (heard.error.empty()) job->sampling.found = heard.found;
                 check_failed = heard.error;
+                check_key = heard.key;
                 std::lock_guard<std::mutex> held(lock);
                 const auto& f = heard.found;
                 lines.push_back("autosample-check track=" + std::to_string(job->track + 1) + " kind=" +
@@ -370,10 +374,11 @@ void PrintEngine::run() {
                 shown.checking = false;
             }
             AutoSampleResult made;
-            if (check_failed.empty()) made = sample_track(*job, samples);
+            if (check_failed.empty()) made = sample_track(*job, samples, std::move(checked));
             else {
                 made.project_path = job->project_path; made.track = job->track % track_count; made.name = job->sample_name;
                 made.error = check_failed;
+                made.key = check_key;
             }
             if (library) library->release_samples();
             std::lock_guard<std::mutex> held(lock);
@@ -383,7 +388,7 @@ void PrintEngine::run() {
                                                       + (made.release_slow > 0 ? "+" + std::to_string(int(std::lround(made.release_slow * 1000))) + "@"
                                                                                      + std::to_string(int(std::lround(20 * std::log10(made.release_share)))) + "dB"
                                                                                : std::string())
-                                                      + " centred=" + std::to_string(made.centred) + " " + made.release_note
+                                                      + " centred=" + std::to_string(made.centred) + " mono=" + std::to_string(made.mono) + " layers=" + std::to_string(made.layers) + " " + made.release_note
                                                 : "error=" + made.error) +
                             " seconds=" + std::to_string(int(std::lround(made.seconds))));
             while (lines.size() > kept_lines) lines.pop_front();
@@ -634,7 +639,6 @@ PrintResult PrintEngine::print_one(const PrintJob& job, unsigned pattern, const 
 
 // ---- the auto sampler
 
-namespace {
 // Where the auto sampler's notes are played and heard: a plug-in in a print host of its own, faster than real time,
 // or an instrument outside over MIDI and an input, in real time (engine/external_notes.h).
 struct NoteSource {
@@ -647,8 +651,10 @@ struct NoteSource {
     virtual std::string about() const { return {}; } // for `rhythmer-print status`
     virtual float silence() const { return 0.000316f; } // what counts as silent (-70 dB; an input's own noise and a little more)
     virtual std::string trouble() const { return {}; }  // what went wrong meanwhile, if anything
+    virtual int trouble_key() const { return -1; }      // the key it is about (a clip), -1 none
 };
 
+namespace {
 struct PluginNotes final : NoteSource {
     std::unique_ptr<Project> project;
     std::unique_ptr<PatternBank> bank;
@@ -729,7 +735,12 @@ struct OutsideNotes final : NoteSource {
                       1000.0 * played.latency() / double(dsp::sample_rate()));
         return text;
     }
-    std::string trouble() const override { return played.clipped() ? "the input clips: turn the instrument down" : std::string(); }
+    std::string trouble() const override {
+        if (!played.clipped()) return {};
+        const int key = played.clipped_key();
+        return (key >= 0 ? note_name(key) : std::string("the input")) + " clips: turn the instrument down";
+    }
+    int trouble_key() const override { return played.clipped() ? played.clipped_key() : -1; }
 };
 
 // The job's notes: its plug-in track's plug-in opened in a print host, or (a MIDI track) the instrument outside,
@@ -772,7 +783,8 @@ std::string key_word(unsigned key) {
 // instrument from two keys pressed legato against the first alone, its glide from how the second's pitch moves, and
 // from two keys apart whether it glides only legato; drums, the keys of the range that sound; the accent from one key
 // at sixteen velocities; takes from three hits of it.
-AutoProbeResult PrintEngine::probe_track(const PrintJob& job, const std::array<const SampleData*, sample_slots>& samples) {
+AutoProbeResult PrintEngine::probe_track(const PrintJob& job, const std::array<const SampleData*, sample_slots>& samples,
+                                         std::unique_ptr<NoteSource>* keep) {
     AutoProbeResult r;
     r.project_path = job.project_path;
     r.track = job.track % track_count;
@@ -805,10 +817,14 @@ AutoProbeResult PrintEngine::probe_track(const PrintJob& job, const std::array<c
     auto settle = [&] { source->settle(1.0f, 0.05f); };
     auto at = [&](double seconds) { return uint64_t(seconds * rate); };
     bool stopped = false;
+    double played = 0, playing = 0; // seconds of notes and the time they took, for the sampling's time on the sheet
     auto play = [&](std::vector<ProbeNote> notes, double seconds) {
         if (stopped || cancelled.load()) { stopped = true; return std::vector<float> {}; }
         settle();
+        const auto p0 = Clock::now();
         auto x = source->notes(std::move(notes), at(seconds));
+        playing += since(p0);
+        played += double(x.size()) / rate;
         if (x.empty()) stopped = true;
         return x;
     };
@@ -1054,11 +1070,32 @@ AutoProbeResult PrintEngine::probe_track(const PrintJob& job, const std::array<c
             r.heard += one;
         }
     }
-    if (auto why = source->trouble(); !why.empty()) { r.error = why; return r; } // an input that clips: nothing good can be sampled
+    if (auto why = source->trouble(); !why.empty()) { r.error = why; r.key = source->trouble_key(); return r; } // an input that clips: nothing good can be sampled
+    found.speed = playing > 0 ? float(played / playing) : 1.0f;
+    // Velocity layers from the sixteen hits: where the tone changes (an accent starts a layer), for 1 to 8 layers,
+    // and at Auto as many as the tone needs. One where the hits differ from hit to hit: takes then (an MPC plays a
+    // keygroup's layers in turn or by velocity, not both). Drums: the accent's two, else one, as their Velocity is
+    // not heard (engine/auto_probe.h probe_layers()).
+    {
+        const bool drum_kit = found.kind == AutoKind::Drums;
+        const float amount = drum_kit ? 0.0f : found.split && loud_key >= found.split ? found.upper.velocity : found.velocity;
+        found.sweep_count = uint8_t(std::min(velocities.size(), found.sweep_velocity.size()));
+        for (size_t i = 0; i < found.sweep_count; ++i) { found.sweep_velocity[i] = velocities[i]; found.sweep_bright[i] = bright[i]; }
+        for (unsigned k = 1; k <= found.layer_tops.size(); ++k) {
+            const auto tops = probe_layers(velocities, db, bright, amount, found.accent, k);
+            for (size_t l = 0; l < tops.size() && l < found.layer_tops[k - 1].size(); ++l) found.layer_tops[k - 1][l] = tops[l];
+        }
+        const size_t heard_layers = probe_layers(velocities, db, bright, amount, found.accent, 0).size();
+        found.layers = uint8_t(found.takes > 1 ? 1 : drum_kit ? (found.accent ? 2 : 1) : std::clamp<size_t>(heard_layers, 1, 8));
+    }
     {
         char text[200];
-        std::snprintf(text, sizeof(text), " | velocity=%.2f", double(found.velocity));
+        std::snprintf(text, sizeof(text), " | velocity=%.2f speed=%.1f layers=%u", double(found.velocity), double(found.speed), unsigned(found.layers));
         r.heard += text;
+        for (unsigned l = 0; l < found.layers; ++l) {
+            std::snprintf(text, sizeof(text), "%s%u", l ? "," : " tops=", unsigned(found.layer_tops[found.layers - 1][l]));
+            r.heard += text;
+        }
         if (found.split) {
             const auto& u = found.upper;
             std::snprintf(text, sizeof(text), " from %s: kind=%s glide_ms=%d legato=%d tied=%d sustains=%d moves=%d hold_s=%.1f release_ms=%d velocity=%.2f",
@@ -1069,10 +1106,12 @@ AutoProbeResult PrintEngine::probe_track(const PrintJob& job, const std::array<c
     }
     found.heard = true;
     show(4);
+    if (keep) *keep = std::move(source);
     return r;
 }
 
-AutoSampleResult PrintEngine::sample_track(const PrintJob& job, const std::array<const SampleData*, sample_slots>& samples) {
+AutoSampleResult PrintEngine::sample_track(const PrintJob& job, const std::array<const SampleData*, sample_slots>& samples,
+                                           std::unique_ptr<NoteSource> heard_by) {
     AutoSampleResult r;
     r.project_path = job.project_path;
     r.track = job.track % track_count;
@@ -1115,8 +1154,11 @@ AutoSampleResult PrintEngine::sample_track(const PrintJob& job, const std::array
         if (!e && room.available < need)
             return fail("card full: " + std::to_string(need >> 20) + " MB needed, " + std::to_string(room.available >> 20) + " MB free");
     }
+    // An instrument outside goes on with the check's notes: their silence was heard before the check played anything.
+    // Opened again here, it would be heard while the check's last notes still ring (a delay's repeats, a slow fade)
+    // and called not quiet.
     std::string why_not;
-    auto source = open_notes(*this, job, samples, roots[roots.size() / 2], cancelled, why_not);
+    auto source = heard_by ? std::move(heard_by) : open_notes(*this, job, samples, roots[roots.size() / 2], cancelled, why_not);
     if (!source) return fail(why_not);
     fs::create_directories(parts, e);
     if (!e) fs::create_directories(files, e);
@@ -1211,7 +1253,7 @@ AutoSampleResult PrintEngine::sample_track(const PrintJob& job, const std::array
             if (drums) trim_silence(audio, rate, silent); // a one shot: no silence kept for the time the key was held
             if (remove_dc(audio.left, audio.right, audio.held, rate)) ++r.centred;
             settle();
-            if (auto why = source->trouble(); !why.empty()) return fail(why);
+            if (auto why = source->trouble(); !why.empty()) { r.key = source->trouble_key(); return fail(why); }
             float peak = 0;
             for (size_t f = 0; f < audio.left.size(); ++f) peak = std::max({peak, std::fabs(audio.left[f]), std::fabs(audio.right[f])});
             {
@@ -1351,24 +1393,42 @@ AutoSampleResult PrintEngine::sample_track(const PrintJob& job, const std::array
             part.read(reinterpret_cast<char*>(interleaved.data()), std::streamsize(interleaved.size() * sizeof(float)));
             if (!part) return fail("cannot read " + l.sample);
             for (auto& x : interleaved) x *= gain;
+            // Both sides the same (a mono plug-in or input): one channel, half the card and memory, the same sound.
+            const unsigned channels = sides_alike(interleaved.data(), l.frames) ? 1 : 2;
+            if (channels == 1) {
+                for (size_t f = 0; f < l.frames; ++f) interleaved[f] = interleaved[2 * f];
+                ++r.mono;
+            }
             const fs::path path = files / (l.sample + ".wav");
             WavStream wav;
-            bool written = wav.open(path.string(), whole_rate, 24, 0, 2);
+            bool written = wav.open(path.string(), whole_rate, 24, 0, channels);
             for (size_t at = 0; written && at < l.frames; at += EngineHost::block) {
                 unsigned n = unsigned(std::min<size_t>(EngineHost::block, l.frames - at));
-                written = wav.add(interleaved.data() + 2 * at, n);
+                written = wav.add(interleaved.data() + channels * at, n);
             }
             written = wav.close() && written;
             if (!written) return fail("cannot write " + path.filename().string());
         }
     fs::remove_all(parts, e);
-    const fs::path xpm = files / (job.sample_name + ".xpm");
+    const fs::path xpm = files / (job.sample_name + ".xpm"), xty = folder / (job.sample_name + ".xty");
+    size_t most = 0;
+    for (const auto& k : program.keygroups) most = std::max(most, k.layers.size());
+    // MPC 3's track file: it has what an .xpm has no tag for (Mono Retrig) and up to eight layers a keygroup, made
+    // from a copy of the program with all of them (removed after). The .xpm keeps four, as MPC 2 and MPC Beats read
+    // it (xpm_layers()). The program stands without the track file, so a failure is only told.
+    std::string xty_failed;
+    if (most > 4) {
+        const fs::path whole = files / (job.sample_name + ".all.xpm");
+        xty_failed = write_xpm(whole.string(), program, 8);
+        if (xty_failed.empty()) xty_failed = write_mpc3_track(whole.string(), xty.string());
+        fs::remove(whole, e);
+    }
     if (auto why = write_xpm(xpm.string(), program); !why.empty()) return fail(why);
-    r.program = xpm.string();
-    // MPC 3's track file of the same program: it has what an .xpm has no tag for (Mono Retrig). The program stands
-    // without it, so a failure is only told.
-    if (auto why = write_mpc3_track(xpm.string(), (folder / (job.sample_name + ".xty")).string()); !why.empty())
-        r.release_note += " xty=" + why;
+    if (most <= 4) xty_failed = write_mpc3_track(xpm.string(), xty.string());
+    if (!xty_failed.empty()) r.release_note += " xty=" + xty_failed;
+    // The keygroup track plays every layer: from the track file where the .xpm holds fewer.
+    r.program = most > 4 && xty_failed.empty() ? xty.string() : xpm.string();
+    r.layers = unsigned(most);
     r.seconds = since(t0);
     return r;
 }

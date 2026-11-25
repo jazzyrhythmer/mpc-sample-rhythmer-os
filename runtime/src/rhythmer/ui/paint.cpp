@@ -161,6 +161,9 @@ const char* face_name(unsigned face) { return faces[face % faces.size()].name; }
 juce::Font font(float size, Weight weight, bool caps) { return cached_font(std::max(size, type::floor), weight, caps); }
 
 void audit_text(std::vector<TextIssue>* sink) { audit = sink; }
+namespace { ControlsSeen* seen_controls = nullptr; }
+void audit_controls(ControlsSeen* sink) { seen_controls = sink; }
+ControlsSeen* controls_sink() { return seen_controls; }
 void report_text_issue(const TextIssue& issue) { if (audit) audit->push_back(issue); }
 
 float Paint::width(const juce::String& asked, const Text& style) const {

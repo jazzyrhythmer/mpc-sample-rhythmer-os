@@ -7,13 +7,14 @@
 #include "rhythmer/plugin/preset_rows.h"
 #include "rhythmer/shell/preset_index.h"
 #include "rhythmer/shell/track_copy.h"
+#include "rhythmer/shell/menu.h"
 
 namespace rhythmer {
 inline int track_workflow_check() {
     unsigned checks=0;
     auto require=[&](bool ok,const char* what){++checks;if(!ok)std::fprintf(stderr,"TRACK_WORKFLOW FAIL %u: %s\n",checks,what);return ok;};
 #define TRACK_CHECK(x,what) do {if(!require((x),what))return 1;}while(false)
-    EngineHost host;Shell shell(host);auto& c=shell.context();
+    auto host_owner=std::make_unique<EngineHost>();auto& host=*host_owner;Shell shell(host);auto& c=shell.context();
     // Empty-pad shortcuts use real surface dispatch; native page maps and loaded-pad focus survive.
     {
         auto reset_empty=[&](bool elsewhere=false){
@@ -51,8 +52,8 @@ inline int track_workflow_check() {
         menu_button(c,SurfaceButton::TopLeft);
         TRACK_CHECK(!c.ui.menu&&c.ui.page==PageId::Stage,"MENU Back returns to original track");
         PluginRack picker_rack(host);c.plugins=&picker_rack;
-        for(unsigned pick=0;pick<6;++pick) {
-            reset_empty();open_track_actions(c);c.ui.track_types=true;c.ui.track_action=uint8_t(pick);tap(SurfaceButton::WheelPush);
+        for(bool full:{false,true})for(unsigned pick=0;pick<6;++pick) {
+            reset_empty();c.ui.settings.full_features=full;open_track_actions(c);c.ui.track_types=true;c.ui.track_action=uint8_t(pick);tap(SurfaceButton::WheelPush);
             if(pick==0) TRACK_CHECK(c.ui.page==PageId::Plugins,"direct type PLUG-IN opens native picker");
             if(pick==1) {
                 TRACK_CHECK(c.ui.page==PageId::Samples&&c.track().engine==EngineKind::Sampler,"direct SAMPLE KIT starts first sample load");
@@ -94,6 +95,26 @@ inline int track_workflow_check() {
         TRACK_CHECK(c.ui.page==PageId::Stage&&c.ui.track==1,"browser track switch follows new selected track");
         c.ui=UiState{};c.project.tracks[0]=Track{};c.project.tracks[1]=Track{};
     }
+    // Native v0.8 moved Tracks to Mixer: creating an empty track returns to its caller.
+    {
+        c.ui=UiState{};c.project.tracks[0]=Track{};c.ui.page=PageId::Mixer;
+        offer_new_track(c);
+        TRACK_CHECK(c.ui.page==PageId::Stage&&c.ui.new_back==PageId::Mixer,"empty Mixer track remembers native caller");
+        make_new_track(c,NewChoice::MidiUsb);
+        TRACK_CHECK(c.track().engine==EngineKind::Midi&&c.ui.page==PageId::Mixer,"new MIDI track returns to Mixer");
+        c.ui=UiState{};c.project.tracks[0]=Track{};c.edits.clear();
+    }
+    // Track setup is modal; its BACK/SELECT must not adjust a running repeat rate.
+    {
+        c.ui=UiState{};c.project.tracks[0]=Track{};c.load_sound(0,EngineKind::Midi,0);
+        c.track().repeat=true;const auto rate=c.track().repeat_rate;c.ui.page=PageId::Mixer;
+        auto tap_setup=[&](SurfaceButton b){for(bool down:{true,false}){SurfaceEvent e;e.input.kind=SurfaceInput::Kind::Button;e.input.index=uint8_t(b);e.input.pressed=down;shell.surface(e,12000+checks);}};
+        open_track_actions(c);tap_setup(SurfaceButton::TopLeft);
+        TRACK_CHECK(c.ui.page==PageId::Mixer&&c.track().repeat&&c.track().repeat_rate==rate,"setup BACK retains live repeat state");
+        open_track_actions(c);c.ui.track_action=1;tap_setup(SurfaceButton::TopRight);
+        TRACK_CHECK(c.ui.track_types&&c.track().repeat_rate==rate,"setup SELECT opens types without changing repeat rate");
+        c.back();c.back();c.ui=UiState{};c.project.tracks[0]=Track{};c.edits.clear();
+    }
     TRACK_CHECK(preset_index(4,4)==0&&preset_index(-1,4)==3,"preset boundaries wrap both ways");
     TRACK_CHECK(preset_index(13,4)==1&&preset_index(-9,4)==3,"accelerated preset turns wrap modulo count");
     TRACK_CHECK(preset_index(1,0)==0&&preset_index(-1,1)==0,"empty and single-item preset lists stay safe");
@@ -101,7 +122,7 @@ inline int track_workflow_check() {
     {
         auto tap_tools=[&](SurfaceButton button){for(bool down:{true,false}){SurfaceEvent e;e.input.kind=SurfaceInput::Kind::Button;e.input.index=uint8_t(button);e.input.pressed=down;shell.surface(e,2000+checks);}};
         c.ui.track=0;auto& t=c.project.tracks[0];t.engine=EngineKind::Plugin;t.plugin=0;
-        c.ui.page=PageId::Stage;stage_go(c.ui,0,1);c.ui.plugin_row[0]=7;
+        c.ui.page=PageId::Stage;stage_go(c.ui,EngineKind::Plugin,StageKind::PluginEdit);c.ui.plugin_row[0]=7;
         c.ui.plugin_panel.entry=0;c.ui.plugin_panel.status=PluginStatus::Ready;c.ui.plugin_panel.layout_revision=1;
         std::snprintf(c.ui.plugin_panel.name,sizeof(c.ui.plugin_panel.name),"Rhythmer Kit");
         tap_tools(SurfaceButton::WheelPush);
@@ -114,7 +135,7 @@ inline int track_workflow_check() {
         TRACK_CHECK(c.ui.page==PageId::Stage&&c.ui.sound_tools_track==-1,"external plug-in Push keeps native behavior");
         c.ui.plugin_panel.layout_revision=1;stage_go(c.ui,0,0);tap_tools(SurfaceButton::WheelPush);
         TRACK_CHECK(c.ui.page==PageId::Stage&&c.ui.sound_tools_track==-1,"PRESETS Push is not intercepted by tools");
-        stage_go(c.ui,0,1);
+        stage_go(c.ui,EngineKind::Plugin,StageKind::PluginEdit);
         c.ui.plugin_panel.entry=0;c.ui.plugin_panel.status=PluginStatus::Ready;c.ui.plugin_panel.layout_revision=1;
         std::snprintf(c.ui.plugin_panel.name,sizeof(c.ui.plugin_panel.name),"Sophie");
         tap_tools(SurfaceButton::WheelPush);TRACK_CHECK(c.ui.page==PageId::Edit&&c.ui.edit_row[0]==2,"single sound EDIT Push reaches SAVE");
@@ -129,11 +150,14 @@ inline int track_workflow_check() {
     for(unsigned n=0;n<pattern_count;++n){Event e;e.tick=n;e.key=uint8_t(36+n%60);c.patterns.at[0][n].events={e};}
     auto before=c.patterns.at[0];
     auto patterns_kept=[&]{return c.patterns.at[0]==before;};
-    c.open(PageId::Tracks);tracks_page.push(c);
+    c.open(PageId::Stage);offer_new_track(c);
     TRACK_CHECK(c.ui.page==PageId::Stage && patterns_kept(),"used track encoder still opens its sound");
-    c.open(PageId::Tracks);
-    tracks_page.soft(c,0);
-    TRACK_CHECK(c.ui.page==PageId::TrackActions,"TRACKS exposes actions");
+    c.open(PageId::Mixer);menu_open(c);
+    std::array<MenuItem,menu_here_max> setup_items{};auto setup_count=menu_here(c.project,c.ui,setup_items);
+    unsigned setup_at=setup_count;for(unsigned i=0;i<setup_count;++i)if(setup_items[i].job==MenuJob::TrackSetup)setup_at=i;
+    TRACK_CHECK(setup_at<setup_count,"new Mixer HERE exposes TRACK SETUP");
+    c.ui.menu=menu_here_view;c.ui.menu_row=uint8_t(setup_at);menu_button(c,SurfaceButton::WheelPush);
+    TRACK_CHECK(c.ui.page==PageId::TrackActions,"TRACK SETUP remains reachable from its new menu entry");
     c.ui.track_action=1;track_actions_page.push(c);
     TRACK_CHECK(c.ui.track_types,"type submenu");
     c.back();TRACK_CHECK(!c.ui.track_types && c.ui.page==PageId::TrackActions,"Back leaves submenu first");
@@ -145,12 +169,12 @@ inline int track_workflow_check() {
     c.redo();TRACK_CHECK(c.track().engine==EngineKind::Sampler && patterns_kept(),"type redo");
     change_track_type(c,EngineKind::None);TRACK_CHECK(!c.track().used() && patterns_kept(),"empty retains patterns");
     TRACK_CHECK(c.ui.page==PageId::Stage && c.ui.new_for==0 && c.ui.new_pick==uint8_t(NewType::Plugin),"intentional EMPTY opens native type carousel");
-    c.open(PageId::Tracks);tracks_page.push(c);
+    c.open(PageId::Stage);offer_new_track(c);
     TRACK_CHECK(c.ui.page==PageId::Stage && c.ui.new_for==0 && patterns_kept(),"intentional EMPTY encoder opens type selection, not actions");
     c.ui.page=PageId::Edit;edit_page.push(c);
     TRACK_CHECK(c.ui.page==PageId::Stage && c.ui.new_for==0 && patterns_kept(),"EMPTY stranded on Edit opens type selection");
-    c.open(PageId::Tracks);tracks_page.soft(c,0);
-    TRACK_CHECK(c.ui.page==PageId::TrackActions,"EMPTY actions still require B1");
+    c.open(PageId::Tracks);open_track_actions(c);
+    TRACK_CHECK(c.ui.page==PageId::TrackActions,"EMPTY has a separate TRACK SETUP entry");
     c.open(PageId::Stage);
     TRACK_CHECK(!new_track_lock(c,SurfaceButton::Minus,true),"empty track permits Undo");
     TRACK_CHECK(!new_track_lock(c,SurfaceButton::TopMiddle,true) && !new_track_lock(c,SurfaceButton::TopRight,true),"visible KIT/MIDI empty-track buttons are enabled");
@@ -228,7 +252,8 @@ inline int track_workflow_check() {
         auto entry=c.track().plugin;auto old_ref=c.project.plugins[entry];auto old_state=rack.states()[entry];
         c.open_plugin_presets(entry);TRACK_CHECK(c.ui.page==PageId::PluginPresets,"native preset list opens from Stage");
         plugin_presets_page.soft(c,1);TRACK_CHECK(c.ui.page==PageId::Plugins,"preset list exposes replacement");
-        c.ui.plugin_replace=true;c.choose_plugin(*second);TRACK_CHECK(wait() && c.ui.page==PageId::Stage && c.ui.back_depth==0 && patterns_kept(),"replacement lands at selected track");
+        auto replacement_history=c.edits.size();c.ui.plugin_replace=true;c.choose_plugin(*second);
+        TRACK_CHECK(c.edits.size()==replacement_history+1,"instrument replacement commits exactly one undo step");TRACK_CHECK(wait() && c.ui.page==PageId::Stage && c.ui.back_depth==0 && patterns_kept(),"replacement lands at selected track");
         c.undo();bool undo_ready=wait();auto restored_state=rack.states()[entry];
         if(!undo_ready || std::strcmp(c.project.plugins[entry].path,old_ref.path) || restored_state!=old_state){
             std::fprintf(stderr,"BEFORE %.180s\nAFTER %.180s\n",std::string(old_state.begin(),old_state.end()).c_str(),std::string(restored_state.begin(),restored_state.end()).c_str());
@@ -255,13 +280,13 @@ inline int track_workflow_check() {
         c.plugins=nullptr;
     }else {std::fprintf(stderr,"TRACK_WORKFLOW: missing real plugin card fixture\n");return 2;}
     // Empty tracks retain their carousel but can reach MIX, in either key order.
-    {EngineHost h;Shell s(h);auto& x=s.context();for(auto& t:x.project.tracks)t=Track{};
+    {auto owned_host=std::make_unique<EngineHost>();auto& h=*owned_host;Shell s(h);auto& x=s.context();for(auto& t:x.project.tracks)t=Track{};
      x.ui.track=0;x.ui.page=PageId::Stage;offer_new_track(x);
      auto button=[&](SurfaceButton b,bool down){SurfaceEvent e;e.input.kind=SurfaceInput::Kind::Button;e.input.index=uint8_t(b);e.input.pressed=down;s.surface(e,3000);};
      for(bool reversed:{false,true}){
        x.ui.page=PageId::Stage;auto first=reversed?SurfaceButton::KnobFx:SurfaceButton::PadFx;auto second=reversed?SurfaceButton::PadFx:SurfaceButton::KnobFx;
        button(first,true);button(second,true);button(first,false);button(second,false);
-       TRACK_CHECK(x.ui.page==PageId::Tracks,"all-empty MIX chord works in either order");
+       TRACK_CHECK(x.ui.page==PageId::Mixer,"all-empty MIX chord works in either order");
        TRACK_CHECK(!x.track().used()&&!x.ui.pad_fx_down&&!x.ui.knob_fx_down&&!x.ui.fx_chord_used,"MIX creates no track and leaves no held keys");
      }
      for(auto key:{SurfaceButton::PadFx,SurfaceButton::KnobFx}){
@@ -270,7 +295,7 @@ inline int track_workflow_check() {
      }
     }
     // Shift + Push always cancels Ask dialogs; ordinary confirmations remain.
-    {EngineHost h;Shell s(h);auto& x=s.context();x.ui.track=0;x.load_sound(0,EngineKind::Midi,0);
+    {auto owned_host=std::make_unique<EngineHost>();auto& h=*owned_host;Shell s(h);auto& x=s.context();x.ui.track=0;x.load_sound(0,EngineKind::Midi,0);
      Event note;note.key=60;x.patterns.at[0][0].events={note};auto kept=x.patterns.at[0];auto history=x.edits.size();
      auto button=[&](SurfaceButton b,bool down){SurfaceEvent e;e.input.kind=SurfaceInput::Kind::Button;e.input.index=uint8_t(b);e.input.pressed=down;s.surface(e,4000);};
      for(unsigned k=unsigned(UiState::Ask::EraseKeyEvents);k<=unsigned(UiState::Ask::Unfreeze);++k)for(int pick:{0,2}){

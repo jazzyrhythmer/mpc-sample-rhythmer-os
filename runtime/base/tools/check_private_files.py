@@ -24,9 +24,13 @@ PATTERNS = {
 
 # Images a page of the docs shows (screenshots, diagrams) are binary by nature:
 # allowed under a docs/images/ folder when they really are one of these formats,
-# still under the size limit and scanned like any other file.
-DOC_IMAGE = re.compile(rb'(?:^|/)docs/images/.+\.(?:png|jpe?g|gif|webp)$', re.IGNORECASE)
+# still under the size limit and scanned like any other file. A worked example
+# under docs/examples/ (a plug-in skin) may hold images and its TrueType or
+# OpenType font the same way.
+DOC_IMAGE = re.compile(rb'(?:^|/)docs/(?:images|examples)/.+\.(?:png|jpe?g|gif|webp)$', re.IGNORECASE)
 IMAGE_HEADS = (b'\x89PNG\r\n\x1a\n', b'\xff\xd8\xff', b'GIF87a', b'GIF89a')
+DOC_FONT = re.compile(rb'(?:^|/)docs/examples/.+\.(?:ttf|otf)$', re.IGNORECASE)
+FONT_HEADS = (b'\x00\x01\x00\x00', b'OTTO', b'true')
 
 
 # A kernel module is binary too: allowed as an ELF object under kernel/<name>/
@@ -50,6 +54,8 @@ def kernel_module(name, data, indexed):
 
 
 def doc_image(name, data):
+    if DOC_FONT.search(name):
+        return data.startswith(FONT_HEADS)
     if not DOC_IMAGE.search(name):
         return False
     return data.startswith(IMAGE_HEADS) or (data[:4] == b'RIFF' and data[8:12] == b'WEBP')

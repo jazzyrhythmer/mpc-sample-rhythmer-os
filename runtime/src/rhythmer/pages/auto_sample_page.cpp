@@ -3,11 +3,13 @@
 // AUTO SAMPLE (shell/auto_sample.h): Resample (Shift + Pad 11) on a plug-in
 // track. The keys from C-1 to G9 as a strip, the range sampled in the
 // track's colour, each root a mark over it. Beside: how many samples, the
-// keys, what they take on the card at most. K1-K3 a row of three, B2 the
+// keys, about how long sampling takes (once the check has played it) and what
+// they take on the card at most. K1-K3 a row of three, B2 the
 // next: KEYS (LOW, HIGH, STEP), NOTE (LAYERS, HOLD, TAIL), SOUND (TAP, LOOP,
 // LEVEL). B3 or Push SAMPLE: the roots light up as they are done, the one
 // playing blinks; under the keys its note and velocity, the note drawn as it
-// records (hold, then release), the speed, the time left and the job's bar
+// records (hold, then release), the speed (not for an instrument outside,
+// which plays in real time), the time left and the job's bar
 // with a light running along it; B1 calls it off and its files go. The pads
 // play the plug-in to try it; Minus / Plus their octave. Shift + Pad 11 again
 // closes it. Done, it goes back and the new KEYGROUP track is in hand.
@@ -27,7 +29,7 @@ const char* const rows[] {"KEYS", "NOTE", "SOUND"};
 void block(Paint& p, float x, float y, float w, const juce::String& caps, const juce::String& value, const juce::String& unit,
            juce::Colour value_colour) {
     p.text(caps, x, y, w, 12, caps_text(colour::mid));
-    float vw = p.text(value, x, y + 13, w, 24, plain(value_colour, type::value, Weight::SemiBold));
+    float vw = p.text(value, x, y + 13, w, 24, p.fit(value, plain(value_colour, type::value, Weight::SemiBold), w, type::list));
     if (unit.isNotEmpty()) p.text(unit, x + vw + 5, y + 21, w - vw - 5, 14, p.fit(unit, plain(colour::sec, type::body), w - vw - 5, type::floor));
 }
 
@@ -66,6 +68,7 @@ void draw(Paint& p, const Snapshot& s) {
     if (checking) h.left.push_back(chip(Icon::Clock, check_word, colour::ice));
     else if (sampling) h.left.push_back(pill(kind_icon, ours ? "SAMPLING " + juce::String(std::min<unsigned>(job.through + 1, job.count)) + "/" + juce::String(job.count)
                                                             : juce::String("SAMPLING"), colour::ice));
+    else if (sheet.error[0]) h.left.push_back(chip(Icon::Warn, juce::String::fromUTF8(sheet.error).toUpperCase(), colour::amber)); // why the last run failed
     else h.left.push_back(chip(kind_icon, !a.found.heard ? "AUTO SAMPLE" : a.found.split ? "SPLIT" : a.found.kind == AutoKind::Mono ? "MONO" : drums ? "DRUMS" : "KEYS", colour::ice));
     h.right.push_back(tag_of(s, t));
     SoftKeys keys {{busy ? "CANCEL" : "BACK", busy ? "" : rows[sheet.row % 3], busy ? "" : "SAMPLE"}, -1, c,
@@ -86,6 +89,7 @@ void draw(Paint& p, const Snapshot& s) {
         const bool in = k >= a.low && k <= a.high && (!drums || found.sounds(k));
         juce::Colour fill = black(k) ? colour::quiet : colour::line;
         if (in) fill = black(k) ? c.withAlpha(0.45f) : c.withAlpha(0.8f);
+        if (!busy && int(k) == sheet.error_key) fill = colour::amber; // the key the last run failed on
         p.fill(x0 + (k - first) * kw, ky, std::max(1.0f, kw - (zoom ? 1.5f : 0.4f)), black(k) ? kh * 0.62f : kh, fill, zoom ? 2.0f : 0.0f);
     }
     // A split: a line where the upper sound starts.
@@ -100,12 +104,14 @@ void draw(Paint& p, const Snapshot& s) {
         if (playing && (s.now / 250) % 2) mark = c;
         p.fill(rx - 1.5f, ky - 9, 3, 7, mark, 1.5f);
     }
+    if (!busy && sheet.error_key >= int(first) && sheet.error_key <= int(last))
+        p.fill(x0 + (unsigned(sheet.error_key) - first + 0.5f) * kw - 1.5f, ky - 9, 3, 7, colour::amber, 1.5f);
     // Octave names under the keys: every second C (C-1, C1, C3 ...); zoomed, each C in view (11 px).
     for (unsigned k = (first + 11) / 12 * 12; k <= last; k += zoom && count <= 48 ? 12 : 24)
         p.text(juce::String(note_name(int(k))), x0 + (k - first) * kw, ky + kh + 3, 34, 12, plain(colour::mid, type::small));
 
     // Under them: what it makes, or how it goes.
-    const float y = ky + kh + 20, w = (zone::width - 2.0f * zone::pad) / 3;
+    const float y = ky + kh + 20;
     if (checking) {
         // The check's findings, a row each, ticked as each is heard; dots while it listens.
         const bool live = job.busy && job.checking && job.track == t;
@@ -127,12 +133,17 @@ void draw(Paint& p, const Snapshot& s) {
         const juce::String second = drums ? juce::String(found.sounding()) + " keys"
                                   : gliding.kind == AutoKind::Mono && gliding.glide > 0 ? juce::String(int(std::lround(gliding.glide * 1000))) + " ms"
                                   : juce::String("None");
-        const juce::String accent = found.accent ? juce::String::fromUTF8("vel \xe2\x89\xa5 ") + juce::String(int(found.accent)) : juce::String("None");
+        // Velocity: how many layers the tone needs (an accent's velocity with them), or one where the hits differ in
+        // level only (Velocity follows it), or not even that.
+        const juce::String layered = juce::String(int(found.layers)) + " layers";
+        const juce::String velocity = found.layers > 1 ? (found.accent ? "Accent at " + juce::String(int(found.accent)) + ", " + layered : "Tone, " + layered)
+                                    : found.accent ? "Accent at " + juce::String(int(found.accent))
+                                    : found.velocity > 0 && !drums ? juce::String("Level only") : juce::String("Same");
         const juce::String each = found.accent ? none : found.takes > 1 ? juce::String::fromUTF8("Varies \xc3\x97") + juce::String(int(found.takes)) : juce::String("Same");
         const juce::String hold = drums ? none : found.split ? held_of(under, true) + ", " + held_of(over, true) : held_of(under, false);
-        const juce::String caps[] {"TYPE", second_cap, "HOLD", "ACCENT", "EACH HIT"};
-        const juce::String values[] {type, second, hold, accent, each};
-        const unsigned heard_at[] {1, 2, 2, 3, 4}; // the check's step each is heard by
+        const juce::String caps[] {"TYPE", second_cap, "HOLD", "VELOCITY", "EACH HIT"};
+        const juce::String values[] {type, second, hold, velocity, each};
+        const unsigned heard_at[] {1, 2, 2, 4, 4}; // the check's step each is heard by (the layers once the takes are known)
         // Rows from just under the keys down past the knob strip (empty while it checks): five of them.
         const float ry = ky + kh + 16, rh = 15, gap = 3, rw = zone::width - 2.0f * zone::pad;
         for (unsigned i = 0; i < 5; ++i) {
@@ -172,11 +183,14 @@ void draw(Paint& p, const Snapshot& s) {
             p.fill(ix + b * step, cy - a, std::max(1.0f, step - 0.6f), 2 * a, bar, 0);
         }
         if (live) p.fill(std::min(ix + count * step, ix + iw - 1), by + 4, 1.5f, bh - 8, colour::text);
-        // Speed and time left on one line, then the job's bar with a light running along what is done.
+        // Speed and time left on one line, then the job's bar with a light running along what is done. An
+        // instrument outside plays in real time, so it has no speed.
         const float fy = by + bh + 6;
-        float vw = p.text(ours && job.times_real > 0 ? juce::String::fromUTF8("\xc3\x97") + juce::String(job.times_real, 1) : dash,
-                          x0, fy, 70, 16, plain(colour::ice, type::list, Weight::SemiBold));
-        p.text("SPEED", x0 + vw + 6, fy, 60, 16, caps_text(colour::mid));
+        if (!outside) {
+            float vw = p.text(ours && job.times_real > 0 ? juce::String::fromUTF8("\xc3\x97") + juce::String(job.times_real, 1) : dash,
+                              x0, fy, 70, 16, plain(colour::ice, type::list, Weight::SemiBold));
+            p.text("SPEED", x0 + vw + 6, fy, 60, 16, caps_text(colour::mid));
+        }
         const juce::String left = ours && job.through ? clock(job.seconds_left) : dash;
         const float lw = p.width("LEFT", caps_text(colour::mid));
         p.text("LEFT", zone::width - zone::pad - lw, fy, lw, 16, caps_text(colour::mid));
@@ -194,13 +208,22 @@ void draw(Paint& p, const Snapshot& s) {
             }
         }
     } else {
+        // Four across, each as wide as its longest (Rubik, measured): SAMPLES "512 128 x 4", KEYS "C-1-G9", TIME
+        // "12:30", CARD "<= 120 MB".
+        const float sw = 84, kw4 = 78, tw = 64, cw = zone::width - 2.0f * zone::pad - sw - kw4 - tw;
         const unsigned per = layers * takes;
-        block(p, x0, y, w, drums ? "SOUNDS" : "SAMPLES", juce::String(drums ? unsigned(roots.size()) : samples),
+        block(p, x0, y, sw, drums ? "SOUNDS" : "SAMPLES", juce::String(drums ? unsigned(roots.size()) : samples),
               drums || per < 2 ? juce::String() : juce::String(roots.size()) + juce::String::fromUTF8(" \xc3\x97 ") + juce::String(per), colour::text);
-        block(p, x0 + w, y, w, "KEYS", juce::String(note_name(a.low)) + juce::String::fromUTF8("\xe2\x80\x93") + juce::String(note_name(a.high)), "", colour::text);
-        // At most: each note its hold and its whole tail, 24-bit stereo at the device's rate.
+        block(p, x0 + sw, y, kw4, "KEYS", juce::String(note_name(a.low)) + juce::String::fromUTF8("\xe2\x80\x93") + juce::String(note_name(a.high)), "", colour::text);
+        // About how long it takes, at the speed the check played it; a dash until the check has heard it.
+        const float expected = a.seconds_expected();
+        block(p, x0 + sw + kw4, y, tw, "TIME", expected > 0 ? clock(expected) : juce::String::fromUTF8("\xe2\x80\x94"), "", colour::text);
+        // At most: each note its hold and its whole tail, 24-bit stereo at the device's rate (a mono sound takes half).
+        // From 1000 MB on, in GB.
         const double mb = double(samples) * (a.hold_most() + a.tail) * std::max(1u, s.audio_rate) * 6.0 / (1024.0 * 1024.0);
-        block(p, x0 + 2 * w, y, w, "CARD", juce::String::fromUTF8("\xe2\x89\xa4 ") + (mb >= 10 ? juce::String(int(std::lround(mb))) : juce::String(mb, 1)), "MB", colour::text);
+        const double room = mb >= 1000 ? mb / 1024.0 : mb;
+        block(p, x0 + sw + kw4 + tw, y, cw, "CARD", juce::String::fromUTF8("\xe2\x89\xa4 ") + (room >= 10 ? juce::String(int(std::lround(room))) : juce::String(room, 1)),
+              mb >= 1000 ? "GB" : "MB", colour::text);
         // What the check heard, under them: the glide, the layers split at the accent, the takes.
         const AutoZone side = a.found.kind == AutoKind::Mono || !a.found.split ? a.found.zone(0) : a.found.upper; // a split's mono side
         const bool mono = side.kind == AutoKind::Mono, loops = a.loops_any();
@@ -222,7 +245,7 @@ void draw(Paint& p, const Snapshot& s) {
                 }
             }
         }
-        if (a.found.heard && (mono || a.found.accent || takes > 1 || loops)) {
+        if (a.found.heard && (mono || a.found.accent || takes > 1 || loops || a.found.sweep_count)) {
             const float sy = y + 42, sh = 20, sw = zone::width - 2.0f * zone::pad;
             p.fill(x0, sy, sw, sh, colour::panel, 5);
             float x = x0 + 6;
@@ -242,14 +265,32 @@ void draw(Paint& p, const Snapshot& s) {
                 x += 16;
                 x += p.text(juce::String::fromUTF8("TAKES \xc3\x97") + juce::String(takes), x, sy, 90, sh, caps_text(colour::text)) + 12;
             }
-            if (a.found.accent) { // the velocity layers along 0-127, the accent's in amber
-                const float right = x0 + sw - 6, lw = p.width("ACCENT", caps_text(colour::amber));
+            // VEL: the velocity layers along 0-127. A bar per hit of the check's sixteen, as tall as its tone (its
+            // brightness over the dullest hit's, an octave the whole height at most), the layers in turn full and
+            // faint with a gap between; the accent's in amber, ACCENT at the end.
+            const unsigned hits = a.found.sweep_count;
+            const float right = x0 + sw - 6, lw = a.found.accent ? p.width("ACCENT", caps_text(colour::amber)) : 0.0f;
+            const float bx = x + 26, bw = right - (lw > 0 ? lw + 6 : 0.0f) - bx;
+            if (hits && bw >= 24) { // room for sixteen bars a pixel and a half wide
                 p.text("VEL", x, sy, 24, sh, caps_text(colour::mid));
-                const float bx = x + 26, bw = std::max(20.0f, right - lw - 6 - bx);
-                const float split = bx + bw * float(a.found.accent) / 127.0f;
-                p.fill(bx, sy + sh / 2 - 3, std::max(1.0f, split - bx - 1), 6, c.withAlpha(0.6f), 3);
-                p.fill(split + 1, sy + sh / 2 - 3, std::max(1.0f, bx + bw - split - 1), 6, colour::amber, 3);
-                p.text("ACCENT", right - lw, sy, lw, sh, caps_text(colour::amber));
+                float dull = 0, bright = 0;
+                for (unsigned i = 0; i < hits; ++i)
+                    if (const float b = a.found.sweep_bright[i]; b > 0) { dull = dull > 0 ? std::min(dull, b) : b; bright = std::max(bright, b); }
+                const float octaves = dull > 0 && bright > dull ? std::max(1.0f, std::log2(bright / dull)) : 1.0f;
+                unsigned layer = 0, before = 0;
+                for (unsigned i = 0; i < hits; ++i) {
+                    const unsigned v = a.found.sweep_velocity[i], from = i ? a.found.sweep_velocity[i - 1] : 0;
+                    while (layer + 1 < layers && v > a.velocity(layer)) ++layer;
+                    const bool gap = i && layer != before;
+                    before = layer;
+                    const float b = a.found.sweep_bright[i];
+                    const float tone = dull > 0 && b > 0 ? std::clamp(std::log2(b / dull) / octaves, 0.0f, 1.0f) : 0.0f;
+                    const float l = bx + bw * float(from) / 127.0f + (gap ? 2.5f : 0.5f), r = bx + bw * float(v) / 127.0f - 0.5f;
+                    const float h = 3 + (sh - 8) * tone;
+                    const juce::Colour ink = a.found.accent && v >= a.found.accent ? colour::amber : c;
+                    p.fill(l, sy + sh - 4 - h, std::max(1.0f, r - l), h, layer % 2 ? ink.withAlpha(0.42f) : ink, 1);
+                }
+                if (lw > 0) p.text("ACCENT", right - lw, sy, lw, sh, caps_text(colour::amber));
             }
         }
     }

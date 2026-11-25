@@ -1,0 +1,1 @@
+RHYTHMER OS manual diagrams and UI renders by jazzy rhythmer. AGPL-3.0-only; based on the credited Melodee user interface. Device names identify their owners and imply no endorsement. PNGs are development renders, not hardware captures.

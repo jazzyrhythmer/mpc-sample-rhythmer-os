@@ -21,6 +21,7 @@
 #include <linux/module.h>
 #include <linux/property.h>
 #include <linux/spi/spi.h>
+#include <linux/version.h>
 #include <video/mipi_display.h>
 
 #include <drm/drm_atomic_helper.h>
@@ -107,7 +108,10 @@ static const struct drm_driver panel_driver = {
 	.debugfs_init		= mipi_dbi_debugfs_init,
 	.name			= "sample-base-panel",
 	.desc			= "MPC Sample panel, portrait",
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
+	/* Removed from struct drm_driver in 6.14 (firmware 1.4's 6.18 has none). */
 	.date			= "20261112",
+#endif
 	.major			= 1,
 	.minor			= 0,
 };
