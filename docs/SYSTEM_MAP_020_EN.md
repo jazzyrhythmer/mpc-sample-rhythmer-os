@@ -1,6 +1,6 @@
 # RHYTHMER OS 0.3.0 — Projects, tracks and patterns
 
-![System structure](../images/rhythmer/os-structure.png)
+![System structure](../runtime/docs/images/rhythmer/os-structure.png)
 
 ## The four things you select
 

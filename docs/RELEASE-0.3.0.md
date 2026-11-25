@@ -3,7 +3,7 @@
 
 **24 engine entries · 69 complete kits · MPC Sample 1.4 support.**
 
-[![RHYTHMER OS 0.3.0 release film](assets/preview/update-030.jpg)](https://jazzyrhythmer.github.io/mpc-sample/#update-030)
+[![RHYTHMER OS 0.3.0 release film](../assets/preview/update-030.jpg)](https://jazzyrhythmer.github.io/mpc-sample/#update-030)
 
 Amino adds wavetable synthesis with 324 original presets. Fizzik adds physical-modeling synthesis with 31 original presets. There are 33 new kits: 32 from Weird Dreams’ original banks and one 16-voice KrautDrums kit.
 

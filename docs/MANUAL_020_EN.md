@@ -14,23 +14,23 @@ Original preset names are retained. Rhythmer Kit, Acid and Break are integrated 
 
 ### Amino and Fizzik
 
-![Amino: original PD Wave Drift preset](../images/rhythmer/030-amino.png)
+![Amino: original PD Wave Drift preset](../runtime/docs/images/rhythmer/030-amino.png)
 
-![Fizzik: original StarlightPad preset](../images/rhythmer/030-fizzik.png)
+![Fizzik: original StarlightPad preset](../runtime/docs/images/rhythmer/030-fizzik.png)
 
 Load either engine on a Plugin track. On PRESETS, turn the encoder to browse; push / LOAD to choose the original program. PLAY a note to hear it, and use EDIT for the source controls. Amino groups layers, oscillators, filter, envelopes, modulation and FX; Fizzik groups its exciter, two resonators, envelopes, modulation and FX. These source parameters retain their original sound behavior.
 
 ### The added kits
 
-![Weird Dreams: a complete sixteen-pad kit](../images/rhythmer/030-weird-dreams.png)
+![Weird Dreams: a complete sixteen-pad kit](../runtime/docs/images/rhythmer/030-weird-dreams.png)
 
-![KrautDrums: all sixteen original voices](../images/rhythmer/030-krautdrums.png)
+![KrautDrums: all sixteen original voices](../runtime/docs/images/rhythmer/030-krautdrums.png)
 
 Choose a complete kit in Rhythmer Kit PRESETS. PAD SOURCE changes one selected pad; it does not load a full kit. Save an edited kit as a User Kit before switching factory kits.
 
 ## Essential controls
 
-![Essential button combinations](../images/rhythmer/essential-controls.png)
+![Essential button combinations](../runtime/docs/images/rhythmer/essential-controls.png)
 
 **Push** means press and release the large rotary encoder. **Turn** means rotate it. **B1 / B2 / B3** are the three buttons above the screen, from left to right. **K1 / K2 / K3** are the three knobs below it.
 
@@ -53,7 +53,7 @@ A single PAD BANK tap changes the pad bank. Holding it while selecting a track d
 
 ## System structure
 
-![Projects, tracks, patterns and sequences](../images/rhythmer/os-structure.png)
+![Projects, tracks, patterns and sequences](../runtime/docs/images/rhythmer/os-structure.png)
 
 ### The four things you select
 
@@ -98,7 +98,7 @@ A first install starts in Basic. Settings → FEATURES = FULL shows MIDI/Audio a
 
 ### Choose the screen for the task
 
-![Hold PAD BANK and tap a pad to select its track](../images/rhythmer/020-padbankheld.png)
+![Hold PAD BANK and tap a pad to select its track](../runtime/docs/images/rhythmer/020-padbankheld.png)
 
 | Screen | What the pads do | Use it for |
 | --- | --- | --- |
@@ -115,7 +115,7 @@ If a pad changes a pattern number instead of playing a sound, you are on PATTERN
 
 ## 3. Start a project and add an instrument
 
-![Track type cards: choose the role of the selected empty track](../images/rhythmer/020-tracktypes.png)
+![Track type cards: choose the role of the selected empty track](../runtime/docs/images/rhythmer/020-tracktypes.png)
 
 A normal NEW project loads **Rhythmer Kit / K-WASUB / 909** on track 1. Opening a saved project keeps its saved instruments. To start with an empty kit instead: **SHIFT + Pad 16 → B3 NEW → B2 EMPTY** on the confirmation. Do this only when you intend to start a new project.
 
@@ -143,7 +143,7 @@ An intentionally empty **Sample Kit** is not the same as an EMPTY track. On its 
 
 ## 4. Replace an instrument or change track type
 
-![TRACK SETUP: replace an instrument, change type or delete separately](../images/rhythmer/020-trackactions.png)
+![TRACK SETUP: replace an instrument, change type or delete separately](../runtime/docs/images/rhythmer/020-trackactions.png)
 
 **Start:** select the target track, then press **PAD FX + KNOB FX → hold encoder → HERE → TRACK SETUP**.
 
@@ -161,9 +161,9 @@ You can also open an instrument's preset list and press **B2 PLUG-INS**, or pres
 
 ## 5. Find and load presets
 
-![Rhythmer Kit: kit name, selected pad and whole-kit filter](../images/rhythmer/020-kit-home.png)
+![Rhythmer Kit: kit name, selected pad and whole-kit filter](../runtime/docs/images/rhythmer/020-kit-home.png)
 
-![FM-106: original A11 Brass preset](../images/rhythmer/020-fm106-home.png)
+![FM-106: original A11 Brass preset](../runtime/docs/images/rhythmer/020-fm106-home.png)
 
 1. Select the plug-in track and press **SAMPLE**.
 2. Press **B1** until its **PRESETS** page is selected. The engine and current preset name are shown.
@@ -177,9 +177,9 @@ A normal instrument plays **one sound across pitches**. It does not assign a dif
 
 ## 6. Edit the sound, then save a reusable preset
 
-![FMini-1: source sound-design controls](../images/rhythmer/020-fmini-edit.png)
+![FMini-1: source sound-design controls](../runtime/docs/images/rhythmer/020-fmini-edit.png)
 
-![User Sound: choose a slot and save](../images/rhythmer/020-fmini-save.png)
+![User Sound: choose a slot and save](../runtime/docs/images/rhythmer/020-fmini-save.png)
 
 
 
@@ -213,11 +213,11 @@ Rhythmer Kit includes 32 Weird Dreams kits made by pairing its 64 original eight
 
 ## 7. Use Rhythmer Kit
 
-![User Kit: choose a slot and save the complete kit](../images/rhythmer/020-kit-save.png)
+![User Kit: choose a slot and save the complete kit](../runtime/docs/images/rhythmer/020-kit-save.png)
 
-![Rhythmer Kit: selected pad sound controls](../images/rhythmer/020-kit-edit.png)
+![Rhythmer Kit: selected pad sound controls](../runtime/docs/images/rhythmer/020-kit-edit.png)
 
-![Rhythmer Kit: choose a pad engine and sound](../images/rhythmer/020-kit-source.png)
+![Rhythmer Kit: choose a pad engine and sound](../runtime/docs/images/rhythmer/020-kit-source.png)
 
 Load **Rhythmer Kit** from the top of the plug-in list. It has **69 complete factory kits**, with pads 1–16 filled. Start with bank A.
 
@@ -247,11 +247,11 @@ Pad mute blocks new notes from the pads, sequencer and incoming MIDI; existing r
 
 ## 8. Load samples or an MPC kit
 
-![Sample browser: choose and preview a file for the selected pad](../images/rhythmer/020-samplespreview.png)
+![Sample browser: choose and preview a file for the selected pad](../runtime/docs/images/rhythmer/020-samplespreview.png)
 
 ### Load a file onto one pad
 
-![Empty sample pad: push to load; SAMPLE SELECT browses files and SAMPLE RECORD records input](../images/rhythmer/020-empty-sample-pad.png)
+![Empty sample pad: push to load; SAMPLE SELECT browses files and SAMPLE RECORD records input](../runtime/docs/images/rhythmer/020-empty-sample-pad.png)
 
 1. Select a **Drum / Sample Kit** track. Press **SAMPLE** and hit the destination pad.
 2. Press **SAMPLE SELECT**. Check the destination track/pad in the browser header.
@@ -269,9 +269,9 @@ On the native sample track, press **B1/B2/B3 repeatedly until the required capti
 
 ## 9. Record and play patterns
 
-![PATTERNS: set length, quantise and swing](../images/rhythmer/020-patterns.png)
+![PATTERNS: set length, quantise and swing](../runtime/docs/images/rhythmer/020-patterns.png)
 
-![Recording: enter notes on the selected track](../images/rhythmer/020-recordseq.png)
+![Recording: enter notes on the selected track](../runtime/docs/images/rhythmer/020-recordseq.png)
 
 A track's **pattern** stores its notes and supported motion. A **sequence** launches its numbered pattern across tracks. Track 1 pattern 1 and track 2 pattern 1 are different patterns.
 
@@ -284,17 +284,17 @@ A track's **pattern** stores its notes and supported motion. A **sequence** laun
 
 If pads switch patterns, return to SAMPLE before recording. If you hear no click, use TAP TEMPO's click controls; you can also enable the count-in with **SHIFT + Pad 4**. Use **SHIFT + SEQ** for Step Edit, or the sequence editor's Roll page to correct notes. Read the editor's current header to confirm the track and pattern.
 
-On **SEQUENCES**, pad 1 launches pattern 1 on all tracks. A track with no notes in that sequence is silent. Use **PATTERNS** when you want to change just one track. ![MOTION: edit recorded parameter changes](../images/rhythmer/020-motion.png)
+On **SEQUENCES**, pad 1 launches pattern 1 on all tracks. A track with no notes in that sequence is silent. Use **PATTERNS** when you want to change just one track. ![MOTION: edit recorded parameter changes](../runtime/docs/images/rhythmer/020-motion.png)
 
-![MOD: connect a project modulator to a target](../images/rhythmer/020-modlfo.png)
+![MOD: connect a project modulator to a target](../runtime/docs/images/rhythmer/020-modlfo.png)
 
 Full exposes Motion/Mod/Macro; B3 cycles them and SHIFT + B3 ADD adds a supported target. A plug-in's internal LFO and the project's MOD page are different systems.
 
 ## 10. Generate notes without losing the wrong track
 
-![GEN main menu: check the target tracks before applying](../images/rhythmer/020-gen-group-0-main.png)
+![GEN main menu: check the target tracks before applying](../runtime/docs/images/rhythmer/020-gen-group-0-main.png)
 
-![GEN setup: select a four-track group and sound replacement mode](../images/rhythmer/020-gen-group-0-setup.png)
+![GEN setup: select a four-track group and sound replacement mode](../runtime/docs/images/rhythmer/020-gen-group-0-setup.png)
 
 **Entry:** select the target track → **SEQ → B1 PATTERNS → SHIFT + B3 GEN**.
 
@@ -315,7 +315,7 @@ Back returns **sub-generator → GEN main → PATTERNS**. Applying generation re
 
 ### Track GEN and Chord GEN are separate
 
-![GEN: GENERATE Tn and CHORD GEN are separate entries](../images/rhythmer/020-chord-gen-entry.png)
+![GEN: GENERATE Tn and CHORD GEN are separate entries](../runtime/docs/images/rhythmer/020-chord-gen-entry.png)
 
 **GENERATE Tn / MUTATE Tn** retain the original engine-adapted track workflow and its genre/energy/seed controls. They do not switch to Chord GEN after you have used it. A melodic part can include chords when its original genre/role calls for them. Rhythmer Kit receives the selected genre's drum part; Acid and Break retain their specialized routes.
 
@@ -332,15 +332,15 @@ Back returns **sub-generator → GEN main → PATTERNS**. Applying generation re
 7. **KEY SOURCE = PROJECT** follows the project. Changing KEY or SCALE selects **LOCAL**, affecting only generated notes. Advanced, borrowed and chromatic progressions may contain intentional non-scale tones.
 8. Choose **NEW CHORDS** and push. **MUTATE CHORDS** retains the harmonic progression and varies articulation. Undo restores the notes and generation state. Back returns to GEN.
 
-![Chord GEN page 1: genre, progression family and number of chord changes](../images/rhythmer/020-chord-gen-1.png)
+![Chord GEN page 1: genre, progression family and number of chord changes](../runtime/docs/images/rhythmer/020-chord-gen-1.png)
 
-![Chord GEN page 2: phrase bars, rhythmic density and chord complexity](../images/rhythmer/020-chord-gen-2.png)
+![Chord GEN page 2: phrase bars, rhythmic density and chord complexity](../runtime/docs/images/rhythmer/020-chord-gen-2.png)
 
-![Chord GEN page 3: energy, Block or Arp or Strum, and gate](../images/rhythmer/020-chord-gen-3.png)
+![Chord GEN page 3: energy, Block or Arp or Strum, and gate](../runtime/docs/images/rhythmer/020-chord-gen-3.png)
 
-![Chord GEN page 4: voicing, register, arp subdivision or strum spacing](../images/rhythmer/020-chord-gen-4.png)
+![Chord GEN page 4: voicing, register, arp subdivision or strum spacing](../runtime/docs/images/rhythmer/020-chord-gen-4.png)
 
-![Chord GEN page 5: follow project key and scale or select a local override](../images/rhythmer/020-chord-gen-5.png)
+![Chord GEN page 5: follow project key and scale or select a local override](../runtime/docs/images/rhythmer/020-chord-gen-5.png)
 
 CHORDS means harmonic changes across the whole phrase: 4 chords over 4 bars gives one chord per bar; 4 chords over 8 bars gives two bars per chord. PATTERN controls repeated hits within each chord rather than adding more chord changes. Start with PATTERN 0% to compare Block, Arp and Strum clearly.
 
@@ -352,7 +352,7 @@ Acid Engine, Break and Rhythmer Kit use their dedicated generators. Chord genera
 
 ## 11. Use Acid GEN
 
-![Acid GEN: Density, Accent and Slide](../images/rhythmer/020-acid-settings-0.png)
+![Acid GEN: Density, Accent and Slide](../runtime/docs/images/rhythmer/020-acid-settings-0.png)
 
 1. Load **Acid Engine** on the selected track and choose a preset, for example **SQUELCH** or **Acid Squelch**.
 2. Open **SEQ → B1 PATTERNS → SHIFT + B3 GEN → ACID GEN**.
@@ -365,7 +365,7 @@ The project key/scale is used. Seed is managed internally; there is no SEED knob
 
 ## 12. Load a Break and return to its controls
 
-![BREAK GEN: source, generation and performance entry](../images/rhythmer/020-break-menu.png)
+![BREAK GEN: source, generation and performance entry](../runtime/docs/images/rhythmer/020-break-menu.png)
 
 Use a loop that you own or can use. Know its actual length in bars; this guide starts with **2 bars**.
 
@@ -381,17 +381,17 @@ For a new rhythm, select **Straight / Genre / Random / Mutate / Tail Fill** in B
 
 ### BRK PERF: what each page does
 
-![BRK PERF 1: hold and release performance commands](../images/rhythmer/020-break-perf-0.png)
+![BRK PERF 1: hold and release performance commands](../runtime/docs/images/rhythmer/020-break-perf-0.png)
 
-![BRK PERF 2: play sixteen chops](../images/rhythmer/020-break-perf-1.png)
+![BRK PERF 2: play sixteen chops](../runtime/docs/images/rhythmer/020-break-perf-1.png)
 
-![BRK PERF 3: source A, source B and Return](../images/rhythmer/020-break-perf-2.png)
+![BRK PERF 3: source A, source B and Return](../runtime/docs/images/rhythmer/020-break-perf-2.png)
 
-![BRK PERF 4: LOOP variations](../images/rhythmer/020-break-perf-3.png)
+![BRK PERF 4: LOOP variations](../runtime/docs/images/rhythmer/020-break-perf-3.png)
 
-![BRK PERF 5: Grain controls while STRETCH is active](../images/rhythmer/020-break-perf-4.png)
+![BRK PERF 5: Grain controls while STRETCH is active](../runtime/docs/images/rhythmer/020-break-perf-4.png)
 
-![BRK PERF 6: track mix](../images/rhythmer/020-break-perf-5.png)
+![BRK PERF 6: track mix](../runtime/docs/images/rhythmer/020-break-perf-5.png)
 
 Turn the encoder to move through the six numbered pages. The caption shows your position.
 
@@ -410,9 +410,9 @@ Load A and Load B are different actions. On source B changes, the bar structure 
 
 ## 13. Mix and identify the filter/effect you are changing
 
-![MIXER: select a track and balance LEVEL, PAN and SEND A](../images/rhythmer/020-tracks.png)
+![MIXER: select a track and balance LEVEL, PAN and SEND A](../runtime/docs/images/rhythmer/020-tracks.png)
 
-![Full mode: track sends to shared buses](../images/rhythmer/020-sends.png)
+![Full mode: track sends to shared buses](../runtime/docs/images/rhythmer/020-sends.png)
 
 ### Track levels and sends A–D
 
@@ -422,7 +422,7 @@ Load A and Load B are different actions. On source B changes, the bar structure 
 4. Press **PAD BANK** to show the other mixer channels. Select the labelled bus A–D and use the **fader** for its shared return level. Press PAD BANK again for the tracks.
 5. **B1** switches SENDS and FX. **B2 EQ** and **B3 COMP** select the other mixer blocks in FULL. Turn NOTE REPEAT off to use those page buttons when its rate overlay is active.
 
-![BASIC: confirm FULL mode before opening SENDS](../images/rhythmer/020-sends-enable-full.png)
+![BASIC: confirm FULL mode before opening SENDS](../runtime/docs/images/rhythmer/020-sends-enable-full.png)
 
 **SHIFT + encoder push** cancels the confirmation. In the Mixer itself, that gesture names a selected used track; press **SAMPLE** to return to its sound. **MENU → HERE → TRACK SETUP** opens instrument/type changes. Its BACK/SELECT buttons retain their own jobs while Note Repeat continues running.
 
@@ -444,7 +444,7 @@ MIXER uses the **fader** for level. In FULL SENDS, K1–K3 are A/B/C; the second
 
 ## 14. Save, reopen and recover
 
-![Project: SAVE, OPEN and NEW](../images/rhythmer/020-project.png)
+![Project: SAVE, OPEN and NEW](../runtime/docs/images/rhythmer/020-project.png)
 
 **SAVE keeps your project. Autosave keeps a separate recovery copy.** Autosave never overwrites your manually saved project and never creates numbered projects in your normal project folder.
 
@@ -457,9 +457,9 @@ MIXER uses the **fader** for level. In FULL SENDS, K1–K3 are A/B/C; the second
 5. Enter the project name and press **B3 SAVE**. If that name already exists, **REPLACE** asks before overwriting it.
 6. Wait for **SAVED**. A failed write leaves your previous project path and unsaved changes intact.
 
-![SAVE: choose the destination folder](../images/rhythmer/020-save-folder.png)
+![SAVE: choose the destination folder](../runtime/docs/images/rhythmer/020-save-folder.png)
 
-![SAVE: enter the file name](../images/rhythmer/020-nameproject.png)
+![SAVE: enter the file name](../runtime/docs/images/rhythmer/020-nameproject.png)
 
 On a project with its own saved file, **B1 SAVE updates that same file** without asking for a folder each time. To choose a different folder or make a separate project, hold SHIFT and press **B1 SAVE AS** on the Project page. SAVE AS gives the new project its own recovery identity.
 
@@ -477,7 +477,7 @@ After about three seconds without control input, while playback, recording, prin
 
 On startup, an available last-work checkpoint offers **RECOVER** or **LATER**. To find it later: open the Project home tiles (**SAVE / OPEN / NEW**), then hold SHIFT and press **B3 RECOVERY**. Select the project recovery entry and LOAD. A recovered copy is unsaved; use SAVE, select a folder and name, and confirm any replacement before keeping it. Recovering does not overwrite your manual file. Discarded work is not automatically offered at the next startup, but its existing recovery entry remains available in RECOVERY.
 
-![RECOVERY: one entry per project](../images/rhythmer/020-recovery.png)
+![RECOVERY: one entry per project](../runtime/docs/images/rhythmer/020-recovery.png)
 
 Recovery writing uses a temporary manifest and bounded staging for its loop/take/print data. Wait for work to finish before removing the card. Recovery is not a replacement for a separate SD backup.
 

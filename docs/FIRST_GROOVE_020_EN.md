@@ -20,9 +20,9 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 1. Create an empty project
 
-![Project: SAVE, OPEN and NEW](../images/rhythmer/020-project.png)
+![Project: SAVE, OPEN and NEW](../runtime/docs/images/rhythmer/020-project.png)
 
-![New project confirmation: choose EMPTY](../images/rhythmer/020-newproject.png)
+![New project confirmation: choose EMPTY](../runtime/docs/images/rhythmer/020-newproject.png)
 
 1. Press **SHIFT + Pad 16** to open Project.
 2. Press **B3 NEW**. On its confirmation, press **B2 EMPTY**.
@@ -33,11 +33,11 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 2. Load the drum kit on track 1
 
-![Empty track: choose its type](../images/rhythmer/020-tracktypes.png)
+![Empty track: choose its type](../runtime/docs/images/rhythmer/020-tracktypes.png)
 
-![Rhythmer Kit: choose a complete kit preset](../images/rhythmer/020-kit-presets.png)
+![Rhythmer Kit: choose a complete kit preset](../runtime/docs/images/rhythmer/020-kit-presets.png)
 
-![Rhythmer Kit: kit name, selected pad and whole-kit filter](../images/rhythmer/020-kit-home.png)
+![Rhythmer Kit: kit name, selected pad and whole-kit filter](../runtime/docs/images/rhythmer/020-kit-home.png)
 
 1. Press **PAD FX + KNOB FX together** to open MIXER.
 2. Press **MENU → HERE → TRACK SETUP**, select **TRACK TYPE**, then **PLUG-IN**.
@@ -51,9 +51,9 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 3. Set tempo and the drum pattern length
 
-![Hold TAP TEMPO and turn the encoder](../images/rhythmer/020-tempo.png)
+![Hold TAP TEMPO and turn the encoder](../runtime/docs/images/rhythmer/020-tempo.png)
 
-![PATTERNS: length, quantise and swing controls](../images/rhythmer/020-patterns.png)
+![PATTERNS: length, quantise and swing controls](../runtime/docs/images/rhythmer/020-patterns.png)
 
 1. Hold **TAP TEMPO** and turn the encoder to **140 BPM**, then release it.
 2. Press **SEQ**. If an editor opens, press B1 for SEQUENCES; press B1 again for **PATTERNS**.
@@ -65,9 +65,9 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 4. Record drums
 
-![Record notes into the selected pattern](../images/rhythmer/020-recordseq.png)
+![Record notes into the selected pattern](../runtime/docs/images/rhythmer/020-recordseq.png)
 
-![Step Edit: select and edit the current pattern](../images/rhythmer/020-stepedit.png)
+![Step Edit: select and edit the current pattern](../runtime/docs/images/rhythmer/020-stepedit.png)
 
 1. Enable a count-in if useful: **SHIFT + Pad 4** toggles it.
 2. Press **SEQ RECORD**, then **PLAY**. Wait for the count-in if enabled.
@@ -80,11 +80,11 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 5. Load and record a bass on track 2
 
-![FMini-1: open the list and choose MOOG BASS](../images/rhythmer/020-fmini-presets.png)
+![FMini-1: open the list and choose MOOG BASS](../runtime/docs/images/rhythmer/020-fmini-presets.png)
 
-![Track 2: FMini-1 with MOOG BASS loaded](../images/rhythmer/020-fmini-home.png)
+![Track 2: FMini-1 with MOOG BASS loaded](../runtime/docs/images/rhythmer/020-fmini-home.png)
 
-![Hold SAMPLE to open the Keys settings](../images/rhythmer/020-sampleheldkeys.png)
+![Hold SAMPLE to open the Keys settings](../runtime/docs/images/rhythmer/020-sampleheldkeys.png)
 
 1. Hold **PAD BANK**, tap **pad 2**, release PAD BANK. Check **track 2** in the header.
 2. The empty-track type cards appear. Choose **Plugin**, then **FMini-1**. If another screen remains open, press SAMPLE first.
@@ -98,7 +98,7 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 6. Add chords on track 3
 
-![FM-106: original A11 Brass preset](../images/rhythmer/020-fm106-home.png)
+![FM-106: original A11 Brass preset](../runtime/docs/images/rhythmer/020-fm106-home.png)
 
 1. Select **track 3** with PAD BANK + pad 3.
 2. Choose Plugin → **FM-106**. Open its preset list and load **A11 Brass**.
@@ -110,9 +110,9 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ### Optional: generate the chord part instead of recording it
 
-![GEN: keep single-track generation and Chord GEN separate](../images/rhythmer/020-chord-gen-entry.png)
+![GEN: keep single-track generation and Chord GEN separate](../runtime/docs/images/rhythmer/020-chord-gen-entry.png)
 
-![Chord GEN: choose the chord progression and number of changes](../images/rhythmer/020-chord-gen-1.png)
+![Chord GEN: choose the chord progression and number of changes](../runtime/docs/images/rhythmer/020-chord-gen-1.png)
 
 1. Keep **FM-106 on track 3**, then open **SEQ → B1 PATTERNS → SHIFT + B3 GEN**.
 2. Select **CHORD GEN** and push the encoder. This is a separate entry from **GENERATE T3 / MUTATE T3**.
@@ -125,9 +125,9 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 9. To compare playing styles, set **PLAY STYLE ARP UP** and **PLAY RATE 1/8**, then **MUTATE CHORDS**. Compare **STRUM / NATURAL** the same way. Notes will be successive on a mono engine; FM-106 can play chord stacks.
 10. **B1 BACK or SHIFT + encoder click** returns to GEN; another Back returns to PATTERNS.
 
-![Chord GEN: compare Block, Arp and Strum](../images/rhythmer/020-chord-gen-3.png)
+![Chord GEN: compare Block, Arp and Strum](../runtime/docs/images/rhythmer/020-chord-gen-3.png)
 
-![Chord GEN: use the current project's key and scale](../images/rhythmer/020-chord-gen-5.png)
+![Chord GEN: use the current project's key and scale](../runtime/docs/images/rhythmer/020-chord-gen-5.png)
 
 **Which command should I use?** GENERATE T3 / MUTATE T3 keep the original engine-adapted track generator, with genre, energy and seed. CHORD GEN gives explicit control over progression, chord changes, phrase length and playing style. Using CHORD GEN never changes the meaning of GENERATE T3. GENERATE SONG can replace the whole selected four-track group and change global tempo/key/scale; do not use it for this single chord-part exercise.
 
@@ -135,9 +135,9 @@ RHYTHMER OS **0.3.0** · **4 bars · 140 BPM · C minor**. Build a drum, bass an
 
 ## 7. Balance the tracks
 
-![MIXER: select a track and balance LEVEL, PAN and SEND A](../images/rhythmer/020-tracks.png)
+![MIXER: select a track and balance LEVEL, PAN and SEND A](../runtime/docs/images/rhythmer/020-tracks.png)
 
-![Rhythmer Kit: selected pad sound controls](../images/rhythmer/020-kit-edit.png)
+![Rhythmer Kit: selected pad sound controls](../runtime/docs/images/rhythmer/020-kit-edit.png)
 
 1. Press PAD FX + KNOB FX together for **MIXER**.
 2. Select track 1, 2 or 3 using the encoder or PAD BANK + its pad.
@@ -160,9 +160,9 @@ For all four sends, press **B1 SENDS** in BASIC and choose **B3 ENABLE FULL**, o
 
 ## 8. Save and reopen
 
-![SAVE: name the project after choosing its folder](../images/rhythmer/020-nameproject.png)
+![SAVE: name the project after choosing its folder](../runtime/docs/images/rhythmer/020-nameproject.png)
 
-![OPEN: select the saved project](../images/rhythmer/020-projectlist.png)
+![OPEN: select the saved project](../runtime/docs/images/rhythmer/020-projectlist.png)
 
 1. Press STOP and finish recording or printing.
 2. Press **SHIFT + Pad 16**, release SHIFT, then press **B1 SAVE**. For this first save, choose a folder with the encoder: push enters it, SHIFT + encoder push goes up.
@@ -176,9 +176,9 @@ Automatic recovery is separate: it updates one entry for this project under Rhyt
 
 ## Optional: generate an Acid line on track 4
 
-![Acid settings 1 of 2: Density, Accent and Slide](../images/rhythmer/020-acid-settings-0.png)
+![Acid settings 1 of 2: Density, Accent and Slide](../runtime/docs/images/rhythmer/020-acid-settings-0.png)
 
-![Acid settings 2 of 2: Octaves, Base Octave and Auto Mutate](../images/rhythmer/020-acid-settings-1.png)
+![Acid settings 2 of 2: Octaves, Base Octave and Auto Mutate](../runtime/docs/images/rhythmer/020-acid-settings-1.png)
 
 1. Select track 4 → Plugin → **Acid Engine** → preset **SQUELCH**.
 2. Select pattern 1 and set the desired pattern length.
@@ -192,11 +192,11 @@ Automatic recovery is separate: it updates one entry for this project under Rhyt
 
 ## Optional: add your own Break loop on track 5
 
-![Break source browser: select the source and its bar length](../images/rhythmer/020-break-browse-open.png)
+![Break source browser: select the source and its bar length](../runtime/docs/images/rhythmer/020-break-browse-open.png)
 
-![BRK PERF 1: play sixteen chops](../images/rhythmer/020-break-perf-0.png)
+![BRK PERF 1: play sixteen chops](../runtime/docs/images/rhythmer/020-break-perf-0.png)
 
-![BRK PERF 2: hold and release performance commands](../images/rhythmer/020-break-perf-1.png)
+![BRK PERF 2: hold and release performance commands](../runtime/docs/images/rhythmer/020-break-perf-1.png)
 
 1. Put a loop you may use in the card's Samples folder. Start with a known **two-bar** loop.
 2. Select track 5 → Plugin → **Break Engine**.
