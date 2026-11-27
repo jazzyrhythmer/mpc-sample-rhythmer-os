@@ -28,6 +28,13 @@
  * and the plug-in returns its rhythmer_screen_t as an intptr_t (0: none), `plugin` being its AEffect*. The plug-in
  * finds Rhythmer by audioMaster(effect, audioMasterCanDo = 37, 0, 0, RHYTHMER_SCREEN_VST2_CANDO, 0) returning 1, and
  * asks for a draw with audioMaster(effect, audioMasterVendorSpecific = 35, RHYTHMER_SCREEN_VST2, flags, NULL, 0).
+ *
+ * Printed buttons: by default MUTE and ERASE do Rhythmer's jobs on a plug-in's page. A plug-in can take their taps
+ * while its page needs them (a list of its own with something to switch off or remove): it says which with keys()
+ * (CLAP: rhythmer_screen_host_2_t, from get_extension(RHYTHMER_SCREEN_CLAP_HOST_2); VST2: audioMaster(effect, 35,
+ * RHYTHMER_SCREEN_VST2_KEYS, keys, NULL, 0), once audioMasterCanDo(RHYTHMER_SCREEN_VST2_KEYS_CANDO) returned 1), and
+ * gets them as RHYTHMER_SCREEN_MUTE and RHYTHMER_SCREEN_ERASE inputs. MUTE held with pads still mutes, as everywhere.
+ * Plug-ins run through Rhythmer's 32-bit bridge (armv7 VST2) cannot take them yet.
  */
 #ifndef RHYTHMER_SCREEN_H
 #define RHYTHMER_SCREEN_H
@@ -41,8 +48,11 @@ extern "C" {
 
 #define RHYTHMER_SCREEN_CLAP "melodee.screen/1"
 #define RHYTHMER_SCREEN_CLAP_HOST "melodee.screen-host/1"
+#define RHYTHMER_SCREEN_CLAP_HOST_2 "rhythmer.screen-host/2" /* rhythmer_screen_host_2_t: redraw() and keys() */
 #define RHYTHMER_SCREEN_VST2 0x4D4C5343 /* 'MLSC' */
 #define RHYTHMER_SCREEN_VST2_CANDO "melodeeScreen"
+#define RHYTHMER_SCREEN_VST2_KEYS 0x4D4C534B /* 'MLSK' */
+#define RHYTHMER_SCREEN_VST2_KEYS_CANDO "melodeeScreenKeys"
 
 enum {
     RHYTHMER_SCREEN_WIDTH = 320,
@@ -61,6 +71,14 @@ enum {
     RHYTHMER_SCREEN_WHEEL = 0, /* the encoder turned: `value` detents, clockwise positive */
     RHYTHMER_SCREEN_PUSH = 1,  /* the encoder pushed and let go (held, it opens Rhythmer's MENU instead) */
     RHYTHMER_SCREEN_STEP = 2,  /* Minus (`value` -1) or Plus (+1) */
+    RHYTHMER_SCREEN_MUTE = 3,  /* MUTE tapped (pressed and let go, no pad between), while keys() has RHYTHMER_SCREEN_KEY_MUTE */
+    RHYTHMER_SCREEN_ERASE = 4, /* ERASE tapped on its own, while keys() has RHYTHMER_SCREEN_KEY_ERASE */
+};
+
+/* keys() bits: the printed buttons a plug-in's page takes */
+enum {
+    RHYTHMER_SCREEN_KEY_MUTE = 1,
+    RHYTHMER_SCREEN_KEY_ERASE = 2,
 };
 
 /* redraw() flags */
@@ -89,7 +107,7 @@ typedef struct rhythmer_screen_frame {
 } rhythmer_screen_frame_t;
 
 typedef struct rhythmer_screen_input {
-    uint32_t kind;  /* RHYTHMER_SCREEN_WHEEL, _PUSH, _STEP */
+    uint32_t kind;  /* RHYTHMER_SCREEN_WHEEL, _PUSH, _STEP, _MUTE, _ERASE */
     int32_t value;
     uint32_t shift; /* 1 while SHIFT is held */
 } rhythmer_screen_input_t;
@@ -109,6 +127,13 @@ typedef struct rhythmer_screen_host {
      * RHYTHMER_SCREEN_RUN or 0. */
     void (*redraw)(const void* host, uint32_t flags);
 } rhythmer_screen_host_t;
+
+typedef struct rhythmer_screen_host_2 {
+    void (*redraw)(const void* host, uint32_t flags); /* as in rhythmer_screen_host_t */
+    /* The printed buttons its page takes from now on: RHYTHMER_SCREEN_KEY_ bits, 0 none (they do Rhythmer's jobs).
+     * Call it when that changes, from any thread. Rhythmer lights ERASE while the page in view takes it. */
+    void (*keys)(const void* host, uint32_t keys);
+} rhythmer_screen_host_2_t;
 
 #ifdef __cplusplus
 }

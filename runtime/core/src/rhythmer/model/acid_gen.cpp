@@ -28,7 +28,7 @@ Pattern acid_generate_pattern(const Pattern& source,AcidGenSettings& s,bool muta
     for(unsigned n=0;n<count;n++)if((flags[n]&3)==1){
         Event e;e.tick=n*grid;e.key=notes[n];e.velocity=flags[n]&4?127:96;
         unsigned end=n+1;while(end<n+count&&(flags[end%count]&3)==2)++end;
-        e.length=uint16_t((end-n)*grid);
+        e.length=(end-n)*grid;
         if(flags[n]&4)e.flags|=step_accent;
         if(flags[n]&8)e.flags|=step_slide;
         out.add(e);

@@ -40,8 +40,9 @@ FONT_HEADS = (b'\x00\x01\x00\x00', b'OTTO', b'true')
 KERNEL_MODULE = re.compile(rb'(?:^|/)kernel/[^/]+/[^/]+\.ko$')
 # A module's C may be kernel code copied with its notices (kernel/uvc/), whose
 # authors' e-mail addresses stay as the kernel has them: the e-mail rule
-# skips C sources under kernel/<name>/, every other rule still applies.
-KERNEL_SOURCE = re.compile(rb'(?:^|/)kernel/[^/]+/[^/]+\.[ch]$')
+# skips C sources under kernel/<name>/, in subfolders too where the code keeps
+# its kernel paths (kernel/ksmbd/fs/smb/server/), every other rule still applies.
+KERNEL_SOURCE = re.compile(rb'(?:^|/)kernel/[^/]+/(?:[^/]+/)*[^/]+\.[ch]$')
 
 
 def kernel_module(name, data, indexed):
@@ -104,8 +105,8 @@ def main():
         if b'\0' in data and not doc_image(name, data) and not kernel_module(name, data, indexed):
             errors.append((name, 'binary data is not source text'))
         for reason, pattern in PATTERNS.items():
-            if reason == 'email address' and KERNEL_SOURCE.search(name):
-                continue # kernel authors' public addresses in the notices copied with their code
+            if reason == 'email address' and (KERNEL_SOURCE.search(name) or kernel_module(name, data, indexed)):
+                continue # kernel authors' public addresses in the notices copied with their code, and the MODULE_AUTHOR built from them
             if pattern.search(data):
                 errors.append((name, reason))
     for name, reason in errors:

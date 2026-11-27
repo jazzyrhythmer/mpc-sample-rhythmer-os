@@ -24,13 +24,13 @@ Pattern break_generate(const Pattern& source,BreakAction action,const Gen8Settin
     unsigned amount=std::min<unsigned>(s.amount,100), complexity=std::min<unsigned>(s.complexity,100);
     if(!source.length || (!amount && action!=BreakAction::Straight))return out;
     Dice rng(s.seed);
-    unsigned steps=std::min((source.length+23u)/24u,2048u);
+    unsigned steps=std::min((source.length+sixteenth_ticks-1)/sixteenth_ticks,2048u);
     if(action==BreakAction::Mutate) {
         // bs_vary: retain quarter-note anchors and all non-audio data. Never randomise an empty phrase.
         size_t fallback=out.events.size(); bool changed=false;
         for(size_t i=0;i<out.events.size();i++) {
             auto& e=out.events[i]; int old=slice_of(e.key,map);
-            if(old<0 || e.tick>=source.length || e.tick%96==0)continue;
+            if(old<0 || e.tick>=source.length || e.tick%ticks_per_quarter==0)continue;
             if(fallback==out.events.size())fallback=i;
             if(rng.get(200)>=amount)continue;
             e.key=map.slices[(unsigned(old)+1+rng.get(15))&15];changed=true;
@@ -44,10 +44,10 @@ Pattern break_generate(const Pattern& source,BreakAction action,const Gen8Settin
         // Original BS_FILL: last four/eight steps; a real slice precedes every roll.
         if(std::none_of(out.events.begin(),out.events.end(),[&](const Event& e){return e.tick<out.length&&slice_of(e.key,map)>=0;}))return out;
         unsigned count=amount>75?8:4,start=steps>count?steps-count:0;
-        uint32_t from=start*24;
+        uint32_t from=start*sixteenth_ticks;
         out.events.erase(std::remove_if(out.events.begin(),out.events.end(),[&](const Event& e){return e.tick>=from&&e.tick<out.length&&slice_of(e.key,map)>=0;}),out.events.end());
         for(unsigned i=start;i<steps;i++) {
-            Event e;e.tick=i*24;e.length=uint16_t(std::min(24u,out.length-e.tick));
+            Event e;e.tick=i*sixteenth_ticks;e.length=uint16_t(std::min(unsigned(sixteenth_ticks),out.length-e.tick));
             e.key=map.slices[(start/2)&15];e.velocity=uint8_t(80+(i-start)*5);
             e.ratchet=uint8_t(i==start?1:2+rng.get(2)*2);out.add(e);
         }
@@ -95,17 +95,17 @@ Pattern break_generate(const Pattern& source,BreakAction action,const Gen8Settin
             // Original command bank 24..31 becomes a ratchet on this slice, with no hidden prior-note state.
             if(g.fast&&complexity>40&&pos>=14)ratchet=complexity>75?4:2;
         }
-        Event e;e.tick=i*24;e.key=map.slices[slice&15];e.velocity=uint8_t(velocity);e.ratchet=uint8_t(ratchet);
-        e.length=uint16_t(std::min(24u*stride,out.length-e.tick));
+        Event e;e.tick=i*sixteenth_ticks;e.key=map.slices[slice&15];e.velocity=uint8_t(velocity);e.ratchet=uint8_t(ratchet);
+        e.length=uint16_t(std::min(sixteenth_ticks*stride,out.length-e.tick));
         // ST_TIE/continuous chops become a bounded native note length.
-        if(previous>=0)out.events[size_t(previous)].length=uint16_t(std::min<uint32_t>(65535,e.tick-out.events[size_t(previous)].tick));
+        if(previous>=0)out.events[size_t(previous)].length=e.tick-out.events[size_t(previous)].tick;
         out.add(e);previous=int(out.events.size())-1;
     }
     if(previous>=0) {
-        auto& e=out.events[size_t(previous)];e.length=uint16_t(std::min<uint32_t>(65535,out.length-e.tick));
+        auto& e=out.events[size_t(previous)];e.length=out.length-e.tick;
     }
     // Ratchets occupy their own grid cell; a later rest must not stretch a roll across the phrase.
-    for(auto& e:out.events)if(e.ratchet>1)e.length=uint16_t(std::min<unsigned>(e.length,24*stride));
+    for(auto& e:out.events)if(e.ratchet>1)e.length=uint16_t(std::min<unsigned>(e.length,sixteenth_ticks*stride));
     return out;
 }
 } // namespace rhythmer

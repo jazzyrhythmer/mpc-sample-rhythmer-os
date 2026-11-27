@@ -45,6 +45,20 @@ struct CardShareStatus {
 // disk, and which of them are mounted on the MPC now.
 struct CardVolumes { std::string disk; std::vector<StorageVolume> volumes, mounted; };
 CardVolumes find_card(const std::vector<StorageVolume>& volumes, const std::string& disk = {});
+// The folder the card's first mounted file system is at, or "".
+std::string card_folder(const CardVolumes& card);
+
+// What else gives the card to a computer while it stays the MPC's (File
+// Sharing, drivers/file_share.h). lend() refuses while it is in use, and has
+// it let go of the card before unmounting it.
+class CardUsers {
+public:
+    virtual ~CardUsers() = default;
+    virtual bool in_use() const = 0;
+    virtual void let_go() = 0;
+};
+constexpr const char* card_network_in_use = "the card is open on the computer over the network";
+
 class CardShare {
 public:
     // Paths are parameters for tests; the defaults are the MPC's.
@@ -56,6 +70,8 @@ public:
     // computer's view of it unfinished).
     bool lend();
     void take_back(bool force = false);
+    // Service thread: who else serves the card (null for none).
+    void attach(CardUsers* others) { users = others; }
     // Service thread, every pass: carries out what was asked and follows
     // the computer (connected, ejected).
     void poll();
@@ -73,6 +89,7 @@ private:
     bool mounted_here() const; // Any file system of the card in the kernel's mount table
 
     SystemServices& services;
+    CardUsers* users = nullptr;
     std::string sys, mountinfo, gadget, saved;
     CardShareStatus current;
     enum class Ask : uint8_t { None, Lend, Return, Force } asked = Ask::None;

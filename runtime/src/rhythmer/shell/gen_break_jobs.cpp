@@ -26,7 +26,7 @@ void Context::gen_break_begin(){
 void Context::gen_break_tick(){
     for(unsigned t=0;t<track_count;t++)if(project.tracks[t].break_bars&&!frozen(t))project.tracks[t].break_source=uint8_t(host.break_source_of(t));
     for(unsigned t=0;t<track_count;t++)if(project.tracks[t].break_bars&&!frozen(t)){unsigned variation=0,drift=0;if(host.break_feedback(t,ui.break_feedback_seen[t],variation,drift)){project.tracks[t].break_perf[1]=uint16_t(variation);project.tracks[t].break_perf[2]=uint16_t(drift);}}
-    unsigned bar=host.ticks()/384;
+    unsigned bar=host.ticks()/project.bar_ticks();
     if(!host.playing())acid_auto_bar=~0u;
     else if(bar!=acid_auto_bar){acid_auto_bar=bar;
         if(bar&&!host_recording()&&!host.song_playing()){
@@ -92,7 +92,7 @@ void Context::gen_break_tick(){
     }
     auto& pat=next->patterns[t.pattern];
     if(!replacing && pat.events.empty() && pat.lanes.empty() && pat.motion.empty() && pat.euclids.empty() && pat.punches.empty()){
-        pat.length=bars*384;
+        pat.length=bars*project.bar_ticks();
         BreakMap map;map.bars=bars;for(unsigned i=0;i<16;i++)map.slices[i]=uint8_t(sampler_first_note+t.bank*16+i);
         pat=break_generate(pat,BreakAction::Straight,project.gen8,map,project.tempo/10);
     }

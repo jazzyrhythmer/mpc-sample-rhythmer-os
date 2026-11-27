@@ -309,7 +309,11 @@ bool screenInput(const void* p, const rhythmer_screen_input_t* in) {
     if (in->kind == RHYTHMER_SCREEN_WHEEL && s.instrument) s.level = std::clamp(s.level + in->value * 0.01, 0.0, 1.0);
     else if (in->kind == RHYTHMER_SCREEN_WHEEL) s.gain = std::clamp(s.gain + in->value * 0.02, 0.0, 2.0);
     else if (in->kind == RHYTHMER_SCREEN_PUSH && s.instrument) s.wave = std::fmod(s.wave + 1, 3);
+    else if (in->kind == RHYTHMER_SCREEN_ERASE && s.instrument) s.level = 0;
     else return false;
+    if (s.instrument) // Push: its page takes Erase from now on; Erase (Level to 0): no longer
+        if (auto* told = static_cast<const rhythmer_screen_host_2_t*>(s.host->get_extension(s.host, RHYTHMER_SCREEN_CLAP_HOST_2)))
+            told->keys(s.host, in->kind == RHYTHMER_SCREEN_PUSH ? uint32_t(RHYTHMER_SCREEN_KEY_ERASE) : 0u);
     if (auto* told = static_cast<const rhythmer_screen_host_t*>(s.host->get_extension(s.host, RHYTHMER_SCREEN_CLAP_HOST)))
         told->redraw(s.host, RHYTHMER_SCREEN_RUN);
     if (auto* hp = static_cast<const clap_host_params*>(s.host->get_extension(s.host, CLAP_EXT_PARAMS)))

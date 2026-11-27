@@ -30,7 +30,7 @@ const char* variation_name(Variation v);
 inline bool variation_on_kit(Variation v) { return v != Variation::OctaveUp && v != Variation::OctaveDown; }
 struct VaryPlace {
     bool kit = false;           // a kit: lanes of pads, not pitches
-    unsigned bar = 384, beat = 96;
+    unsigned bar = 4 * ticks_per_quarter, beat = ticks_per_quarter;
     unsigned root = 0;          // the project's key: its root and its scale's degrees (model/scales.h)
     std::array<uint8_t, 12> degrees {};
     unsigned degree_count = 7;

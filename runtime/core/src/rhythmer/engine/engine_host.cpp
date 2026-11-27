@@ -369,7 +369,7 @@ bool EngineHost::place_at(unsigned track, uint64_t frame, int& position, uint32_
         uint32_t head = tick_head.load(std::memory_order_acquire);
         int now = position_of(track);
         if (!head || now < 0 || !playing()) return false;
-        uint32_t i = head - 1, reach = std::min(head, tick_ring_size - 16); // clear of what the writer may overwrite
+        uint32_t i = head - 1, reach = std::min(head, tick_ring_size - 512); // clear of what the writer may overwrite (a catch-up plays a sixteenth at once)
         uint64_t e = entry(i);
         int back = 0;
         while (int32_t(uint32_t(e) - f) > 0 && uint32_t(back) + 1 < reach) {
@@ -384,7 +384,10 @@ bool EngineHost::place_at(unsigned track, uint64_t frame, int& position, uint32_
         }
         if (tick_head.load(std::memory_order_acquire) != head && attempt < 3) continue; // a tick came meanwhile
         Speed sp = speed_of(speeds_now[track % track_count].load(std::memory_order_relaxed)); // a track at a speed: ticks as written
-        position = now - int(std::lround(double(back - (next ? 1 : 0)) * sp.num / sp.den));
+        const int moved = int(std::lround(double(back - (next ? 1 : 0)) * sp.num / sp.den));
+        // A track played backward was further on as written that long ago (shuffled, its step's place: near enough).
+        const bool reverse = direction_of(directions_now[track % track_count].load(std::memory_order_relaxed)) == PlayDirection::Reverse;
+        position = reverse ? now + moved : now - moved;
         ticks = uint32_t(e >> 32) + (next ? 2 : 1); // as ticks() reads just after that tick played
         return true;
     }
@@ -414,6 +417,7 @@ void EngineHost::load_track(unsigned t, const Track& track) {
     midi_all_off(t, frame_now); // what this track sent ends before it changes
     slot.plugin_entry = track.plugin;
     speeds_now[t % track_count].store(uint8_t(track.speed < speed_count ? track.speed : speed_normal), std::memory_order_relaxed);
+    directions_now[t % track_count].store(uint8_t(direction_of(track.direction)), std::memory_order_relaxed);
     select_engine(slot, track.engine);
     const auto& info = engine_info(track.engine);
     slot.base = track.params;
@@ -524,7 +528,7 @@ void EngineHost::apply(const Command& c) {
         panic_latched = false;
         if (slot.freeze && slot.freeze->deep) break; // freeze plan F2d: a deep-frozen track's pads play nothing
         if (slot.freeze) { wake(slot); slot.hand.set(c.index & 0xff); } // freeze plan F2b: a hand wakes a frozen track's engine
-        if (slot.engine && (c.index <= 127 || slot.kind == EngineKind::Sampler)) engine_note_on(slot, c.index, c.value, 1, true); // none: nothing to call
+        if (slot.engine && (c.index <= 127 || slot.kind == EngineKind::Sampler)) engine_note_on(slot, c.index, c.value, 1, {}, true); // none: nothing to call
         if (c.pattern != 1 && !hand_early) midi_note(c.track % track_count, c.index & 0xff, c.value, frame_now + block_at, -1); // a pad's note (not one from MIDI in)
         break;
     case Type::NoteOff:
@@ -931,7 +935,7 @@ void EngineHost::apply(const Command& c) {
         if(c.value>0)panic_latched=false;
         if(c.index==1){ // Break browser: audition without assigning or waking the selected track.
             break_preview_track=c.track%track_count;
-            break_preview->audition(c.pad.sample,c.pad.start,c.pad.end,c.value,-1,c.pad.own_tempo);
+            break_preview->audition(c.pad.sample,c.pad.start,c.pad.end,c.value,-1,false,c.pad.own_tempo);
             break_preview_active=break_preview->sounding(); // retain the native short choke fade on cancel/change
             break;
         }
@@ -940,7 +944,7 @@ void EngineHost::apply(const Command& c) {
         if (slot.engine == &slot.sampler) {
             EngineCall call;
             call.op = EngineCall::Op::Audition; call.a = c.pad.sample; call.b = int32_t(c.pad.start); call.c = int32_t(c.pad.end);
-            call.d = (c.value & 0xff) | int(c.index & 0xff) << 8; // velocity; the kit pad + 1 whose speed it takes (0: none)
+            call.d = (c.value & 0xff) | int(c.index & 0xff) << 8 | int(c.pad.reverse) << 16; // velocity; the kit pad + 1 whose speed it takes (0: none); backwards
             if (!keep_call(slot, call)) make_call(c.track % track_count, slot, call);
         }
         break;
@@ -1024,7 +1028,11 @@ void EngineHost::apply(const Command& c) {
         slot.sends[c.index % bus_count] = std::clamp<int>(c.value, 0, 100) / 100.0f;
         if (mods_on) mod_note(c.track % track_count, motion_send(c.index), 0, slot.mix_sends[c.index % bus_count], true);
         break;
-    case Type::Mute: slot.mute = c.value != 0; midi_silenced(); break; // Mute Notes: heard on, its notes ring (issue 27)
+    case Type::Mute: // Mute Notes: heard on, its notes ring (issue 27)
+        slot.mute = c.value != 0;
+        scene_mute_set = uint16_t(scene_mute_set & ~(1u << (c.track % track_count))); // by hand after a scene's: the hand's
+        midi_silenced();
+        break;
     case Type::Solo: slot.solo = c.value != 0; midi_silenced(); break;
     case Type::PatternData:
         if (c.data) {
@@ -1090,6 +1098,13 @@ void EngineHost::apply(const Command& c) {
         if (running && !song_mode) scene_tempo = uint16_t(std::clamp<int>(c.value, 300, 3000));
         else { global_tempo = uint16_t(std::clamp<int>(c.value, 300, 3000)); scene_tempo = 0; follow_tempo(); }
         break;
+    case Type::SceneMutes: { // the mutes a scene keeps: on the bar its patterns launch on; stopped, at once
+        const uint16_t tracks = uint16_t(c.index & ((1u << track_count) - 1));
+        scene_mute_set = uint16_t(scene_mute_set | tracks);
+        scene_mute_on = uint16_t((scene_mute_on & ~tracks) | (uint16_t(c.value) & tracks));
+        if (!running || song_mode) scene_mutes_now();
+        break;
+    }
     case Type::Play:
         panic_latched = false;
         if (running) break;
@@ -1098,6 +1113,7 @@ void EngineHost::apply(const Command& c) {
         drop_hits();
         for (auto& s : slots) { s.weighed = s.went = false; s.keys_weighed = {}; s.keys_went = {}; } // PRE and NEI start afresh
         tick_now = c.value == 1 ? 0 : c.position;
+        restart_ahead();
         arp_ticks = 0; until_arp = 0; // the repeats line up with the bar, so their swing falls with the sequencer's
         arp_origin = tick_now;         // and Seq Record writes each where it fell (roadmap P1)
         song_mode = c.value == 1; song_bar_now = c.index;
@@ -1143,6 +1159,7 @@ void EngineHost::apply(const Command& c) {
         song_mode = false;
         in_song.store(false, std::memory_order_relaxed);
         if (scene_tempo) { global_tempo = scene_tempo; scene_tempo = 0; } // roadmap P5: a scene's, still waiting for its bar: with its patterns, below
+        scene_mutes_now(); // and its mutes
         follow_lane(); // roadmap P5: the project's tempo again
         for (unsigned t = 0; t < track_count; ++t) {
             positions_now[t].store(-1, std::memory_order_relaxed);
@@ -1181,6 +1198,7 @@ void EngineHost::apply(const Command& c) {
         if (!running || song_mode) break;
         sync_stop(frame_now); // the clocks go on from the new place: Song Position and Continue
         tick_now = c.position; until_tick = 0; // the new place plays at once
+        restart_ahead();
         arp_ticks = 0; until_arp = 0; arp_origin = tick_now; // the repeats from it
         loop_restart = true;
         for (auto& s : slots) { s.start = 0; for (auto& skip : s.skips) skip.key = -1; }
@@ -1209,6 +1227,7 @@ void EngineHost::apply(const Command& c) {
         midi_silenced();
         break;
     case Type::TrackSpeed: speeds_now[c.track % track_count].store(uint8_t(std::clamp<int>(c.value, 0, int(speed_count) - 1)), std::memory_order_relaxed); break;
+    case Type::TrackDirection: directions_now[c.track % track_count].store(uint8_t(direction_of(unsigned(std::max<int>(0, c.value)))), std::memory_order_relaxed); break;
     case Type::AudioRegions: // freeze plan F3
         if (c.track >= track_count) retire_audio(c.audio);
         else set_audio(c.track, c.audio);
@@ -1357,7 +1376,11 @@ void EngineHost::make_call(unsigned t, Slot& slot, const EngineCall& c) {
     switch (c.op) {
     case Op::NoteOn:
         if (c.flag) e->set_accent(c.x);
-        if(c.live&&slot.kind==EngineKind::Sampler&&slot.sampler.manipulator.enabled()&&c.a>=0&&c.a<16)slot.sampler.break_live_on(c.a,c.b);else e->note_on(c.a, c.b);
+        if ((c.c || c.d) && e == &slot.sampler) slot.sampler.step_hit(c.c - 1, unsigned(c.d) & 0xff, unsigned(c.d) >> 8); // step SOUND, PLAY
+        if (c.live && e == &slot.sampler && slot.sampler.manipulator.enabled() && c.a >= 0 && c.a < 16)
+            slot.sampler.break_live_on(c.a, c.b);
+        else
+            e->note_on(c.a, c.b);
         if (c.flag) e->set_accent(1);
         break;
     case Op::NoteOff: if(c.live&&slot.kind==EngineKind::Sampler&&slot.sampler.manipulator.enabled()&&c.a>=0&&c.a<16)slot.sampler.manipulator.live_off(c.a);else e->note_off(c.a); break;
@@ -1369,7 +1392,7 @@ void EngineHost::make_call(unsigned t, Slot& slot, const EngineCall& c) {
     case Op::Control: e->control(c.a, c.b); break;
     case Op::Mod: e->set_mod(unsigned(c.a), ModRoute {uint8_t(c.b), uint8_t(c.c), int8_t(c.d)}); break;
     case Op::PlayPad: if (e == &slot.sampler) slot.sampler.play_pad(unsigned(c.a & 0xffff), c.b, c.c, c.d, ((c.a >> 16) & 0xff) - 1); break;
-    case Op::Audition: if (e == &slot.sampler) slot.sampler.audition(uint16_t(c.a), uint32_t(c.b), uint32_t(c.c), c.d & 0xff, ((c.d >> 8) & 0xff) - 1); break;
+    case Op::Audition: if (e == &slot.sampler) slot.sampler.audition(uint16_t(c.a), uint32_t(c.b), uint32_t(c.c), c.d & 0xff, ((c.d >> 8) & 0xff) - 1, (c.d >> 16) & 1); break;
     case Op::MovePad: slot.sampler.move_pad(unsigned(c.a), PadParam(c.b), c.c); break;
     case Op::RestorePad: slot.sampler.restore_pad(unsigned(c.a), PadParam(c.b)); break;
     case Op::RestorePads: slot.sampler.restore_pads(); break;
@@ -1379,10 +1402,12 @@ void EngineHost::make_call(unsigned t, Slot& slot, const EngineCall& c) {
 }
 
 // accent < 0: none set around it (a note by hand); else the sequencer's, back to 1 after.
-void EngineHost::engine_note_on(Slot& slot, int key, int velocity, float accent, bool live) {
-    if (slot.mute && mutes_notes(slot)) return;
-    EngineCall call;call.live=live;
+void EngineHost::engine_note_on(Slot& slot, int key, int velocity, float accent, const StepSound& step, bool live) {
+    if (slot.mute && mutes_notes(slot)) return; // Mute Notes (issue 27): a muted track starts nothing new
+    EngineCall call;
+    call.live = live;
     call.op = EngineCall::Op::NoteOn; call.a = key; call.b = velocity; call.flag = accent >= 0; call.x = accent;
+    if (!step.own() || step.pick) { call.c = step.sample + 1; call.d = int32_t(step.play | unsigned(step.pick) << 8); } // step SOUND, PLAY
     if (!keep_call(slot, call)) make_call(unsigned(&slot - slots.data()), slot, call);
 }
 
@@ -1799,7 +1824,8 @@ void EngineHost::plan_compensation() {
         if (slot.freeze && slot.freeze->clips[slot.pattern % pattern_count]) own[t] = slot.freeze->tap == PrintTap::PostFx ? 0 : chain_latency(t);
         plan.tracks = std::max(plan.tracks, own[t] + through[t]);
         if (slot.engine == &slot.sampler) // its pads sent to a submix: that submix's chain late
-            for (unsigned n = 0; n < sub_count; ++n) if ((slot.sampler.routes() >> n) & 1) plan.tracks = std::max(plan.tracks, chain_latency(sub_chain(n)));
+            for (unsigned routes = slot.sampler.routes(); routes; routes &= routes - 1)
+                plan.tracks = std::max(plan.tracks, chain_latency(sub_chain(unsigned(__builtin_ctz(routes)))));
     }
     std::array<unsigned, loop_tracks> loop_own {};
     if (loops.on())
@@ -1903,8 +1929,9 @@ void EngineHost::restore(Slot& slot) {
 // tick resolution): each lane starts the pattern at the track's own value,
 // then follows its points; a lock holds for its ticks, then its lane goes
 // back to what it holds as recorded there (else the track's own value).
-void EngineHost::play_motion(unsigned t, Slot& slot, const Pattern& pattern, uint32_t at) {
-    if (at == 0) restore(slot);
+void EngineHost::play_motion(unsigned t, Slot& slot, const Pattern& pattern, uint32_t from, uint32_t to, bool top) {
+    const uint32_t at = from; // a tick of a directed track plays [from, to) of its pattern (directed())
+    if (top) restore(slot);
     if (slot.locks_on)
         for (auto& l : slot.locks) {
             if (l.param < 0 || --l.left > 0) continue;
@@ -1915,7 +1942,7 @@ void EngineHost::play_motion(unsigned t, Slot& slot, const Pattern& pattern, uin
             if (value == none) restore_lane(t, slot, param, pad);
             else move_lane(t, slot, param, pad, value);
         }
-    for (size_t n = pattern.motion_lower(at); n < pattern.motion.size() && pattern.motion[n].tick == at; ++n) {
+    for (size_t n = pattern.motion_lower(from); n < pattern.motion.size() && pattern.motion[n].tick < to; ++n) {
         const auto& m = pattern.motion[n];
         move_lane(t, slot, m.param, m.pad, m.value);
         if (!m.lock()) continue;
@@ -2061,6 +2088,16 @@ double EngineHost::tick_samples(uint32_t at) const {
     return (at % (2 * sixteenth_ticks)) < sixteenth_ticks ? base * swing / 50.0 : base * (100 - swing) / 50.0;
 }
 
+// The frames from tick `from` to tick `to` (from <= to): tick_samples() of each between, without a walk.
+double EngineHost::ticks_frames(uint32_t from, uint32_t to) const {
+    auto firsts = [](uint32_t t) { // ticks before t in the first sixteenth of their pair (the swing's long half)
+        constexpr uint32_t pair = 2 * sixteenth_ticks;
+        return uint64_t(t / pair) * sixteenth_ticks + std::min(t % pair, sixteenth_ticks);
+    };
+    const uint64_t first = firsts(to) - firsts(from), second = uint64_t(to - from) - first;
+    return tick_length() * (double(first) * swing + double(second) * (100 - swing)) / 50.0;
+}
+
 void EngineHost::bar_start() {
     if (!song_mode) {
         for (unsigned t = 0; t < track_count; ++t) {
@@ -2080,6 +2117,7 @@ void EngineHost::bar_start() {
             plan_follow(t);
         }
         if (scene_tempo) { global_tempo = scene_tempo; scene_tempo = 0; } // roadmap P5: a scene's, with its patterns
+        scene_mutes_now(); // and its mutes
         follow_tempo(); // BPM per pattern: the one launched last leads
         return;
     }
@@ -2211,6 +2249,7 @@ void EngineHost::mtc_place(double seconds) {
         for (unsigned t = 0; t < track_count; ++t) fit_kept(t); // pad-fx C: as Locate
     }
     tick_count.store(tick_now, std::memory_order_relaxed);
+    restart_ahead();
     mtc_on = running; mtc_at = seconds; mtc_error = 0; speed = 1; mtc_misses = 0;
     mtc_now.store(mtc_on, std::memory_order_relaxed);
     mtc_placed.fetch_add(1, std::memory_order_relaxed);
@@ -2253,16 +2292,18 @@ void EngineHost::arp_tick() {
 // its kit lane's own.
 void EngineHost::arp_write(unsigned t, Slot& slot, int key, int velocity, unsigned rate, unsigned gate) {
     const auto& p = *patterns[t][slot.pattern];
-    const int64_t elapsed = int32_t(arp_origin + arp_ticks - slot.start);
+    const int64_t elapsed = int32_t(arp_origin + arp_ticks * arp_tick_ticks - slot.start); // the arp's clock in the sequencer's ticks
     auto in = [&](uint32_t loop) { int64_t n = elapsed % int64_t(loop); return uint32_t(n < 0 ? n + int64_t(loop) : n); };
     const uint32_t length = std::max<uint32_t>(p.length, 1), lane = p.lane_length(unsigned(key) & 0xff);
-    uint32_t at = in(length), from = 0, span = 0;
-    if (edit_loop(t, length, from, span)) at = from + in(span);
-    if (lane && lane < length) at = in(lane);
+    uint32_t at = in(length), from = 0, span = 0, loop = length, end = length, base = 0;
+    unsigned lane_key = 0;
+    if (edit_loop(t, length, from, span)) { at = from + in(span); loop = span; end = from + span; base = slot.loop_from; }
+    if (lane && lane < length) { at = in(lane); loop = end = lane; base = 0; lane_key = (unsigned(key) & 0xff) + 1; }
+    at = directed(t, p, at, end, base, elapsed >= 0 ? uint32_t(elapsed / loop) : 0, lane_key).from; // where a direction plays it
     ArpWritten w;
     w.track = uint8_t(t); w.pattern = slot.pattern; w.key = uint16_t(key); w.cutoff = uint8_t(key >> 16); w.velocity = uint8_t(std::clamp(velocity, 1, 127));
     Speed sp = speed_of(speeds_now[t].load(std::memory_order_relaxed)); // its pattern plays scaled: written as it reads
-    w.tick = uint32_t(uint64_t(at) * sp.num / sp.den); w.length = uint16_t(std::max(1u, rate * gate * sp.num / sp.den / 100));
+    w.tick = uint32_t(uint64_t(at) * sp.num / sp.den); w.length = note_ticks(uint64_t(rate) * arp_tick_ticks * gate * sp.num / sp.den / 100);
     if (!arp_written.push(w)) {}
 }
 
@@ -2326,7 +2367,7 @@ void EngineHost::run_hits(unsigned t, Slot& slot, unsigned frames) {
 
 void EngineHost::play_hit(unsigned t, Slot& slot, const PendingHit& hit, uint64_t at) {
     if (slot.engine && hit.sound) { // a frozen track's sequenced hits sound in its print (freeze plan F2b)
-        engine_note_on(slot, hit.key, hit.velocity, hit.accent ? accent_gain : 1.0f);
+        engine_note_on(slot, hit.key, hit.velocity, hit.accent ? accent_gain : 1.0f, hit.step);
         schedule_off(slot, hit.key, hit.length);
     }
     if (hit.midi >= 0) midi_note(t, hit.midi, hit.velocity, uint64_t(std::max<int64_t>(0, int64_t(at) + hit.shift)), hit.length);
@@ -2411,6 +2452,15 @@ bool EngineHost::solo_on() const {
     for (const auto& slot : slots) if (slot.soloing()) return true;
     for (unsigned s = 0; s < sub_count; ++s) if (sub_soloing(s)) return true;
     return false;
+}
+
+// A scene's mutes, kept for its bar (Type::SceneMutes), set now.
+void EngineHost::scene_mutes_now() {
+    if (!scene_mute_set) return;
+    for (unsigned t = 0; t < track_count; ++t)
+        if (scene_mute_set >> t & 1) slots[t].mute = (scene_mute_on >> t & 1) != 0;
+    scene_mute_set = scene_mute_on = 0;
+    midi_silenced();
 }
 
 void EngineHost::midi_silenced() {
@@ -2661,16 +2711,18 @@ void EngineHost::sync_stop(uint64_t at) {
     sync_started = false;
 }
 
-// MIDI clock in: each pulse lets the sequencer through four more ticks once
-// its frame comes (a block after it arrived, to the frame: no block jitter).
+// MIDI clock in: each pulse lets the sequencer through a 24th of a quarter more (ext_pulse_ticks) once its frame
+// comes (a block after it arrived, to the frame: no block jitter).
 void EngineHost::ext_release(uint64_t at) {
     while (ext_tail != ext_head && int32_t(ext_ring[ext_tail] - uint32_t(at)) <= 0) {
         ext_tail = (ext_tail + 1) % ext_ring.size();
         ++ext_clocks;
         sync.allow(ext_clocks);
-        // Far behind the clock (a tempo jump): catch up at once, allowing for swing's late sixteenths.
-        uint32_t allowed = ext_base + (ext_clocks - 1) * 4;
-        if (running && !count_left && tick_now + 16 < allowed) until_tick = std::min(until_tick, -double(allowed - tick_now) * tick_length());
+        // Far behind the clock (a tempo jump), past swing's late sixteenths: a sixteenth more each pulse, played at once,
+        // until it has caught up (a beat behind plays its 960 ticks over a few pulses, not in one block).
+        uint32_t allowed = ext_base + (ext_clocks - 1) * ext_pulse_ticks;
+        if (running && !count_left && tick_now + 4 * ext_pulse_ticks < allowed)
+            until_tick = std::min(until_tick, -double(std::min(allowed - tick_now, sixteenth_ticks)) * tick_length());
     }
 }
 
@@ -2790,6 +2842,33 @@ bool EngineHost::hand_punch() const {
     return false;
 }
 
+DirectedTick EngineHost::directed(unsigned t, const Pattern& pattern, uint32_t at, uint32_t end, uint32_t base, uint32_t pass, unsigned lane) const {
+    const auto direction = direction_of(directions_now[t % track_count].load(std::memory_order_relaxed));
+    if (direction == PlayDirection::Forward || slots[t % track_count].kind == EngineKind::Audio) return {at, at + 1, 0};
+    StepClock clock;
+    clock.base = base;
+    clock.q = std::max(1u, pattern.q());
+    clock.speed = speed_of(speeds_now[t % track_count].load(std::memory_order_relaxed));
+    return directed_tick(at, end, clock, direction, direction_seed(t, pass, lane));
+}
+
+// A kit or keygroup note's own sound (step SOUND and PLAY): its sample in place of the pad's, its way, and a draw for
+// SLICE RND. RND (PLAY or SLICE) draws from where the note is, its pass and track: the same each time from the top.
+StepSound EngineHost::step_sound(unsigned t, const Slot& slot, const Event& e, uint32_t pass) const {
+    StepSound out;
+    if (slot.kind != EngineKind::Sampler && slot.kind != EngineKind::Keygroup) return out;
+    if (e.sample && e.sample <= sample_slots) out.sample = int32_t(e.sample) - 1;
+    const uint32_t draw = step_hash(e.tick * 0x9e3779b9u ^ uint32_t(e.key) << 24 ^ direction_seed(t, pass, 0x5a17));
+    switch (step_play(e.flags)) {
+    case StepPlay::Forward: out.play = uint8_t(StepPlay::Forward); break;
+    case StepPlay::Reverse: out.play = uint8_t(StepPlay::Reverse); break;
+    case StepPlay::Random: out.play = uint8_t(draw & 1 ? StepPlay::Reverse : StepPlay::Forward); break;
+    default: break;
+    }
+    if (e.slice == slice_random) out.pick = uint16_t(draw >> 8);
+    return out;
+}
+
 // One note of a track's pattern on its tick: `at` where it starts in a loop of `loop` ticks (the pattern's, or its
 // kit lane's own), on pass `pass` of that loop (trig conditions).
 void EngineHost::play_event(unsigned t, Slot& slot, const Pattern& pattern, size_t n, uint32_t at, uint32_t loop, uint32_t pass, bool sound,
@@ -2802,8 +2881,9 @@ void EngineHost::play_event(unsigned t, Slot& slot, const Pattern& pattern, size
     if (skipped(slot, unsigned(played), at)) return;
     // Roadmap P3: a kit pad's note kept with 16 Levels' cutoff plays at it (the sampler reads it above the semitones).
     const int cutoff = slot.kind == EngineKind::Sampler && e.cutoff ? e.cutoff - 1 : -1;
-    const int slice = slot.kind == EngineKind::Sampler && e.slice ? e.slice - 1 : -1; // issue 24: a slice hit's slice
+    const int slice = slot.kind == EngineKind::Sampler && e.slice ? e.slice - 1 : -1; // issue 24: a slice hit's slice (SLICE RND: 254)
     const int sounded = cutoff >= 0 || slice >= 0 ? pad_note(e.key, e.pitch, cutoff, slice) : played;
+    const StepSound step = step_sound(t, slot, e, pass); // step SOUND and PLAY
     bool go = trig_plays(t, slot, e, pass);
     if (trig_weighed(e.condition, e.chance)) { // how it went, for PRE and NEI after it
         slot.weighed = true; slot.went = go;
@@ -2839,7 +2919,7 @@ void EngineHost::play_event(unsigned t, Slot& slot, const Pattern& pattern, size
             engine_slide(slot, from.key, played, velocity, from.glide, gain);
             if (from.key != played) cancel_off(slot, from.key);
         } else {
-            engine_note_on(slot, sounded, velocity, gain);
+            engine_note_on(slot, sounded, velocity, gain, step);
         }
         schedule_off(slot, played, samples);
     }
@@ -2858,6 +2938,7 @@ void EngineHost::play_event(unsigned t, Slot& slot, const Pattern& pattern, size
         hit.samples = std::max<int32_t>(1, int32_t(std::lround(k * each * tick_length())));
         hit.length = samples;
         hit.shift = int32_t(midi_shift); // a MIDI track ahead (play_ahead()): its MIDI that far from where the hit falls
+        hit.step = step;
         for (auto& h : slot.hits)
             if (h.key < 0) { h = hit; ++slot.hits_waiting; break; }
     }
@@ -2927,10 +3008,11 @@ void EngineHost::tick() {
         uint32_t elapsed = tick_now - slot.start;
         uint32_t at = elapsed % length, end = length; // where its loop ends
         uint32_t pass = elapsed / length; // trig conditions count the pattern's passes from where it began
-        uint32_t from = 0, span = 0;
-        if (edit_loop(t, length, from, span)) { at = from + elapsed % span; pass = elapsed / span; end = from + span; } // its bars over and over
+        uint32_t from = 0, span = 0, base = 0;
+        if (edit_loop(t, length, from, span)) { at = from + elapsed % span; pass = elapsed / span; end = from + span; base = slot.loop_from; } // its bars over and over
         Speed sp = speed_of(speeds_now[t].load(std::memory_order_relaxed)); // published as written (its pattern plays scaled)
-        positions_now[t].store(int(uint64_t(at) * sp.num / sp.den), std::memory_order_relaxed);
+        const uint32_t heard = directed(t, pattern, at, end, base, pass).from; // the step it plays, backward or shuffled
+        positions_now[t].store(int(uint64_t(heard) * sp.num / sp.den), std::memory_order_relaxed);
         if (!pattern.punches.empty()) play_pattern_punches(t, pattern, at, end); // pad-fx C: punches kept with it
         passes_now[t].store(pass, std::memory_order_relaxed);
         if (at == 0 && int(t) == cue_track) { take.go(block_at); cue_track = -1; } // Rec length Seq: the take starts with the pattern
@@ -2966,21 +3048,24 @@ void EngineHost::play_tick_notes(unsigned t, Slot& slot, uint32_t at_tick, unsig
     const auto& pattern = *patterns[t][pattern_index % pattern_count];
     uint32_t length = std::max<uint32_t>(pattern.length, 1);
     uint32_t elapsed = at_tick - start;
-    uint32_t at = elapsed % length, pass = elapsed / length;
+    uint32_t at = elapsed % length, pass = elapsed / length, end = length, base = 0;
     uint32_t from = 0, span = 0;
-    if (edit_loop(t, length, from, span)) { at = from + elapsed % span; pass = elapsed / span; } // its bars over and over
-    if (slot.engine && (at == 0 || !pattern.motion.empty() || slot.locks_on)) play_motion(t, slot, pattern, at);
+    if (edit_loop(t, length, from, span)) { at = from + elapsed % span; pass = elapsed / span; end = from + span; base = slot.loop_from; } // its bars over and over
+    // The ticks this one plays: itself, or with a direction (model/step_order.h) its place in the step the order puts here.
+    const DirectedTick here = directed(t, pattern, at, end, base, pass);
+    if (slot.engine && (at == 0 || !pattern.motion.empty() || slot.locks_on)) play_motion(t, slot, pattern, here.from, here.to, at == 0);
     const auto& events = pattern.events;
     Slot::Held holding; // this tick's own Slide or Tie, for the notes of a later one
     bool lanes = !pattern.lanes.empty();
-    for (size_t n = pattern.lower(at); n < events.size() && events[n].tick == at; ++n)
-        if (!lanes || !pattern.own_lane(events[n].key)) play_event(t, slot, pattern, n, at, length, pass, seq, holding);
+    for (size_t n = pattern.lower(here.from); n < events.size() && events[n].tick < here.to; ++n)
+        if (!lanes || !pattern.own_lane(events[n].key)) play_event(t, slot, pattern, n, events[n].tick, length, pass, seq, holding);
     for (const auto& l : pattern.lanes) { // kit lanes of their own length (roadmap P1): each loops, and counts its passes, alone
         uint32_t loop = std::max<uint32_t>(std::min(l.length, pattern.length), 1); // lane_length(l.key), without looking l up again
         if (loop >= length) continue;
-        uint32_t lane_at = elapsed % loop;
-        for (size_t n = pattern.lower(lane_at); n < events.size() && events[n].tick == lane_at; ++n)
-            if (events[n].key == l.key) play_event(t, slot, pattern, n, lane_at, loop, elapsed / loop, seq, holding);
+        const uint32_t lane_pass = elapsed / loop;
+        const DirectedTick lane = directed(t, pattern, elapsed % loop, loop, 0, lane_pass, l.key + 1u);
+        for (size_t n = pattern.lower(lane.from); n < events.size() && events[n].tick < lane.to; ++n)
+            if (events[n].key == l.key) play_event(t, slot, pattern, n, events[n].tick, loop, lane_pass, seq, holding);
     }
     if (holding.key >= 0) slot.held = holding;
 }
@@ -2997,11 +3082,24 @@ int64_t EngineHost::midi_early(unsigned t) const {
     return ms < 0 ? int64_t(std::lround(-ms * dsp::sample_rate() / 1000.0)) : 0;
 }
 
+// Where the read-ahead had got to is the old place's: from a new one (Play from the top, Locate, MTC) it starts again
+// at tick_now. Else, with the pattern's start the same (0), a track stopped further on skipped every tick until the
+// playhead got back there: its notes came bars late after Play (issue 59).
+void EngineHost::restart_ahead() {
+    for (auto& s : slots) {
+        s.ahead_next = 0; s.ahead_start = s.ahead_bar = UINT32_MAX;
+        s.ahead_pattern = s.ahead_queued = 255;
+    }
+}
+
 void EngineHost::play_ahead(unsigned t, Slot& slot, bool seq) {
     const int64_t early = midi_early(t);
     const int64_t need = early - int64_t(clock.latency_frames());
     uint32_t lead = 0;
-    if (need > 0 && !slot.chained) lead = uint32_t(std::min(16.0, std::ceil(double(need) / std::max(1.0, tick_samples(tick_now)))));
+    // Ahead by what the latency does not cover, past the end of the next block: a block's MIDI is taken once it is
+    // rendered, so a tick left for the next one goes out as late as that block's end. At most a sixth of a beat.
+    const double ahead = double(need) + double(block_frames > block_at ? block_frames - block_at : 0) + block_frames;
+    if (need > 0 && !slot.chained) lead = uint32_t(std::min(double(ticks_per_quarter / 6), std::ceil(ahead / std::max(1.0, tick_samples(tick_now)))));
     // Where this track's ticks were last read from: a launch read ahead that came as read is kept; any other change
     // starts again here.
     if (slot.ahead_bar != UINT32_MAX && slot.start == slot.ahead_bar && slot.pattern == slot.ahead_queued) {
@@ -3012,13 +3110,15 @@ void EngineHost::play_ahead(unsigned t, Slot& slot, bool seq) {
     slot.ahead_bar = slot.ahead_bar != UINT32_MAX && slot.ahead_bar <= tick_now ? UINT32_MAX : slot.ahead_bar;
     const uint32_t next_bar = (tick_now / bar + 1) * bar;
     uint32_t last = tick_now + lead;
-    if (song_mode || slot.chained || slot.off_queued) last = std::min(last, next_bar - 1); // off: nothing past its bar
+    if (song_mode || slot.chained || slot.off_queued || (scene_mute_set >> t & 1)) last = std::min(last, next_bar - 1); // off, or a scene's mute: nothing past its bar
     if (slot.follow_do && slot.follow_at > tick_now) last = std::min(last, slot.follow_at - 1);
-    int64_t to = 0; // frames from this tick to `tk`
-    for (uint32_t tk = tick_now; tk <= last; to += int64_t(std::lround(tick_samples(tk))), ++tk) {
-        if (tk < slot.ahead_next) continue;
+    // From where the read-ahead got to (the ticks before it were read already), the frames from this tick to it
+    // counted at once and carried as they are, rounded once each tick.
+    uint32_t tk = std::max(tick_now, slot.ahead_next);
+    double to = tk > last ? 0.0 : ticks_frames(tick_now, tk);
+    for (; tk <= last; to += tick_samples(tk), ++tk) {
         const bool queued = tk >= next_bar && slot.queued != 255;
-        const int64_t shift = to - early;
+        const int64_t shift = int64_t(std::lround(to)) - early;
         if (queued && slot.ahead_bar != next_bar) { // the launch's: the old pattern's notes end, the new one's program
             slot.ahead_bar = next_bar; slot.ahead_queued = slot.queued;
             const uint64_t at = uint64_t(std::max<int64_t>(0, int64_t(frame_now + block_at) + shift));
@@ -3187,8 +3287,11 @@ void EngineHost::render(int32_t* out, unsigned frames, float volume, const int32
         for (unsigned b = 0; b < bus_count; ++b) // pad sends: only what the last block wrote needs clearing
             if ((slot.send_pad_fed >> b) & 1) { std::fill(slot.pad_sends->l[b], slot.pad_sends->l[b] + block, 0.0f); std::fill(slot.pad_sends->r[b], slot.pad_sends->r[b] + block, 0.0f); }
         slot.send_pad_fed = 0;
-        for (unsigned n = 0; n < sub_count; ++n) // pads sent to submixes: as the sends
-            if ((slot.sub_pad_fed >> n) & 1) { std::fill(slot.pad_subs->l[n], slot.pad_subs->l[n] + block, 0.0f); std::fill(slot.pad_subs->r[n], slot.pad_subs->r[n] + block, 0.0f); }
+        for (unsigned fed = slot.sub_pad_fed; fed; fed &= fed - 1) { // pads sent to submixes: as the sends
+            const unsigned n = unsigned(__builtin_ctz(fed));
+            std::fill(slot.pad_subs->l[n], slot.pad_subs->l[n] + block, 0.0f);
+            std::fill(slot.pad_subs->r[n], slot.pad_subs->r[n] + block, 0.0f);
+        }
         slot.sub_pad_fed = 0;
         slot.pad_routes = slot.engine == &slot.sampler ? slot.sampler.routes() : 0;
         slot.print_fed = false; // freeze plan F2b: this block's print, from the first run a voice sounds in
@@ -3220,6 +3323,7 @@ void EngineHost::render(int32_t* out, unsigned frames, float volume, const int32
     deferring = whole;
     keyed_pad = pad_keyed;
     cut_count = 0;
+    block_frames = frames;
     unsigned done = 0;
     while (done < frames) {
         if (next_command <= done) next_command = take_commands(done, frames);
@@ -3228,7 +3332,7 @@ void EngineHost::render(int32_t* out, unsigned frames, float volume, const int32
         if (running) {
             ext_release(frame_now + done);
             if (until_tick <= 0) { // a tick is due: it plays, unless MIDI clock in has not let it through yet
-                held = ext_gate && !count_left && tick_now >= ext_base + ext_clocks * 4;
+                held = ext_gate && !count_left && tick_now >= ext_base + ext_clocks * ext_pulse_ticks;
                 if (!held) { block_at = done; tick(); continue; }
                 if (ext_tail != ext_head) n = std::clamp<unsigned>(unsigned(int32_t(ext_ring[ext_tail] - uint32_t(frame_now + done))), 1, n);
             } else {
@@ -3250,7 +3354,7 @@ void EngineHost::render(int32_t* out, unsigned frames, float volume, const int32
             if (!slot.engine) continue;
             run_offs(slot, n);
             run_late(slot, n);
-            if (slot.engine == &slot.sampler) {
+            if (!whole && slot.engine == &slot.sampler) { // one dispatch a block: render_engine() points them, run by run
                 bool pad_key = pad_keyed >= 0 && &slot == &slots[unsigned(pad_keyed)];
                 slot.sampler.set_key_pad(pad_key ? int(comp.key_pad()) : -1, pad_key ? key_pad_l + done : nullptr, pad_key ? key_pad_r + done : nullptr);
                 slot.sampler.set_knob_out(knob_heard ? slot.knob_pad_l + done : nullptr, knob_heard ? slot.knob_pad_r + done : nullptr);
@@ -3319,7 +3423,8 @@ void EngineHost::render(int32_t* out, unsigned frames, float volume, const int32
     for (unsigned t = 0; t < track_count; ++t)
         if (slots[t].kind != EngineKind::None) {
             if (slots[t].out) submixes[(slots[t].out - 1) % sub_count].members |= uint16_t(1u << t);
-            for (unsigned n = 0; n < sub_count; ++n) if ((slots[t].pad_routes >> n) & 1) submixes[n].members |= uint16_t(1u << t); // a pad of it
+            for (unsigned routes = slots[t].pad_routes; routes; routes &= routes - 1)
+                submixes[unsigned(__builtin_ctz(routes))].members |= uint16_t(1u << t); // a pad of it
         }
     std::fill(knob_l, knob_l + frames, 0.0f); std::fill(knob_r, knob_r + frames, 0.0f);
     if (pdc.on) { std::fill(knob_pad_sum_l, knob_pad_sum_l + frames, 0.0f); std::fill(knob_pad_sum_r, knob_pad_sum_r + frames, 0.0f); }
@@ -3553,8 +3658,8 @@ void EngineHost::render(int32_t* out, unsigned frames, float volume, const int32
                 }
                 // A kit's pads sent to submixes: each after its own chain, at the track's level and pan, muted with it, into
                 // its submix (compensating: held back apart, below); they left before the track's chain and strip.
-                for (unsigned n = 0; n < sub_count; ++n) {
-                    if (!((slot.sub_pad_fed >> n) & 1)) continue;
+                for (unsigned fed = slot.sub_pad_fed; fed; fed &= fed - 1) {
+                    const unsigned n = unsigned(__builtin_ctz(fed));
                     float* to_l = pdc.on ? pad_sub_sum_l[n] : sub_l[n];
                     float* to_r = pdc.on ? pad_sub_sum_r[n] : sub_r[n];
                     for (unsigned f = 0; f < frames; ++f) {
@@ -3593,8 +3698,8 @@ void EngineHost::render(int32_t* out, unsigned frames, float volume, const int32
     if (pdc.on) { // roadmap P4: kits' pads sent to submixes as late as the tracks there, then into their submixes
         uint8_t routed = 0;
         for (const auto& slot : slots) routed |= slot.pad_routes;
-        for (unsigned n = 0; n < sub_count; ++n) {
-            if (!((routed >> n) & 1)) continue;
+        for (unsigned routes = routed; routes; routes &= routes - 1) {
+            const unsigned n = unsigned(__builtin_ctz(routes));
             compensate(CompensationLines::pad_subs0 + n, pad_sub_sum_l[n], pad_sub_sum_r[n], frames);
             for (unsigned f = 0; f < frames; ++f) { sub_l[n][f] += pad_sub_sum_l[n][f]; sub_r[n][f] += pad_sub_sum_r[n][f]; }
             submixes[n].fed = true;

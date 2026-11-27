@@ -11,14 +11,16 @@
 # /proc/config.gz from that firmware; the tree is prepared once:
 #   6.12 (firmware 1.3.0.12, default): inMusic's public 6.12.60 release in
 #        .local/kbuild/kernel-source, .local/mpc-kernel.config; <module>.ko
-#   6.18 (firmware 1.4.0.7 and 1.4.0.8): inMusic's public 6.18.45 release (engine-os-g2/5.3)
-#        brought to 6.18.59 with kernel.org's stable increments and named
-#        6.18.59-imb-2026-10-26-rt9, in .local/kbuild-6.18/kernel-source,
+#   6.18 (firmware 1.4.0.7 and 1.4.0.8): inMusic's MPC Sample 1.4.0 release
+#        (linux-imb-6.18.59+git-r0) in .local/kbuild-6.18/kernel-source,
 #        .local/mpc-kernel-6.18.config; <module>-6.18.ko
 # A folder named <name>-6.18 holds a module's source for 6.18 only (its
 # kernel's code moved too far to share one copy): KERNEL=6.18 builds it in
 # place of <name>, which then builds for 6.12 only.
 # With names, only those folders: KERNEL=6.18 tools/build_kernel_modules.sh uvc vepu
+# A module's folder is copied whole (subfolders too, its .ko files left out),
+# so kernel code can sit at its kernel paths (kernel/ksmbd/fs/smb/server).
+# LOCAL names another checkout's .local holding the trees (default: .local).
 set -eu
 cd "$(dirname "$0")/.."
 kernel=${KERNEL:-6.12}
@@ -27,8 +29,9 @@ case "$kernel" in
 6.18) tree=kbuild-6.18; config=mpc-kernel-6.18.config; suffix=-6.18 ;;
 *) echo "KERNEL is 6.12 or 6.18" >&2; exit 1 ;;
 esac
-[ -d ".local/$tree/kernel-source" ] && [ -f ".local/$config" ] || {
-    echo "Needs .local/$tree/kernel-source and .local/$config" >&2; exit 1; }
+local=$(cd "${LOCAL:-.local}" && pwd)
+[ -d "$local/$tree/kernel-source" ] && [ -f "$local/$config" ] || {
+    echo "Needs $local/$tree/kernel-source and $local/$config" >&2; exit 1; }
 names=$*
 if [ -z "$names" ]; then
     for kbuild in kernel/*/Kbuild; do
@@ -43,9 +46,8 @@ for name in $names; do
     [ -f "kernel/$name/Kbuild" ] || { echo "kernel/$name has no Kbuild" >&2; exit 1; }
     out="build/kernel-$name$suffix"
     rm -rf "$out" && mkdir -p "$out"
-    cp "kernel/$name"/Kbuild "kernel/$name"/*.c "$out/"
-    for header in "kernel/$name"/*.h; do [ -f "$header" ] && cp "$header" "$out/"; done
-    docker run --rm --platform linux/arm64 -v "$PWD/.local:/k" -v "$PWD/$out:/m" \
+    (cd "kernel/$name" && tar cf - --exclude='*.ko' .) | (cd "$out" && tar xf -)
+    docker run --rm --platform linux/arm64 -v "$local:/k" -v "$PWD/$out:/m" \
         -e TREE="$tree" -e CONFIG="$config" sample-base-kbuild sh -c '
         set -eu
         cd "/k/$TREE/kernel-source"

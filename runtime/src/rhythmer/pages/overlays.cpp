@@ -205,6 +205,8 @@ void draw_notice(Paint& p, const Snapshot& s) {
         text = s.ui.copy_from < 0 ? juce::String("Copy: pick a pad") : "Copy " + juce::String(label) + ": pick where";
     } else if (s.ui.copying == UiState::Copying::Patterns) {
         text = s.ui.copy_from < 0 ? juce::String("Copy: pick a pattern") : "Copy P" + juce::String(s.ui.copy_from + 1) + ": pick where";
+    } else if (s.ui.copying == UiState::Copying::Scenes) {
+        text = s.ui.copy_from < 0 ? juce::String("Copy: pick a sequence") : "Copy SEQ " + juce::String(s.ui.copy_from + 1) + ": pick where";
     } else if (s.ui.copying == UiState::Copying::Tracks) {
         juce::String verb = s.ui.moving ? "Move" : "Copy";
         text = s.ui.copy_from < 0 ? verb + ": pick a track" : verb + " track " + juce::String(s.ui.copy_from + 1) + ": pick where";

@@ -57,7 +57,8 @@ namespace rhythmer {
 namespace fs = std::filesystem;
 namespace {
 
-constexpr unsigned mpc_ticks_per_tick = 960 / ticks_per_quarter; // the MPC counts 960 a quarter
+constexpr unsigned mpc_ticks_per_tick = 960 / ticks_per_quarter; // the MPC counts 960 a quarter, as the sequencer
+static_assert(960 % ticks_per_quarter == 0, "a tick is whole MPC pulses");
 constexpr unsigned mpc_pads = 128;
 constexpr unsigned mpc_layers = 8;  // a pad's or a keygroup's
 constexpr int played_root = 60;     // an instrument pad's key with no pitch (engine/sampler.cpp zones_on)

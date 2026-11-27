@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #pragma once
+#include "rhythmer/model/limits.h"
 #include <algorithm>
 #include <array>
 #include <cstdint>
 
 // The arpeggiator: the keys held, played in turn at a rate, across octaves.
 // Note Repeat is apart (engine/note_repeat.h) and shares only the clock. It counts its own
-// clock ticks (24 a quarter), so it plays whether the song runs or not.
+// clock ticks (arp_ticks_per_quarter), so it plays whether the song runs or not.
 // Audio thread only; no allocation.
 namespace rhythmer {
 
@@ -21,8 +22,12 @@ inline const char* arp_mode_name(ArpMode m) {
 // B1-B3 pick 1/8, 1/16, 1/32 (B1 again 1/4, B3 again 1/64) and, with Shift,
 // their triplets (RHYTHMER_PARITY.md, roadmap P1).
 constexpr unsigned arp_rates = 10;
-constexpr unsigned arp_ticks_per_quarter = 96; // the arp's own clock, as fine as the sequencer's (1/64T is 4 of it)
+constexpr unsigned arp_ticks_per_quarter = 96; // the arp's own clock: each rate a whole number of it (1/64T is 4)
+static_assert(ticks_per_quarter % arp_ticks_per_quarter == 0, "an arp tick is whole sequencer ticks");
+constexpr unsigned arp_tick_ticks = ticks_per_quarter / arp_ticks_per_quarter; // the sequencer's ticks an arp tick
 inline unsigned arp_rate_ticks(unsigned rate) { static const unsigned t[] {96, 64, 48, 32, 24, 16, 12, 8, 6, 4}; return t[rate % arp_rates]; }
+// The same in the sequencer's ticks (Arp to notes, Seq Record's notes).
+inline unsigned arp_rate_sequencer_ticks(unsigned rate) { return arp_rate_ticks(rate) * arp_tick_ticks; }
 inline const char* arp_rate_name(unsigned rate) {
     static const char* n[] {"1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32", "1/32T", "1/64", "1/64T"};
     return n[rate % arp_rates];

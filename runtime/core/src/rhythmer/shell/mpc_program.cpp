@@ -220,7 +220,7 @@ std::string import_mpc_program(const std::vector<uint8_t>& file, const std::stri
         auto& pad = track.pads[size_t(instrument.number - 1)];
         keygroup_pad(instrument, to_model, pad);
         pad.sample = uint16_t(slot);
-        pad.colour = colours[size_t(instrument.number - 1) % colours.size()];
+        pad.colour = pad.kit_colour = colours[size_t(instrument.number - 1) % colours.size()];
         ++report.pads;
     }
     if (!report.pads) return "Nothing to import";

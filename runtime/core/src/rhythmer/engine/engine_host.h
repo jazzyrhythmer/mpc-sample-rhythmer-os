@@ -21,6 +21,7 @@
 #include "rhythmer/engine/take_recorder.h"
 #include "rhythmer/engine/bounce.h"
 #include "rhythmer/engine/recall_ring.h"
+#include "rhythmer/model/step_order.h"
 #include "rhythmer/engine/midi_out.h"
 #include "rhythmer/model/input_config.h"
 #include "rhythmer/model/project.h"
@@ -89,6 +90,11 @@ struct TrackPack {
     Track value;
     PlayPatterns patterns {};
 };
+
+// A sequenced note's own sound (step SOUND and PLAY): the sample slot it plays in place of its pad's (-1 the pad's),
+// the way it plays (StepPlay: Forward or Reverse, Random already turned into one of them) and the slice a SLICE RND
+// takes (a draw, modulo the chop's slices).
+struct StepSound { int32_t sample = -1; uint8_t play = 0; uint16_t pick = 0; bool own() const { return sample < 0 && !play; } };
 
 class EngineHost {
 public:
@@ -262,7 +268,7 @@ public:
     unsigned break_activity_of(unsigned t)const{return slots[t%track_count].sampler.manipulator.activity();}
     unsigned break_source_of(unsigned t)const{return slots[t%track_count].sampler.manipulator.source();}
     bool playing() const { return is_playing.load(std::memory_order_relaxed); }
-    uint32_t ticks() const { return tick_count.load(std::memory_order_relaxed); } // clock ticks since Play, 96 a quarter
+    uint32_t ticks() const { return tick_count.load(std::memory_order_relaxed); } // clock ticks since Play, ticks_per_quarter a quarter
     // Where a track is in its pattern, in ticks; -1 while it plays none.
     int position_of(unsigned track) const { return positions_now[track % track_count].load(std::memory_order_relaxed); }
     // (Roadmap P1: in its pattern's ticks as written, whatever the track's speed.)
@@ -363,7 +369,7 @@ public:
     int mtc_trim_ppm() const { return mtc_ppm.load(std::memory_order_relaxed); }
     unsigned mtc_places() const { return mtc_placed.load(std::memory_order_relaxed); } // locates done (Start, jumps, catch-ups)
     // MIDI thread (roadmap P1): a note the arp (Note Repeat) played while Seq Record was on, for the pattern it fell in.
-    struct ArpWritten { uint8_t track = 0, pattern = 0; uint16_t key = 0; uint8_t velocity = 0, cutoff = 0; uint32_t tick = 0; uint16_t length = 0; };
+    struct ArpWritten { uint8_t track = 0, pattern = 0; uint16_t key = 0; uint8_t velocity = 0, cutoff = 0; uint32_t tick = 0; uint32_t length = 0; };
     bool take_arp_written(ArpWritten& note) { return arp_written.pop(note); }
     // MIDI thread: a pattern copy the audio thread played until a newer one came (PatternData), to free.
     bool take_retired_pattern(Pattern*& pattern) { return retired_patterns.pop(pattern); }
@@ -421,7 +427,7 @@ private:
     struct PendingOn { int32_t key = -1; int16_t velocity = 0; int32_t from = -1; int32_t samples = 0, length = 0; }; // an arp note swung late
     // A ratchet's hit still to come (roadmap P1): `samples` frames on it plays `key` (as the engine plays it; a kit
     // pad's semitones over it) and `midi` out, for `length` frames.
-    struct PendingHit { int32_t key = -1; int16_t midi = -1; uint8_t velocity = 0; bool accent = false, sound = true; int32_t samples = 0, length = 0, shift = 0; };
+    struct PendingHit { int32_t key = -1; int16_t midi = -1; uint8_t velocity = 0; bool accent = false, sound = true; int32_t samples = 0, length = 0, shift = 0; StepSound step; };
     // Roadmap P2, one dispatch a block: a call to a track's engine the sequencing pass made past the block's first
     // frame, kept for the track's job to make at that frame (play_calls()).
     struct EngineCall {
@@ -557,7 +563,7 @@ private:
     // yet) or the old way (every track rendered up to each tick), else kept for its job, at block_at (roadmap P2).
     bool deferring = false; // the sequencing pass of a one-dispatch block is running
     bool keep_call(Slot& slot, const EngineCall& call);
-    void engine_note_on(Slot& slot, int key, int velocity, float accent = 1, bool live = false);
+    void engine_note_on(Slot& slot, int key, int velocity, float accent = 1, const StepSound& step = {}, bool live = false);
     void engine_note_off(Slot& slot, int key, bool live = false);
     void engine_slide(Slot& slot, int from, int to, int velocity, bool glide, float accent);
     void engine_param(Slot& slot, int id, int value);
@@ -596,6 +602,7 @@ private:
     void tick();       // plays whatever falls on this clock tick, then moves on
     void play_tick_notes(unsigned t, Slot& slot, uint32_t at_tick, unsigned pattern_index, uint32_t start, bool seq);
     void play_ahead(unsigned t, Slot& slot, bool seq);
+    void restart_ahead(); // a new place (Play, Locate, MTC): every MIDI track's read-ahead from it (issue 59)
     int64_t midi_early(unsigned t) const; // a MIDI track's negative DELAY, frames
     int64_t midi_shift = 0;               // frames this tick's MIDI goes from its frame (play_ahead())
     uint64_t seq_frame() const { return uint64_t(std::max<int64_t>(0, int64_t(frame_now + block_at) + midi_shift)); }
@@ -634,11 +641,19 @@ private:
     void stop_track(unsigned t); // a follow action's STOP, or off: what it holds lets go, and it is silent
     FollowDice dice;
     uint16_t scene_tempo = 0; // a scene's tempo waiting for the bar its patterns launch on (0 none)
+    uint16_t scene_mute_set = 0, scene_mute_on = 0; // a scene's mutes waiting for that bar: the tracks, those muted
+    void scene_mutes_now(); // and now
     // Roadmap P5: the song's tempo lane where the song plays now (0: none, or not the song), worked out each tick.
     uint16_t lane_tempo = 0;
     void follow_lane();
     double tick_samples(uint32_t at) const;
-    void play_motion(unsigned track, Slot& slot, const Pattern& pattern, uint32_t at);
+    double ticks_frames(uint32_t from, uint32_t to) const;
+    // Motion's points on ticks [from, to) of the pattern as played; `top` the pass's first tick (lanes start again).
+    void play_motion(unsigned track, Slot& slot, const Pattern& pattern, uint32_t from, uint32_t to, bool top);
+    // Elektron's per track direction (model/step_order.h): what tick `at` of a loop plays, the loop's steps from
+    // `base` (written ticks) up to `end` (as played), on pass `pass`; `lane` a kit lane's key + 1 (0 the pattern).
+    DirectedTick directed(unsigned track, const Pattern& pattern, uint32_t at, uint32_t end, uint32_t base, uint32_t pass, unsigned lane = 0) const;
+    StepSound step_sound(unsigned track, const Slot& slot, const Event& e, uint32_t pass) const; // step SOUND and PLAY
     void move_lane(unsigned track, Slot& slot, unsigned param, unsigned pad, int value); // a Motion lane to `value`
     void restore_lane(unsigned track, Slot& slot, unsigned param, unsigned pad);        // and back to the track's own
     void pad_mute_call(Slot& slot, unsigned pad, bool on); // issue 32: a lane's mute on a kit pad, on its frame
@@ -681,7 +696,7 @@ private:
     void run_offs(Slot& slot, unsigned frames);
     void cancel_off(Slot& slot, int key);
     double tick_length() const { return dsp::sample_rate() * 60.0 / (tempo / 10.0) / ticks_per_quarter; } // device frames a clock tick
-    double arp_tick_length() const { return tick_length() * (ticks_per_quarter / arp_ticks_per_quarter); }
+    double arp_tick_length() const { return tick_length() * arp_tick_ticks; }
     // MIDI out and sync (parity phase 9).
     // Roadmap P4: out as late as everything heard is held back (compensation()), so outside gear lines up with it; a
     // MIDI track's own by a positive DELAY too (a negative one: the sequencer plays it ahead, play_ahead()).
@@ -771,6 +786,7 @@ private:
     unsigned sync_ppqn = 2;
     bool ext_on = false, ext_gate = false;                                    // MIDI clock in: followed; the sequencer waits for it
     uint32_t ext_clocks = 0, ext_base = 0;                                   // pulses let through since Start; the tick it began on
+    static constexpr uint32_t ext_pulse_ticks = ticks_per_quarter / 24;      // a MIDI clock pulse
     uint16_t ext_tempo = 0;
     std::array<uint32_t, 64> ext_ring {};                                     // pulses not let through yet: their frames
     unsigned ext_head = 0, ext_tail = 0;
@@ -800,8 +816,9 @@ private:
     static bool mid_block(Command::Type type);                // applied inside a block too (notes and values)
     static constexpr int32_t timed_reach = 3 * 128;           // further ahead than a hit can be (three blocks): at once
     // Each tick of a pattern playing: its frame (low 32 bits) and tick_now, for place_at(). The audio thread writes
-    // the ring, any thread reads it.
-    static constexpr unsigned tick_ring_size = 256;
+    // the ring, any thread reads it: four quarters and more back (a power of two, so the count wraps round it whole).
+    static constexpr unsigned tick_ring_size = 4096;
+    static_assert(tick_ring_size >= 4 * ticks_per_quarter && (tick_ring_size & (tick_ring_size - 1)) == 0, "the ring reaches a bar back");
     std::array<std::atomic<uint64_t>, tick_ring_size> tick_ring {};
     std::atomic<uint32_t> tick_head {0};  // ticks written
     std::atomic<float> tick_frames {0};   // frames the newest tick lasts (swing and MTC's pace in)
@@ -862,6 +879,7 @@ private:
     uint32_t bounce_ticks = 0; // a pattern render ends after this many ticks; 0 with bounce_song
     bool bounce_song = false;  // the song's render: to its end, then its tail
     unsigned block_at = 0;  // frames of this block rendered when tick() runs
+    unsigned block_frames = 0; // frames this block renders (its MIDI is taken after it)
     void select_input(const int32_t* input, const float* usb, unsigned frames); // into record_l / record_r
     double until_arp = 0;
     uint32_t arp_ticks = 0;
@@ -1132,6 +1150,7 @@ private:
     std::array<std::atomic<int>, track_count> positions_now {};
     std::array<std::atomic<uint32_t>, track_count> passes_now {};
     std::array<std::atomic<uint8_t>, track_count> speeds_now {}; // each track's speed (roadmap P1), for place_at()
+    std::array<std::atomic<uint8_t>, track_count> directions_now {}; // each track's PlayDirection (model/step_order.h)
     std::atomic<unsigned> count_beat {0};
     std::atomic<uint32_t> count_rest {0}, count_from {0};
     std::atomic<unsigned> tempo_shown {1200};

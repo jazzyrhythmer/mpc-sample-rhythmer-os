@@ -153,7 +153,7 @@ inline bool lay_capture(const CaptureRing& ring, unsigned track, const CaptureWi
         uint32_t length = uint32_t(std::max(1L, std::lround(std::max(held, 1.0) / grid))) * grid;
         Event e;
         e.tick = tick; e.key = uint8_t(p.key & 0xff); e.pitch = int8_t(p.key >> 8); e.velocity = p.velocity;
-        e.length = uint16_t(std::min<uint32_t>({length, out.length, 65535u}));
+        e.length = note_ticks(std::min<uint32_t>(length, out.length));
         if (out.add(e)) any = true;
     }
     return any;

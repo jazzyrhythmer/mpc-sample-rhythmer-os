@@ -31,8 +31,8 @@ The modules under `kernel/` are GPL-2.0 (text in `LICENSES/GPL-2.0.txt`),
 as the kernel they load into; each `.ko` is built from the source beside it
 by `tools/build_kernel_modules.sh` against inMusic's MPC Sample kernel
 source release (6.12.60, pinned in `docs/HARDWARE.md`); each `-6.18.ko`
-against inMusic's public 6.18.45 release (`engine-os-g2/5.3`) brought to
-6.18.59 with kernel.org's stable increments, for firmware 1.4.0.7 and 1.4.0.8.
+against inMusic's MPC Sample 1.4.0 kernel source release (6.18.59, pinned in
+`docs/HARDWARE.md`), for firmware 1.4.0.7 and 1.4.0.8.
 
 - `kernel/panel/`: sample-base's panel driver, after inMusic's
   `drivers/gpu/drm/tiny/st7796s.c` (John Keeping), GPL-2.0+.
@@ -46,6 +46,12 @@ against inMusic's public 6.18.45 release (`engine-os-g2/5.3`) brought to
   `uvc_trace.c` and `uvc_trace.h`, copied from the 6.18 tree above with
   their notices, with the same `sample-base:` changes.
 - `kernel/vepu/`: written for this project, GPL-2.0.
+- `kernel/ksmbd/`: the kernel's SMB3 server, `fs/smb/server/` (Namjae Jeon,
+  Samsung Electronics and others, GPL-2.0-or-later) with the headers it takes
+  from `fs/smb/common/`, `fs/smb/common/cifs_arc4.c` and
+  `fs/nls/nls_ucs2_utils.c` (GPL-2.0), copied from the 6.12.60 release
+  unchanged, at their kernel paths. `kernel/ksmbd-6.18/`: the same from the
+  6.18 tree, with `lib/crypto/arc4.c` in place of `cifs_arc4.c`.
 
 ## Fonts and platform
 

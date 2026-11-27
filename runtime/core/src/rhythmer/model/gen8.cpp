@@ -70,7 +70,7 @@ Pattern generate8(const Pattern& source, Gen8Role role, const Gen8Settings& s,
         if(e.tick>=out.length) return;
         e.key=uint8_t(note); e.velocity=uint8_t(std::clamp(vel,1,127));
         if(vel>=100)e.flags|=step_accent;
-        e.length=uint16_t(std::min<unsigned>(length,out.length-e.tick)); e.ratchet=uint8_t(ratchet);
+        e.length=uint16_t(std::min<unsigned>(length * (ticks_per_quarter / 96), out.length-e.tick)); e.ratchet=uint8_t(ratchet);
         // Reuse Rhythmer's repeating timing cells, never move the opening downbeat backwards.
         static const int lazy[16] {0,1,-1,3,7,2,0,4,0,2,-1,3,8,2,0,4};
         int micro=r==4?0:r==0?(step%4?1:0):lazy[step%16];
@@ -125,7 +125,7 @@ Pattern generate8(const Pattern& source, Gen8Role role, const Gen8Settings& s,
             if(b=='=') {
                 if(!out.events.empty()) {
                     auto& last=out.events.back();
-                    last.length=uint16_t(std::min<uint32_t>(65535,std::min(out.length,(i+1)*24)-last.tick));
+                    last.length=std::min(out.length,(i+1)*sixteenth_ticks)-last.tick;
                 }
                 continue;
             }
@@ -165,7 +165,7 @@ Pattern mutate8(const Pattern& source, Gen8Role role, const Gen8Settings& s,
         if(e.tick>=out.length || e.tick%ticks_per_quarter==0 || (e.flags&step_accent) || !rng.chance(std::min<unsigned>(s.amount,100)/2))continue;
         // Preserve rests/anchors and all motion. Drum keys never become pitches.
         if(unsigned(role)<4&&!voice.drums) {
-            auto at=std::find_if(candidates.events.begin(),candidates.events.end(),[&](const Event& x){return x.tick/24==e.tick/24;});
+            auto at=std::find_if(candidates.events.begin(),candidates.events.end(),[&](const Event& x){return x.tick/sixteenth_ticks==e.tick/sixteenth_ticks;});
             if(at!=candidates.events.end())e.key=at->key;
         }
         e.velocity=uint8_t(std::clamp(int(e.velocity)+int(rng.next()%21)-10,25,127));

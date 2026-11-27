@@ -25,9 +25,11 @@
 #include "rhythmer/shell/stage_map.h"
 #include "rhythmer/shell/mix_hub.h"
 #include "rhythmer/shell/step_edit.h"
+#include "rhythmer/shell/step_sounds.h"
 #include "rhythmer/shell/step_light_policy.h"
 #include "rhythmer/shell/step_lane.h"
 #include "rhythmer/model/slice_banks.h"
+#include "rhythmer/model/slice_hits.h"
 #include "rhythmer/shell/zoom_view.h"
 #include <algorithm>
 #include <cmath>
@@ -167,7 +169,7 @@ Look counting(const PadScene& s, const Look& look) {
 // Kit pad `kit` in its own colour (Stage's COLOUR, an MPC kit's), else the track's; Hue::Track either way.
 Look kit_hue(const PadScene& s, unsigned kit, float level) {
     uint32_t own = selected(s).pads[kit % sampler_pads].colour;
-    return own ? of(own, Hue::Track, level) : track(selected_index(s), level);
+    return own ? of(pad_led(own), Hue::Track, level) : track(selected_index(s), level);
 }
 Look kit_base(const PadScene& s, unsigned pad) {
     const auto& t = selected(s);
@@ -392,6 +394,12 @@ Look scenes_look(const PadScene& s, unsigned pad) {
         waiting += hand && rolling && !tr.off && tr.pattern == unsigned(target) && int(s.host.pattern_of(t)) != target;
     }
     if (s.ui.erase) return s.project.scenes[n].plain() && !kept ? Look {} : red(dim);
+    if (s.ui.copying == UiState::Copying::Scenes) { // Shift + Erase on Sequences: the one to copy, then where
+        const bool has = kept || !s.project.scenes[n].plain();
+        if (s.ui.copy_from < 0) return has ? lit(dim) : Look {};
+        if (s.ui.copy_from == int(n)) return white(full);
+        return has ? red(faint) : lit(faint); // where: replaced, or landing clean
+    }
     if (hand && waiting) return (s.now / 150) % 2 ? lit(mid) : lit(faint);
     if (hand && kept) return lit(full);
     if (!kept) return s.project.scenes[n].plain() ? Look {} : lit(faint);
@@ -519,6 +527,32 @@ Look step_edit_look(const PadScene& s, const Heard& snd, unsigned pad) {
     else if (t.engine != EngineKind::Sampler || t.pads[unsigned(key - int(sampler_first_note)) % sampler_pads].used()) base = track(selected_index(s), faint);
     return counting(s, playing(s, snd, base, pad));
 }
+// Step SOUND's sounds on the pads (shell/step_sounds.h): the shown track's pads in their own colours, the one
+// whose sample the step plays white; on SLICES the step's sample's slices, its slice white.
+Look sounds_look(const PadScene& s, unsigned pad) {
+    const auto& ui = s.ui;
+    const auto& t = selected(s);
+    const auto& p = shown(s);
+    const int n = lane_event(p, sound_step(ui, p), steps_lane(t));
+    if (n < 0) return {};
+    const auto& e = p.events[size_t(n)];
+    const unsigned at = ui.sounds_bank % sampler_banks * 16u + pad % 16;
+    if (ui.sounds_slices) {
+        const unsigned slices = step_sound_slices(s.project, t, e.key, e.sample);
+        if (at >= slices) return {};
+        return e.slice == at + 1 ? white(full) : track(selected_index(s), dim);
+    }
+    const unsigned from = ui.sounds_track % track_count;
+    const auto& source = s.project.tracks[from];
+    if (source.engine == EngineKind::Keygroup && at) return {};
+    const auto& sound = source.pads[at % sampler_pads];
+    if (!sound.used()) return {};
+    uint16_t plays = e.sample;
+    if (!plays && t.engine == EngineKind::Sampler && e.key >= sampler_first_note) plays = uint16_t(t.pads[(e.key - sampler_first_note) % sampler_pads].sample + 1);
+    if (!plays && t.engine == EngineKind::Keygroup) plays = uint16_t(t.pads[0].sample + 1);
+    if (sound.sample + 1u == plays) return white(full);
+    return sound.colour ? of(pad_led(sound.colour), Hue::Track, dim) : track(from, dim);
+}
 // Roll: the row in focus, the rows of the cursor's step and, under 16 Levels on a kit, every row the pattern uses
 // (its rows are the levels pad's pitches: shell/roll.h roll_lane()), as the page draws them.
 struct RollAt {
@@ -579,7 +613,8 @@ Look motion_look(const PadScene& s, const Heard& snd, const std::array<bool, 192
 // Chop: whether Manual's take still plays, and the slice whose bank the pads show (shell/zoom_view.h).
 bool chop_taking(const PadScene& s) { return chop_take_playing(s.project, s.ui, s.now); }
 unsigned chop_view(const PadScene& s) { return chop_bank_slice(s.project, s.ui, s.now); }
-// Chop: how strongly each slice of the bank in view sounds (the audition voice's place in the file), by pad.
+// Chop: how strongly each slice of the bank in view sounds (the audition voice's place in the file, or the kit pad's
+// voice playing that slice), by pad.
 std::array<float, 16> slices_sounding(const PadScene& s) {
     std::array<float, 16> out {};
     const auto& t = selected(s);
@@ -588,11 +623,15 @@ std::array<float, 16> slices_sounding(const PadScene& s) {
     uint32_t frames = sound.used() ? s.project.samples[sound.sample % sample_slots].frames : 0;
     const auto& slices = s.ui.slices;
     const unsigned first = pad_slice(chop_view(s), 0), last = std::min(slices.count, first + 16);
+    const int kit = chop_kit_pad(t, s.ui.chop_sample);
     for (unsigned n = 0; n < s.taps.count && n < TrackTaps::voices; ++n) {
         const auto& v = s.taps.voice[n];
-        if (v.pad != int(sampler_pads) || (v.flags & tap::Choked)) continue;
-        for (unsigned k = first; k < last; ++k)
+        const bool slice_voice = kit >= 0 && v.pad == kit && v.slot == s.ui.chop_sample; // a slice hit (its region one slice)
+        if ((v.pad != int(sampler_pads) && !slice_voice) || (v.flags & tap::Choked)) continue;
+        for (unsigned k = first; k < last; ++k) {
+            if (slice_voice && !(v.from >= slices.start[k] && v.to <= slices.end(k, frames))) continue;
             if (v.at >= slices.start[k] && v.at < slices.end(k, frames)) out[k - first] = std::max(out[k - first], v.level);
+        }
     }
     return out;
 }
@@ -747,7 +786,7 @@ Look copy_look(const PadScene& s, unsigned pad) {
     unsigned kit = kit_of(t, pad);
     bool used = t.pads[kit].used();
     if (ui.copy_from < 0) return used ? kit_hue(s, kit, dim) : Look {}; // the pad to copy
-    if (ui.copy_from == int(kit)) return white(full);
+    if (ui.copy_from == int(kit) && ui.copy_track == selected_index(s)) return white(full); // another kit's: none here
     return used ? red(faint) : track(selected_index(s), faint); // where: replaced, or landing clean
 }
 // Shift + Erase on a synth's keys, Roll or Step Edit: the keys with notes in the track's colour; then the key
@@ -861,7 +900,7 @@ void pad_looks(const PadScene& s, std::array<Look, 16>& out) {
             case PageId::Mixer: look = mixer_look(s, pad, false); break;
             case PageId::Song: look = song_look(s, pad); break;
             case PageId::Scenes: look = scenes_look(s, pad); break; // roadmap P5
-            case PageId::StepEdit: look = s.ui.step_pads ? steps_look(s, pad) : step_edit_look(s, snd, pad); break; // the bar's steps, or the keys
+            case PageId::StepEdit: look = sounds_open(s.ui) ? sounds_look(s, pad) : s.ui.step_pads ? steps_look(s, pad) : step_edit_look(s, snd, pad); break; // the sounds, the bar's steps, or the keys
             case PageId::Roll: look = roll_look(s, snd, roll, keys, pad); break;
             case PageId::TimeCorrect: look = time_correct_look(s, keys, pad); break;
             case PageId::Motion: look = motion_look(s, snd, moving, pad); break;

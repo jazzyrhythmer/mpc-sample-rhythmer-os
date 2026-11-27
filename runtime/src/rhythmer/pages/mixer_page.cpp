@@ -555,16 +555,16 @@ void push(Context& c) {
 // B1 SENDS (again: FX, the chain; a bus or the master FX alone), B2 EQ (again: the next three bands), B3 COMP; a key
 // the channel in hand has no block for does nothing. A key pressed puts SENDS and COMP back on their first row.
 void soft(Context& c, int key) {
+    const auto kind = channel_kind(mixer_strip(c.ui));
     if (!full_features(c.ui)) {
         c.ui.mixer_block = 0;
-        if (key == 0) {
+        if (key == 0 && channel_sends(kind)) {
             if (c.ui.lesson) c.notice("Finish lesson to use all Sends");
             else ask(c, UiState::Ask::EnableFullSends, int(c.ui.page));
         }
         return;
     }
     const unsigned k = unsigned(key) % 3;
-    const auto kind = channel_kind(mixer_strip(c.ui));
     if (k == 2 && !channel_comp(kind)) return;
     const unsigned now = mixer_block_of(c.ui, kind);
     if (k == 0 && channel_sends(kind) && (now == block_sends || now == block_fx)) c.ui.mixer_b1 = c.ui.mixer_b1 ? 0 : 1;

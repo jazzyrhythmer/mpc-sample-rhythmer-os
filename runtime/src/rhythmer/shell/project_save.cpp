@@ -107,17 +107,17 @@ void Context::request_project_open(const std::string& path) {
     if(!store||path.empty())return;
     if(save_pending){notice("Wait for saving to finish");return;}
     if(dirty){after_project_save=1;after_project_path=path;ask(*this,UiState::Ask::ProjectChanges,0);return;}
-    store->dismiss_recovery();store->load(path);
+    store->load(path);
 }
 void Context::project_changes_answer(bool save) {
     if(save){save_project();return;}
-    if(store)store->dismiss_recovery();
-    dirty=false;project_continue();
+    // The current project stays recoverable until the replacement actually opens.
+    project_continue();
 }
 void Context::project_continue() {
     const int next=after_project_save;const auto path=after_project_path;
     after_project_save=0;after_project_path.clear();
-    if(next==1&&store){store->dismiss_recovery();store->load(path);}
+    if(next==1&&store) store->load(path);
     else if(next==2)ask(*this,UiState::Ask::NewProject,0);
     else if(next==3)start_new_project(false);
 }

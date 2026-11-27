@@ -1,16 +1,16 @@
 // CHORD GEN integration: native pages, ownership, persistence/undo and main GEN dispatch.
 {
- EngineHost h;Shell s(h);auto& x=s.context();x.ui.track=2;x.track().engine=EngineKind::Midi;x.track().layout=PadLayout::Scale;x.project.root=9;x.project.scale=2;x.project.tempo=1240;x.project.swing=61;x.pattern().length=384;
+ EngineHost h;Shell s(h);auto& x=s.context();x.ui.track=2;x.track().engine=EngineKind::Midi;x.track().layout=PadLayout::Scale;x.project.root=9;x.project.scale=2;x.project.tempo=1240;x.project.swing=61;x.pattern().length=4*ticks_per_quarter;
  x.ui.page=PageId::Patterns;x.ui.sheet_open=true;x.ui.gen8_mode=0;x.ui.sheet_row=4;patterns_page.push(x);if(x.ui.gen8_mode!=5)return gen_failure(300,__LINE__);
  for(unsigned page=0;page<5;page++){if(x.ui.chord_gen_page!=page)return gen_failure(301,__LINE__);patterns_page.soft(x,1);}if(x.ui.chord_gen_page)return gen_failure(302,__LINE__);
  x.track().chord_gen.rhythm=0;x.track().chord_gen.bars=2;x.track().chord_gen.play=4;
  auto before=x.pattern();auto seed=x.track().chord_gen.seed;x.edits.clear();x.chord_gen_action(false);auto made=x.pattern();auto harmony=x.track().chord_gen.harmony;
- if(made.events.empty()||made.length!=768||x.project.root!=9||x.project.scale!=2||x.project.tempo!=1240||x.project.swing!=61||x.edits.size()!=1)return gen_failure(303,__LINE__);
+ if(made.events.empty()||made.length!=8*ticks_per_quarter||x.project.root!=9||x.project.scale!=2||x.project.tempo!=1240||x.project.swing!=61||x.edits.size()!=1)return gen_failure(303,__LINE__);
  x.undo();if(!(x.pattern()==before)||x.track().chord_gen.seed!=seed)return gen_failure(304,__LINE__);x.redo();if(!(x.pattern()==made)||x.track().chord_gen.harmony!=harmony)return gen_failure(305,__LINE__);
  x.chord_gen_action(true);if(x.track().chord_gen.harmony!=harmony)return gen_failure(306,__LINE__);x.undo();if(!(x.pattern()==made))return gen_failure(307,__LINE__);
  x.back();if(x.ui.gen8_mode||!x.ui.sheet_open)return gen_failure(308,__LINE__);
  x.track().chord_gen.local=1;x.track().chord_gen.root=3;x.track().chord_gen.scale=0;x.chord_gen_action(false);if(x.project.root!=9||x.project.scale!=2)return gen_failure(309,__LINE__);
- x.track().chord_gen.type=1;x.project.gen8.assign=0;x.project.gen8.length=3;x.project.gen8.genre=40;x.gen8_action(2);if(x.pattern().length!=1152||x.pattern().events.empty())return gen_failure(310,__LINE__);
+ x.track().chord_gen.type=1;x.project.gen8.assign=0;x.project.gen8.length=3;x.project.gen8.genre=40;x.gen8_action(2);if(x.pattern().length!=12*ticks_per_quarter||x.pattern().events.empty())return gen_failure(310,__LINE__);
  const auto mask=scales()[x.project.scale].mask;
  for(const auto& e:x.pattern().events)if(!(mask&(1u<<((e.key+12-x.project.root)%12))))return gen_failure(311,__LINE__);
  x.ui.gen8_mode=0;x.ui.sheet_row=2;auto controls=page_bindings(x.project,x.ui,x.pattern());if(controls[0].kind!=Binding::Kind::Gen8Amount)return gen_failure(312,__LINE__);

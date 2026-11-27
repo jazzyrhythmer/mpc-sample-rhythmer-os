@@ -84,7 +84,7 @@ void draw_tiles(Paint& p, const Snapshot& s, const ProjectStore::View& v) {
     else if (!s.project_path.empty()) h.left.push_back(pill(Icon::Check, "SAVED", colour::play));
     h.right.push_back(label(s.project.name));
     unsigned pick = s.ui.project_pick % 3; // the wheel's tile, raised; Push presses its key
-    SoftKeys keys {{s.ui.shift ? "SAVE AS" : "SAVE", "OPEN", s.ui.shift ? "RECOVERY" : "NEW"}, int(pick), colour::text}; // the project saves itself: B1 saves it under a new name
+    SoftKeys keys {{s.ui.shift ? "SAVE AS" : "SAVE", "OPEN", s.ui.shift ? "RECOVERY" : "NEW"}, int(pick), colour::text};
     keys.glyphs = {Icon::Save, Icon::Folder, Icon::Plus};
     frame(p, s, keys, h);
     juce::String fresh = s.dirty ? juce::String("ASKS FIRST") : juce::String();
@@ -386,7 +386,7 @@ void push(Context& c) {
 
 void soft(Context& c, int key) {
     if (!c.ui.project_list) { // SAVE, OPEN, NEW
-        if (key == 0) {if(c.ui.shift)c.open_project_save(true);else c.save_project();} // SAVE AS: the Name sheet, then a file of its own (the project saves itself otherwise)
+        if (key == 0) {if(c.ui.shift)c.open_project_save(true);else c.save_project();}
         if (key == 1) open_list(c);
         if (key == 2) {if(c.ui.shift){c.project_folder=":recovery";c.ui.project_list=true;c.ui.project_cursor=1;if(c.store)c.store->list(c.project_folder);}else c.ask_new_project();} // asks first, as the MPC does; the open one is saved first if it has a file
         return;

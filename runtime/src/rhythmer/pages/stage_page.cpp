@@ -633,7 +633,8 @@ void wave_picture(Paint& p, const Snapshot& s, const StagePage& page) {
         bool amp = page.kind == StageKind::AmpEnv;
         bool gate = pad.play == PadPlay::Gate, from_end = !gate && !pad.decay_from_start;
         int a = amp ? pad.attack : pad.filter_attack, d = amp ? pad.decay : pad.filter_decay, rl = amp ? pad.release : pad.filter_release;
-        float sustain = (amp ? pad.sustain : pad.filter_sustain) / 100.0f;
+        // A one shot from the start falls to silence over its decay (issue 64): its sustain is Note On's.
+        float sustain = amp && !gate ? 0.0f : (amp ? pad.sustain : pad.filter_sustain) / 100.0f;
         bool hold = amp && d >= 100;
         double decay = time_seconds(d) * (amp ? t.params[sampler::Decay] / 100.0 : 1.0);
         float soft = amp ? 1.0f - 0.6f * pad.velocity_sense / 100.0f : 1.0f; // K3: how much softer a soft hit plays
@@ -1066,7 +1067,7 @@ void plugin_sound_picture(Paint& p, const Snapshot& s) {
     const auto& t = s.track();
     const auto& panel = s.ui.plugin_panel;
     if (!plugin_ready(s)) { draw_plugin_view(p, s, t.plugin, top); return; }
-    const bool artwork = panel.layout_revision && performance_kind(plugin_name(s,t.plugin)) < 24;
+    const bool artwork = panel.layout_revision && performance_kind(plugin_name(s,t.plugin)) < 22;
     if (artwork) performance_art(p, s, plugin_name(s, t.plugin), juce::String::fromUTF8(panel.preset),
                                 px + 4, top + 43, pw - 8, bottom - top - 65, int(t.last_pad), 1.0f, true);
     auto poster_at = [&](const juce::String& name, juce::Colour colour) {

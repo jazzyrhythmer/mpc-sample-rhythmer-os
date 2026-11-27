@@ -58,6 +58,17 @@ class PluginHostTests(unittest.TestCase):
                             str(ROOT / "tests/clap_fixture.cpp"), "-o", str(plugin)], check=True)
             compile_and_run(self, temp, plugin, "tests/clap_host.cpp", ["rhythmer/plugin/clap_instance.o"], "clap ok")
 
+    @unittest.skipUnless(shutil.which("zig"), "needs zig")
+    def test_clap_host_exits_after_a_static_runtime_plugin(self):
+        """A CLAP with zig's static libc++ crashed the host at exit once dlclose unmapped it."""
+        with tempfile.TemporaryDirectory() as temp:
+            plugin = Path(temp) / "Test.clap"
+            subprocess.run(["zig", "c++", "-target", "aarch64-linux-gnu.2.28", "-Wno-nullability-completeness",
+                            "-std=c++20", "-O2", "-fPIC", "-DNDEBUG", "-shared",
+                            "-I" + str(ROOT / "build/deps/clap/include"), "-I" + str(ROOT / "sdk/rhythmer-screen"),
+                            str(ROOT / "tests/clap_fixture.cpp"), "-o", str(plugin)], check=True)
+            compile_and_run(self, temp, plugin, "tests/clap_host.cpp", ["rhythmer/plugin/clap_instance.o"], "clap ok")
+
     def test_vst2_host_against_fixture(self):
         with tempfile.TemporaryDirectory() as temp:
             plugin = Path(temp) / "Test.so"

@@ -23,12 +23,18 @@ constexpr unsigned max_params = 96;      // engine parameters a track stores
 // loaded (engine_info.h, upgrade_params), not the zeros they carry.
 constexpr unsigned params_version = 1;
 constexpr unsigned name_length = 24;
-// The sequencer's clock: 96 ticks a quarter note, as the MPC60 counted.
-// Notes sit on any tick (Rec Quantize off keeps the played time); Q is the
-// grid the pages step by and quantising snaps to. Files from before parity
-// phase 2 counted 24 a quarter (legacy_ticks_per_quarter).
-constexpr unsigned ticks_per_quarter = 96, sixteenth_ticks = ticks_per_quarter / 4;
+// The sequencer's clock: 960 ticks a quarter note, as the MPC counts (MPC 2
+// and 3, .xpj files). Notes sit on any tick (Rec Quantize off keeps the
+// played time); Q is the grid the pages step by and quantising snaps to.
+// Files from before parity phase 2 counted 24 a quarter
+// (legacy_ticks_per_quarter); files from then until the TPQN section counted
+// 96 (file_ticks_per_quarter) and load with every tick times ten.
+constexpr unsigned ticks_per_quarter = 960, sixteenth_ticks = ticks_per_quarter / 4;
 constexpr unsigned legacy_ticks_per_quarter = 24;
+constexpr unsigned file_ticks_per_quarter = 96;
+// The longest a pattern may be, in ticks: max_bars of the longest bar a file
+// may hold. A note, a lock's hold and a kit lane fit in it too.
+constexpr uint32_t max_pattern_ticks = max_bars * 16 * ticks_per_quarter;
 constexpr unsigned max_pattern_events = 65535; // notes a pattern holds; an edit past it is refused
 constexpr unsigned song_clips = 256;    // clips in the arrange view
 constexpr unsigned song_markers = 16;

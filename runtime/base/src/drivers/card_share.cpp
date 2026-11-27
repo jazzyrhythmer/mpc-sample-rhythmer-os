@@ -44,6 +44,12 @@ CardVolumes find_card(const std::vector<StorageVolume>& volumes, const std::stri
     return card;
 }
 
+std::string card_folder(const CardVolumes& card) {
+    for (const auto& volume : card.mounted)
+        if (!volume.mountpoints.empty()) return volume.mountpoints.front();
+    return {};
+}
+
 CardShare::CardShare(SystemServices& services, std::string sys, std::string mountinfo, std::string gadget, std::string saved)
     : services(services), sys(std::move(sys)), mountinfo(std::move(mountinfo)), gadget(std::move(gadget)), saved(std::move(saved)) {
     // Left lent by an earlier run (a crash, or an app swap): take it back first.
@@ -73,6 +79,7 @@ bool CardShare::lend() {
     if (current.state != CardShareState::Home) { current.message = "the card is not the MPC's now"; return false; }
     // The drive needs the webcam's endpoint (gadget_add_storage()): never under a computer showing the camera.
     if (gadget_mirror_live()) { current.message = mirror_in_use; return false; }
+    if (users && users->in_use()) { current.message = card_network_in_use; return false; }
     auto card = find_card(services.volumes());
     if (card.disk.empty()) { current.message = "no card"; return false; }
     current.disk = card.disk;
@@ -119,6 +126,7 @@ void CardShare::do_lend() {
     };
     auto card = find_card(services.volumes(), current.disk);
     if (card.volumes.empty()) { current.state = CardShareState::Home; current.message = "no card"; return; }
+    if (users) users->let_go(); // No network connection keeps the card's folder
     ::sync();
     for (const auto& volume : card.mounted)
         if (!services.mount(volume.object, false)) { fail("the card is in use"); return; }

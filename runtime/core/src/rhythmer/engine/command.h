@@ -33,6 +33,7 @@ struct Command {
         Chained,     // roadmap P5: track, value = it plays a pattern chain (its patterns' follow actions wait)
         EditLoop,    // track, position = first tick, index | value << 16 = ticks (0: the whole pattern): an editor's loop
         SceneTempo,  // roadmap P5: value = a scene's tempo (tenths of a BPM), taking over on the bar its patterns launch
+        SceneMutes,  // index = the tracks a scene sets the mute of, value = those it mutes (a bit a track), on that bar too
         SongTempo,   // roadmap P5: the song's tempo lane, point `index`: position = its bar, value = tempo, pattern = ramp
         SongTempoCount, // value = the lane's points in use
         Tempo,       // value = tenths of a BPM
@@ -49,7 +50,7 @@ struct Command {
         PadNote,     // track, index = kit pad, value = velocity, pattern = semitones + 64, position = cutoff + 1 (0: the pad's): 16 Levels;
                      // micros = a slice + 1 of the pad's sample's chop (0: the pad's region): Chop under Seq Record (issue 24)
         // track = InputSource, index = sample slot, value = threshold dB (-96: at once), pattern = rec length
-        // (0 until stopped, 1..16 bars, 255 Seq: the pattern of track `position`, from where it comes round while playing)
+        // (0 until stopped, 1..128 bars, 255 Seq: the pattern of track `position`, from where it comes round while playing)
         RecordArm,
         RecordGain,  // value = dB
         // track = InputSource: what the meter, Audio Recall's ring and the next take hear; with InputSource::Track,
@@ -175,7 +176,9 @@ struct Command {
         // The mixer: index = bus, value 1: its return muted.
         BusMute,
         // The mixer: value 1: takes, Audio Recall and the input meter hear the input after its strip (else before).
-        InputWet
+        InputWet,
+        // Elektron's per track direction: track, value = its PlayDirection (model/step_order.h).
+        TrackDirection
 
     };
     enum SubPart : uint16_t { SubLevel, SubPan, SubMute, SubSolo, SubSend0 }; // SubMix's index; SubSend0 + bus

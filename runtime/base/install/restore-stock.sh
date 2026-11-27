@@ -64,6 +64,9 @@ for MIRROR in /sys/kernel/config/usb_gadget/*/functions/uvc.screen; do
     { [ -z "$UDC" ] || echo "$UDC" > "$GADGET/UDC"; } 2>/dev/null || true
 done
 rmmod sample_base_uvc 2>/dev/null || true
+# File Sharing's SMB server (src/drivers/file_share.h) stops with the app: every
+# connection closes. Its module stays (it is never unloaded).
+[ -w /sys/class/ksmbd-control/kill_server ] && echo hard > /sys/class/ksmbd-control/kill_server 2>/dev/null || true
 # sample-base widened the USB-C audio gadget for stems and set its rate to the
 # audio device's (src/drivers/usb_gadget.h): the stock app gets its original
 # channel mask and rate back (44.1 kHz when an older line names none). Any

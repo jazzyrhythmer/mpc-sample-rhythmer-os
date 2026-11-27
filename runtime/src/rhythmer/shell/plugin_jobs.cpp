@@ -385,6 +385,17 @@ bool Context::plugin_screen_input(ScreenKey key, int value) {
     return true;
 }
 
+// MUTE or ERASE tapped on a plug-in's own page (not an effect's strip, where the chain's own jobs act): handed to it
+// when its page takes that button (rhythmer_screen.h keys()), asked now rather than from the panel's last refresh.
+bool Context::plugin_screen_key(ScreenKey key) {
+    const auto at = plugin_screen_place(project, ui);
+    if (at.entry < 0 || at.area != 0 || !plugins || !ui.plugin_panel.screen) return false;
+    const uint8_t bit = key == ScreenKey::Mute ? screen_key_mute : key == ScreenKey::Erase ? screen_key_erase : 0;
+    if (!bit || !(plugins->screen_keys(unsigned(at.entry)) & bit)) return false;
+    plugins->screen_input(unsigned(at.entry), {key, 1, ui.shift});
+    return true;
+}
+
 int Context::plugin_in_focus() const {
     const auto& t = project.tracks[ui.track % track_count];
     if (ui.page == PageId::PluginPresets && ui.presets_entry < max_plugins) return ui.presets_entry;

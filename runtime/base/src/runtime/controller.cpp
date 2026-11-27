@@ -21,6 +21,7 @@ uint64_t monotonic_ns() { return uint64_t(std::chrono::duration_cast<std::chrono
 Controller::Controller(App& app, bool required, UsbAudioOutput& usb, bool usb_rate, SpeakerHold* speaker_hold)
     : app(app), surface_required(required), usb_output(usb), usb_rate_follows(usb_rate) {
     mixer.attach(speaker_hold);
+    card.attach(&files); // No lending under a computer that has the card open over the network
     catalog = {midi.json(), midi.outputs(), midi.open_ports()};
     require(!required || midi.has_surface(), "Control surface unavailable; use --no-surface only for a headless/host test");
 }
@@ -52,6 +53,25 @@ void Controller::follow_card(Session& session) {
     session.card_connected.store(status.connected);
     session.card_ejected.store(status.ejected);
     session.card_returns.store(status.returns);
+}
+
+// Service thread: File Sharing serves the card's folder while the card is
+// the MPC's (edisksd's mount, looked up once a second, at once when the card
+// comes home) and nothing otherwise.
+void Controller::follow_file_share(Session& session) {
+    FileSharing wanted = app.file_sharing();
+    const auto& status = card.status();
+    bool home = status.state == CardShareState::Home;
+    auto now = Clock::now();
+    if (!home) { card_folder_seen.clear(); next_card_look = {}; }
+    else if (wanted.on && now >= next_card_look) {
+        card_folder_seen = card_folder(find_card(services.volumes()));
+        next_card_look = now + std::chrono::seconds(1);
+    }
+    files.follow(wanted, home ? card_folder_seen : std::string(), status.connected);
+    auto shared = files.status();
+    session.file_share.store(uint8_t(shared.state));
+    session.file_share_users.store(uint16_t(std::min(shared.computers, 65535u)));
 }
 
 // Service thread: the USB-C audio gadget offers the computer the rate the
@@ -92,6 +112,7 @@ void Controller::poll_platform(Session& session) {
     for (unsigned n = 0; n < jack_count; ++n) session.jacks[n].store(jacks.state(Jack(n))); // -1 once the card is lost.
     card.poll();
     follow_card(session);
+    follow_file_share(session);
     follow_usb_rate(session);
     app.service(hardware);
     follow_card(session); // What the app asked of it shows at once

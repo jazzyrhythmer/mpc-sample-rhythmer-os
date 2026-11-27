@@ -110,6 +110,7 @@ public:
     bool screenInput (const rhythmer_screen_input& input, bool& used) override;
     bool screenControls (std::array<int, 3>& indices) override;
     bool takeRedraw() override;
+    uint32_t screenKeys() const override;
     int getNumPrograms() override;                      // its presets (1 with none, as JUCE has it)
     int getCurrentProgram() override;                   // the one loaded here last (0 none yet)
     void setCurrentProgram (int) override;              // loads that preset, again if it is the one loaded

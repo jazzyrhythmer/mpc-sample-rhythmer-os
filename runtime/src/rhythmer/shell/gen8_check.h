@@ -39,10 +39,10 @@ inline int gen8_shell_check(const std::function<void(Shell&,const std::string&)>
         auto& tr=c.project.tracks[t];tr.engine=EngineKind::Midi;tr.pattern=0;
         tr.layout=t<4?PadLayout::Scale:PadLayout::Drums;
         for(unsigned k=0;k<sampler_pads;k++)tr.midi.drum_note[k]=uint8_t(36+k);
-        auto& p=c.patterns.at[t][0];p.length=1536;p.events.clear();
+        auto& p=c.patterns.at[t][0];p.length=16*ticks_per_quarter;p.events.clear();
     }
     // Range targets 9-16 must leave 1-8 unchanged in MIDI-only mode.
-    for(unsigned t=8;t<16;t++){c.project.tracks[t]=c.project.tracks[t-8];c.patterns.at[t][0].length=1536;c.patterns.at[t][0].events.clear();}
+    for(unsigned t=8;t<16;t++){c.project.tracks[t]=c.project.tracks[t-8];c.patterns.at[t][0].length=16*ticks_per_quarter;c.patterns.at[t][0].events.clear();}
     c.project.gen8.first=8;c.project.gen8.last=15;c.gen8_action(0);
     for(unsigned t=0;t<8;t++)if(!c.patterns.at[t][0].events.empty())return gen_failure(30,__LINE__);
     for(unsigned t=8;t<16;t++)if(c.patterns.at[t][0].events.empty())return gen_failure(31,__LINE__);
@@ -58,12 +58,12 @@ inline int gen8_shell_check(const std::function<void(Shell&,const std::string&)>
     // Native sampler bank H: keys may exceed MIDI 127 inside this host.
     c.ui.track=15;auto& tr=c.project.tracks[15];tr.engine=EngineKind::Sampler;tr.break_bars=2;tr.bank=7;tr.pattern=0;
     for(unsigned k=112;k<128;k++)tr.pads[k].sample=0;
-    auto& p=c.patterns.at[15][0];p.length=1536;p.events.clear();
+    auto& p=c.patterns.at[15][0];p.length=16*ticks_per_quarter;p.events.clear();
     c.edits.clear();c.gen8_action(5);
     if(c.edits.size()!=1||p.events.size()!=32||p.events.front().key!=148)return gen_failure(5,__LINE__);
     auto straight=p.events;c.undo();if(!p.events.empty())return gen_failure(6,__LINE__);c.redo();if(p.events!=straight)return gen_failure(7,__LINE__);
     c.gen8_action(7);if(p.events==straight)return gen_failure(8,__LINE__);
-    for(size_t i=0;i<straight.size();i++)if(straight[i].tick%96==0&&p.events[i]!=straight[i])return gen_failure(9,__LINE__);
+    for(size_t i=0;i<straight.size();i++)if(straight[i].tick%ticks_per_quarter==0&&p.events[i]!=straight[i])return gen_failure(9,__LINE__);
     c.undo();if(p.events!=straight)return gen_failure(10,__LINE__);
     // Missing kit semantics must not erase a working pattern.
     c.ui.track=7;auto& un=c.project.tracks[7];un.engine=EngineKind::Plugin;un.plugin=0;un.layout=PadLayout::Drums;
@@ -314,7 +314,8 @@ inline int gen8_shell_check(const std::function<void(Shell&,const std::string&)>
      x.apply(Binding{Binding::Kind::GenFirst,0,0,15},15);if(x.project.gen8.first!=15||x.project.gen8.last!=15)return gen_failure(71,__LINE__);
      x.apply(Binding{Binding::Kind::GenLast,0,0,15},2);if(x.project.gen8.first!=2||x.project.gen8.last!=2)return gen_failure(72,__LINE__);
      patterns_page.push(x);if(x.ui.gen8_mode||!x.ui.sheet_open)return gen_failure(73,__LINE__);
-     x.ui.page=PageId::Samples;x.ui.break_browse=true;
+     x.track().engine=EngineKind::Sampler;x.track().break_bars=2;
+     x.gen8_action(9);
      auto knobs=page_bindings(x.project,x.ui,x.pattern());if(knobs[0].kind!=Binding::Kind::GenBars)return gen_failure(74,__LINE__);
      samples_page.soft(x,0);if(x.ui.page!=PageId::Patterns||!x.ui.sheet_open||x.ui.gen8_mode!=2||x.ui.break_browse)return gen_failure(75,__LINE__);
      // Same start/end really changes one track, irrespective of the selection.
@@ -336,7 +337,7 @@ inline int gen8_shell_check(const std::function<void(Shell&,const std::string&)>
         EngineHost h;Shell s(h);auto& x=s.context();PluginRack rack(h);rack.set_card(card);x.plugins=&rack;
         for(unsigned t=0;t<track_count;t++){
             auto& track=x.project.tracks[t];track.engine=EngineKind::Midi;track.layout=PadLayout::Scale;track.pattern=0;
-            auto& pattern=x.patterns.at[t][0];pattern.length=384;pattern.events.clear();Event marker;marker.tick=0;marker.key=uint8_t(48+t);marker.velocity=100;marker.length=24;pattern.add(marker);
+            auto& pattern=x.patterns.at[t][0];pattern.length=4*ticks_per_quarter;pattern.events.clear();Event marker;marker.tick=0;marker.key=uint8_t(48+t);marker.velocity=100;marker.length=sixteenth_ticks;pattern.add(marker);
         }
         x.project.gen8={42,2,85,50};x.project.gen8.assign=1;x.ui.page=PageId::Patterns;x.ui.sheet_open=true;x.ui.gen8_mode=3;
         x.apply(Binding{Binding::Kind::GenGroup,0,0,3},int(group));

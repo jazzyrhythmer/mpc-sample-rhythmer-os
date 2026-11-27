@@ -27,38 +27,55 @@ constexpr uint32_t min_slice = 882;      // 20 ms: no slice shorter
 struct Slices {
     std::array<uint32_t, max_slices> start {};
     std::array<uint32_t, max_slices> stop {}; // where each ends (past its last frame); 0: the sample's end
+    // Each slice's own Reverse (Chop's Shift + Loop): it plays the other way round from its pad, the rest as the pad
+    // plays. Rhythmer's own (the WAV's "mlch" chunk); the MPC keeps no such mark.
+    std::array<bool, max_slices> reverse {};
     unsigned count = 0;
     uint32_t end(unsigned n, uint32_t frames) const {
         uint32_t e = n < count ? stop[n] : 0;
         return e && e <= frames ? e : frames;
     }
     bool touches(unsigned n, uint32_t frames) const { return n + 1 < count && end(n, frames) == start[n + 1]; } // slice n and the next
+    bool reversed(unsigned n) const { return n < count && reverse[n]; }
+    bool any_reversed() const {
+        for (unsigned n = 0; n < count; ++n) if (reverse[n]) return true;
+        return false;
+    }
     bool same(const Slices& o) const {
         if (count != o.count) return false;
-        for (unsigned n = 0; n < count; ++n) if (start[n] != o.start[n] || stop[n] != o.stop[n]) return false;
+        for (unsigned n = 0; n < count; ++n) if (start[n] != o.start[n] || stop[n] != o.stop[n] || reverse[n] != o.reverse[n]) return false;
         return true;
     }
     // One slice, from `from` to `to` (0: the sample's end).
-    void whole(uint32_t from, uint32_t to) { start = {}; stop = {}; start[0] = from; stop[0] = to; count = 1; }
-    // A cut inside a slice: it ends there and a new slice runs on to where it ended. False when full, outside every
-    // slice, or too close to either edge.
+    void whole(uint32_t from, uint32_t to) { start = {}; stop = {}; reverse = {}; start[0] = from; stop[0] = to; count = 1; }
+    // A cut inside a slice: it ends there and a new slice runs on to where it ended (reversed if the one cut was).
+    // False when full, outside every slice, or too close to either edge.
     bool add(uint32_t frame, uint32_t frames, unsigned most = max_slices) {
         if (!count || count >= std::min<unsigned>(most, max_slices)) return false;
         unsigned at = 0;
         while (at < count && !(start[at] < frame && frame < end(at, frames))) ++at;
         if (at == count || start[at] + min_slice > frame || frame + min_slice > end(at, frames)) return false;
-        for (unsigned n = count; n > at + 1; --n) { start[n] = start[n - 1]; stop[n] = stop[n - 1]; }
-        start[at + 1] = frame; stop[at + 1] = stop[at]; stop[at] = frame; ++count;
+        for (unsigned n = count; n > at + 1; --n) { start[n] = start[n - 1]; stop[n] = stop[n - 1]; reverse[n] = reverse[n - 1]; }
+        start[at + 1] = frame; stop[at + 1] = stop[at]; stop[at] = frame; reverse[at + 1] = reverse[at]; ++count;
         return true;
     }
     // Takes slice n away; what it held (and any gap before it) joins the slice before (the MPC's Merge, and
-    // Erase + pad). The first slice has none before it.
+    // Erase + pad), which keeps its own Reverse. The first slice has none before it.
     void remove(unsigned n) {
         if (n == 0 || n >= count) return;
         stop[n - 1] = stop[n];
-        for (unsigned k = n + 1; k < count; ++k) { start[k - 1] = start[k]; stop[k - 1] = stop[k]; }
+        for (unsigned k = n + 1; k < count; ++k) { start[k - 1] = start[k]; stop[k - 1] = stop[k]; reverse[k - 1] = reverse[k]; }
         --count;
-        start[count] = stop[count] = 0;
+        start[count] = stop[count] = 0; reverse[count] = false;
+    }
+    // A new chop of the same region (another type or amount): a slice starting where a reversed one of `was` did
+    // (within `reach` frames: Zero Snap moves cuts a little) stays reversed; the rest play as their pad.
+    void keep_reverse(const Slices& was, uint32_t reach) {
+        for (unsigned k = 0; k < count; ++k) {
+            reverse[k] = false;
+            for (unsigned n = 0; n < was.count && !reverse[k]; ++n)
+                reverse[k] = was.reverse[n] && (was.start[n] > start[k] ? was.start[n] - start[k] : start[k] - was.start[n]) <= reach;
+        }
     }
     // Slice n cut in half (Split); false when it is too short or the slices are full.
     bool split(unsigned n, uint32_t frames) {

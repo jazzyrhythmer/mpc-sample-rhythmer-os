@@ -51,13 +51,15 @@ void print_project(Project& project, PatternBank& bank, unsigned track, unsigned
     tr.strip = Strip {}; // the mixer's strip stays live on a frozen track (docs/MIXER_PLAN.md decision 1): never printed
     tr.pattern = uint8_t(p);
     tr.chain = {}; tr.chain_count = 0; tr.chain_at = 0;
-    tr.in_scene = {}; tr.off = false; // which pattern it plays in each scene: not part of its sound
+    tr.in_scene = {}; tr.scene_mutes = {}; tr.off = false; // which pattern it plays in each scene, muted or not: not part of its sound
     tr.last_note = plain.last_note; tr.last_pad = plain.last_pad;
     tr.fader_target = plain.fader_target; tr.fader_on = plain.fader_on; tr.fader_learned = plain.fader_learned; tr.fader_pin = plain.fader_pin;
     tr.wheel = 0; tr.bend = 0;
     tr.midi_channel = 0;
+    std::vector<bool> locked(sample_slots, false); // step SOUND: the samples its notes play of their own
+    for (const auto& e : kept.events) if (e.sample && e.sample <= sample_slots) locked[e.sample - 1u] = true;
     for (unsigned n = 0; n < sample_slots; ++n) {
-        bool used = false;
+        bool used = locked[n];
         for (const auto& pad : tr.pads) used |= pad.plays(uint16_t(n));
         if (!used) continue;
         out->samples.edit(n) = project.samples[n];
@@ -83,8 +85,8 @@ uint64_t print_hash(const Project& project, const PatternBank& bank, const std::
     for (unsigned e = 0; e < max_plugins; ++e)
         if (project.plugins[e].used()) used[e] = states[e];
     auto bytes = save_project(project, bank, &used);
-    // Without the sequence links (SEQL): which pattern plays in which scene is not the print's sound, and the
-    // hashes stay those of prints made before links.
+    // Without the sequence links (SEQL): which pattern plays in which scene, and the mutes kept there, are not the
+    // print's sound, and the hashes stay those of prints made before links.
     for (size_t at = 8; at + 8 <= bytes.size();) {
         size_t size = size_t(bytes[at + 4]) | size_t(bytes[at + 5]) << 8 | size_t(bytes[at + 6]) << 16 | size_t(bytes[at + 7]) << 24;
         if (at + 8 + size > bytes.size()) break;

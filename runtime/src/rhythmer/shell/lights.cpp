@@ -4,6 +4,7 @@
 // 5 ms; the runtime sends only what changed). Colours come from the track
 // palette; button light values from surface/leds.h.
 #include "rhythmer/engine/engine_host.h"
+#include "rhythmer/shell/step_sounds.h"
 #include "rhythmer/shell/history_jobs.h"
 #include "rhythmer/shell/lesson_jobs.h"
 #include "rhythmer/shell/features.h"
@@ -196,6 +197,7 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
     autosave_tick(now);
     usage_tick(now);
     context_.chop_tick(now); // Chop: a moved cut heard once, gone still
+    context_.browse_tick(now); // Samples' trim sheet: a moved end heard once, the sheet down off its file
     // Power was pressed: the Exit sheet opens (the service thread only counts presses).
     // The library found files or finished a sample: the lengths go into the project.
     if (library_ && library_->generation() != library_seen) {
@@ -259,6 +261,7 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
                 if (!context_.kit_from.empty() && context_.kit_from == loaded->path) // Load Kit: only its kit, onto the selected track
                     context_.load_kit(*project, std::filesystem::path(loaded->path).stem().string());
                 else if (loaded->imported) { // not saved yet: the .xpj stays as it is (its takes wait beside the projects)
+                    store_->dismiss_recovery();
                     context_.switch_to(*project, *bank, {});
                     context_.audio_staging_from = loaded->audio_from;
                     context_.dirty = true;
@@ -266,6 +269,7 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
                     context_.notice(loaded->note);
                 }
                 else {
+                    if (!loaded->recovery) store_->dismiss_recovery();
                     context_.switch_to(*project, *bank, loaded->recovery&&!loaded->media.empty()?loaded->media:loaded->path, &plugin_states, &prints);
                     read_jams(loaded->bytes, context_.jams); context_.publish_jams();
                     if (loaded->recovery) {
@@ -359,7 +363,9 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
         const bool chop = ui_.page == PageId::Chop && ui_.slices.count;
         const auto& t = project_->tracks[ui_.track % track_count];
         const FrameView view = zoomed_view(); // a close view's frames too, drawn from memory (SampleLibrary::detail())
-        const unsigned view_sample = ui_.page == PageId::Chop ? ui_.chop_sample : t.pads[t.last_pad % sampler_pads].sample;
+        const unsigned view_sample = ui_.page == PageId::Chop ? ui_.chop_sample
+                                   : ui_.page == PageId::Samples && ui_.browse.up() ? unsigned(ui_.browse.slot) // the trim sheet's file
+                                   : t.pads[t.last_pad % sampler_pads].sample;
         SlicedChops sliced; // slice hits' samples, their chops as they play them (issue 24)
         for (uint16_t slot : sliced_samples(*project_, context_.patterns)) sliced.emplace_back(slot, &context_.live_chop(slot));
         auto holds = stream_holds(*project_, chop ? &ui_.slices : nullptr, chop ? ui_.chop_sample : no_sample,
@@ -654,7 +660,9 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
             bool shift_job = button_has_shift_job(project, ui, button, kit, keys);
             bool lit = button == B::Shift || (button == B::TapTempo && ui.settings.click) || (button == B::Erase && ui.copying != UiState::Copying::Off)
                     || (button == B::NoteRepeat && track.repeat) || (button == B::Mute && ui.mute_mode())
-                    || (track.engine == EngineKind::Sampler && button == B::Loop && track.pads[track.last_pad % sampler_pads].reverse)            // reverse on
+                    || (track.engine == EngineKind::Sampler && button == B::Loop && (ui.page == PageId::Chop && ui.chop_slice < ui.slices.count
+                            ? slice_heard_reversed(track, ui.chop_sample, ui.slices, ui.chop_slice)              // on Chop, the slice in hand's
+                            : track.pads[track.last_pad % sampler_pads].reverse))                                // reverse on
                     || (track.engine == EngineKind::Sampler && button == B::Chop && track.pads[track.last_pad % sampler_pads].play == PadPlay::Gate); // Note On
             set(button, !shift_job ? L::Off : lit ? L::Bright : L::Dim);
         }
@@ -664,7 +672,7 @@ void Shell::lights(SurfaceLights& lights, uint32_t now) {
     bool sound_hub = ui.page == PageId::Stage || is_sampler_page(ui.page) || ui.sample_held; // Sample's hub (docs/HUBS_PLAN.md)
     on(B::Sample, sound_hub || ui.page == PageId::InputConfig);
     on(B::Seq, ui.page == PageId::StepEdit || ui.page == PageId::Patterns || ui.page == PageId::Scenes || ui.page == PageId::Roll || ui.page == PageId::Motion || ui.page == PageId::ModPage); // its hub
-    on(B::SampleSelect, ui.page == PageId::Sounds || ui.page == PageId::Samples);
+    on(B::SampleSelect, ui.page == PageId::Sounds || ui.page == PageId::Samples || sounds_open(ui)); // Step Edit: the sounds on the pads
     on(B::Chop, ui.page == PageId::Chop);
     on(B::NoteRepeat, track.repeat && ui.page != PageId::Song); // on Song it repeats the clip
     {

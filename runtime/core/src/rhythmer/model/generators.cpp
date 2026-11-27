@@ -41,7 +41,7 @@ bool lay_euclid(Pattern& p, uint8_t key, unsigned hits, unsigned steps, unsigned
     for (unsigned s = 0; s < steps && s * q < p.length; ++s) {
         if (!rhythm[s]) continue;
         Event e;
-        e.tick = s * q; e.length = uint16_t(std::min<unsigned>(q, 0xffff)); e.key = key; e.velocity = velocity;
+        e.tick = s * q; e.length = note_ticks(q); e.key = key; e.velocity = velocity;
         fits &= p.add(e);
     }
     p.euclids.erase(std::remove_if(p.euclids.begin(), p.euclids.end(), [&](const EuclidLane& l) { return l.key == key; }), p.euclids.end());
@@ -140,7 +140,7 @@ Pattern vary_pattern(const Pattern& p, Variation v, double amount, uint64_t seed
                 for (unsigned s = 0; s < steps; ++s) {
                     if (hit[s] || !(hit[(s + steps - 1) % steps] || hit[(s + 1) % steps]) || !dice.chance(amount)) continue;
                     Event e;
-                    e.tick = s * q; e.length = uint16_t(q); e.key = key; e.velocity = soft;
+                    e.tick = s * q; e.length = note_ticks(q); e.key = key; e.velocity = soft;
                     added.push_back(e);
                 }
             }
@@ -158,7 +158,7 @@ Pattern vary_pattern(const Pattern& p, Variation v, double amount, uint64_t seed
                 int from = degree_of(a.key, place), to = degree_of((n + 1 < line.size() ? line[n + 1] : line[0]).key, place);
                 int degree = std::abs(to - from) >= 2 ? from + (to - from) / 2 : from + (dice.chance(0.5) ? 1 : -1);
                 Event e;
-                e.tick = at % p.length; e.length = uint16_t(std::min<uint32_t>(q, next - at));
+                e.tick = at % p.length; e.length = note_ticks(std::min<uint32_t>(q, next - at));
                 e.key = uint8_t(key_of(degree, place)); e.velocity = uint8_t(std::max(1, a.velocity * 4 / 5));
                 added.push_back(e);
             }
@@ -175,7 +175,7 @@ Pattern vary_pattern(const Pattern& p, Variation v, double amount, uint64_t seed
         break;
     case Variation::Reversed: // each note starts where its end was (up to the grid), mirrored in the pattern; slides go
         for (auto& e : notes) {
-            uint32_t end = std::min<uint32_t>(e.tick + std::max<uint16_t>(e.length, 1), p.length);
+            uint32_t end = std::min<uint32_t>(e.tick + std::max<uint32_t>(e.length, 1), p.length);
             uint32_t at = p.length - end;
             at = std::min<uint32_t>((at + q - 1) / q * q, p.length - 1);
             e.tick = at;

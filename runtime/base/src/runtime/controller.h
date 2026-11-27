@@ -2,6 +2,7 @@
 #pragma once
 #include "drivers/card_share.h"
 #include "drivers/clock_io.h"
+#include "drivers/file_share.h"
 #include "drivers/hardware_midi.h"
 #include "drivers/jacks.h"
 #include "drivers/mixer.h"
@@ -51,6 +52,7 @@ private:
     void record_surface_packets();
     void poll_platform(Session& session);
     void follow_card(Session& session);
+    void follow_file_share(Session& session);
     void follow_usb_rate(Session& session);
 
     // commands.cpp: the control protocol, run on the service thread.
@@ -89,6 +91,9 @@ private:
     Platform platform;
     SystemServices services;
     CardShare card {services}; // Takes back a card an earlier run left lent
+    FileShare files;           // The card as a network drive, its own thread
+    std::string card_folder_seen; // Where the card is mounted, read once a second while File Sharing is on
+    std::chrono::steady_clock::time_point next_card_look {};
     ClockIo clock;
     PowerButton power;
     SurfaceLights lights;

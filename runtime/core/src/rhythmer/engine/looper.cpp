@@ -2,7 +2,10 @@
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "rhythmer/engine/looper.h"
 #include <algorithm>
+#include <cinttypes>
 #include <cmath>
+#include <cstdio>
+#include <new>
 
 namespace rhythmer {
 namespace {
@@ -94,6 +97,56 @@ void LoopStretch::frame(const float* l, const float* r, uint32_t length, double 
 
 // ---- Looper -----------------------------------------------------------------
 
+namespace {
+// The memory Linux says is there for a new allocation (MemAvailable); unknown (no /proc): no limit.
+uint64_t available_memory() {
+    std::FILE* f = std::fopen("/proc/meminfo", "r");
+    if (!f) return UINT64_MAX;
+    char line[128];
+    uint64_t kb = 0;
+    bool found = false;
+    while (!found && std::fgets(line, sizeof(line), f)) found = std::sscanf(line, "MemAvailable: %" SCNu64 " kB", &kb) == 1;
+    std::fclose(f);
+    return found ? kb * 1024 : UINT64_MAX;
+}
+} // namespace
+
+uint32_t Looper::grow_need(const Loop& l) const {
+    if (!l.bars || last_per_frame <= 0) return 0;
+    const double frames = l.bars * last_bar / last_per_frame; // the device's
+    if (frames <= looper::frames_at(rate)) return 0;
+    return uint32_t(std::min(4e9, (std::ceil(frames / rate) + 1) * rate)); // to the next whole second, and one more
+}
+
+void Looper::ask_grow(Loop& l, unsigned n, uint32_t frames, bool both) {
+    l.growing = frames > 0;
+    grow_serial = (grow_serial + 1) & 0x7fffffffu;
+    grow_ask[n % loop_tracks].store(uint64_t(frames) | uint64_t(both) << 32 | uint64_t(grow_serial) << 33, std::memory_order_release);
+}
+
+// Longer memory from the service thread: into the loop that asked while nothing writes it (an empty loop takes both,
+// one with audio an undo while it has nothing to undo); what it no longer needs goes back. None: NoRoom.
+void Looper::take_grown() {
+    Grown g;
+    while (unretired_free() >= 3 && grown.pop(g)) { // room to hand back all three it may replace
+        auto& l = loops[g.loop % loop_tracks];
+        l.growing = false;
+        if (!g.undo) { refuse(l, looper::Error::NoRoom); continue; }
+        const bool idle = enabled && !disable_wanted && !l.held && l.fit.load() == FitState::None && l.write == Write::Off
+                       && l.write_in < 0 && !l.swapping && !l.waiting_load;
+        const bool bare = l.state == State::Empty || l.state == State::Armed; // nothing in it yet
+        if (idle && g.audio && bare) {
+            LoopBuffer* old = l.audio;
+            if (retire(old)) { l.audio = g.audio; g.audio = nullptr; }
+        }
+        if (idle && (bare || (l.undo_state == looper::Undo::None && (!l.undo || l.undo->frames < g.undo->frames)))) {
+            LoopBuffer* old = l.undo;
+            if (retire(old)) { l.undo = g.undo; g.undo = nullptr; }
+        }
+        retire(g.audio); retire(g.undo);
+    }
+}
+
 Looper::Looper() {
     (void)window_table();
     for (auto& b : held_buffer) b.store(nullptr);
@@ -102,6 +155,9 @@ Looper::Looper() {
 
 Looper::~Looper() {
     for (auto& l : loops) { delete l.audio; delete l.undo; }
+    Grown g;
+    while (grown.pop(g)) { delete g.audio; delete g.undo; }
+    for (auto* u : unretired) delete u;
     for (auto* b : spare) delete b;
     LoopBuffer* b = nullptr;
     while (pool.pop(b)) delete b;
@@ -221,7 +277,8 @@ void Looper::ask(Do what, unsigned n, int value, uint32_t position) {
         break;
     case Do::Length:
         if (l.state != State::Empty && l.state != State::Armed) { refuse(l, looper::Error::Locked); break; }
-        l.bars = uint8_t(std::clamp(value, 0, 16));
+        l.bars = uint8_t(std::clamp(value, 0, int(looper::longest_bars)));
+        if (uint32_t need = grow_need(l); enabled && (need > room(l) || (!need && l.growing))) ask_grow(l, n, need, true); // made while it waits (or not, now)
         break;
     case Do::Feedback: l.feedback = std::clamp(value, 0, 100) / 100.0f; break;
     case Do::Quantize: quantize_mode = uint8_t(std::clamp(value, 0, int(looper::Quantize::Count) - 1)); break;
@@ -237,7 +294,6 @@ void Looper::ask(Do what, unsigned n, int value, uint32_t position) {
 }
 
 void Looper::primary(Loop& l, unsigned n, double now) {
-    (void)n;
     if (l.fit.load() != FitState::None) { l.fit_cancel.store(true); return; } // Push again: no fit
     switch (l.state) {
     case State::Empty: {
@@ -245,7 +301,13 @@ void Looper::primary(Loop& l, unsigned n, double now) {
         if (l.waiting_load) { refuse(l, looper::Error::Busy); return; }
         if (l.bars && last_per_frame > 0) {
             double frames = l.bars * last_bar / last_per_frame; // a take's frames are the device's
-            if (frames > room(l)) { refuse(l, looper::Error::TooLong); return; }
+            if (frames > room(l)) { // memory made to its length first (Growing meanwhile): pressed again once it is there
+                uint32_t need = grow_need(l);
+                if (!need) { refuse(l, looper::Error::TooLong); return; }
+                if (!l.growing) ask_grow(l, n, need, true);
+                refuse(l, looper::Error::Growing);
+                return;
+            }
         }
         l.state = State::Armed;
         queue(l, Pending::Start, now);
@@ -257,6 +319,11 @@ void Looper::primary(Loop& l, unsigned n, double now) {
         if (l.swapping) { refuse(l, looper::Error::Busy); return; }
         if (halted) { refuse(l, looper::Error::Locked); return; } // no overdub while the transport is stopped
         if (stretched(l)) { fit_start(l, true); return; }
+        if (!l.undo || l.undo->frames < l.length) { // a saved loop longer than its undo: an undo as long first
+            if (!l.growing) ask_grow(l, n, l.length, false);
+            refuse(l, looper::Error::Growing);
+            return;
+        }
         punch(l, true, lag_of(l, block_frames));
         break;
     }
@@ -408,7 +475,17 @@ void Looper::seam(Loop& l) {
 void Looper::act(Loop& l, Pending p, double at, unsigned lag) {
     l.pending = Pending::None;
     switch (p) {
-    case Pending::Start: if (l.state == State::Armed) begin_take(l, at, lag); break;
+    case Pending::Start:
+        if (l.state != State::Armed) break;
+        if (l.bars && last_per_frame > 0 && l.bars * last_bar / last_per_frame > room(l)) { // longer than its memory now
+            l.state = State::Empty;
+            const uint32_t need = grow_need(l);
+            if (need && !l.growing) ask_grow(l, unsigned(&l - loops.data()), need, true);
+            refuse(l, need ? looper::Error::Growing : looper::Error::TooLong);
+            break;
+        }
+        begin_take(l, at, lag);
+        break;
     case Pending::Close: close_take(l, at); break;
     case Pending::Play: if (l.state == State::Stopped) l.state = State::Playing; break;
     case Pending::Stop:
@@ -581,6 +658,7 @@ void Looper::fit_finish(Loop& l) {
 }
 
 void Looper::run(const Clock& clock, const Sources& sources, unsigned frames, float (*out_l)[looper::block], float (*out_r)[looper::block]) {
+    for (auto& u : unretired) if (u && retired.push(u)) u = nullptr; // what the queue was too full for last time
     frames = std::min(frames, looper::block);
     for (unsigned n = 0; n < loop_tracks; ++n) { std::fill(out_l[n], out_l[n] + frames, 0.0f); std::fill(out_r[n], out_r[n] + frames, 0.0f); }
     if (clock.rate != rate) {
@@ -601,7 +679,9 @@ void Looper::run(const Clock& clock, const Sources& sources, unsigned frames, fl
 
     // Memory handed in: into the loops that lack it, else kept spare (or back, when the Looper is off). Memory made
     // at another rate (the device's changed) goes back from a spare and an empty loop, for memory made at this one;
-    // a loop with audio keeps its own and reads it at its rate.
+    // a loop with audio keeps its own and reads it at its rate. An empty loop keeps longer memory while its set length
+    // needs it (made at this rate, long enough at the tempo now).
+    take_grown();
     const uint32_t want = looper::frames_at(rate);
     LoopBuffer* b = nullptr;
     while (pool.pop(b)) {
@@ -611,8 +691,11 @@ void Looper::run(const Clock& clock, const Sources& sources, unsigned frames, fl
     }
     for (auto& s : spare) if (s && s->frames != want) retire(s);
     for (auto& l : loops)
-        if (l.state == State::Empty && !l.waiting_load && !l.held && l.fit.load() == FitState::None && l.write == Write::Off && l.write_in < 0)
-            for (LoopBuffer** slot : {&l.audio, &l.undo}) if (*slot && (*slot)->frames != want) retire(*slot);
+        if (l.state == State::Empty && !l.waiting_load && !l.held && l.fit.load() == FitState::None && l.write == Write::Off && l.write_in < 0) {
+            const uint32_t need = grow_need(l); // kept while it needs more than 64 s; one that has become short stays
+            for (LoopBuffer** slot : {&l.audio, &l.undo})  // until the next press has longer memory made
+                if (*slot && (*slot)->frames != want && (!need || (*slot)->rate != rate)) retire(*slot);
+        }
     if (enabled && !disable_wanted)
         for (auto& l : loops)
             for (LoopBuffer** slot : {&l.audio, &l.undo})
@@ -635,6 +718,7 @@ void Looper::run(const Clock& clock, const Sources& sources, unsigned frames, fl
         l.audio = w.buffer; w.buffer = nullptr;
         l.rate = w.rate;
         l.length = std::min(w.frames, l.audio->frames);
+        if (l.length > looper::frames_at(rate) && (!l.undo || l.undo->frames < l.length)) ask_grow(l, n, l.length, false); // an undo as long
         l.ticks = w.ticks; l.tempo = w.tempo; l.layers = w.layers;
         l.state = !(l.length && l.ticks > 0) ? State::Empty : w.stopped ? State::Stopped : State::Playing;
         l.start = 0;
@@ -724,9 +808,9 @@ void Looper::run(const Clock& clock, const Sources& sources, unsigned frames, fl
             unsigned end = frames;
             double tick_f = own_tick + f * per;
             if (!halted && l.pending != Pending::None && l.target >= 0) {
-                double d = (l.target - tick_f) / per;
-                if (d <= 1e-9) { act(l, l.pending, l.target, lag); continue; }
-                end = std::min<unsigned>(end, f + unsigned(std::ceil(d - 1e-9)));
+                double d = (l.target - tick_f) / per; // frames to it; a millionth of one either way is on it (ticks summed block by block are that far off)
+                if (d <= 1e-6) { act(l, l.pending, l.target, lag); continue; }
+                end = std::min<unsigned>(end, f + unsigned(std::ceil(d - 1e-6)));
             }
             if (l.state == State::Recording && !halted) {
                 double left = (double(room(l)) - l.take_at) / ratio(l);
@@ -841,9 +925,33 @@ void Looper::service() {
     while (retired.pop(b)) { delete b; owned.fetch_sub(1, std::memory_order_acq_rel); }
     // Two buffers a loop while the Looper is on (a load brings its own and hands one back).
     if (want_memory.load(std::memory_order_acquire) && owned.load() < 2 * loop_tracks) {
-        auto* made = new LoopBuffer(looper::frames_at(memory_rate.load(std::memory_order_acquire)));
+        const float at = memory_rate.load(std::memory_order_acquire);
+        auto* made = new LoopBuffer(looper::frames_at(at), at);
         if (pool.push(made)) owned.fetch_add(1, std::memory_order_acq_rel);
         else delete made;
+    }
+    // Longer memory asked for: made when what is available leaves the reserve, else refused (none handed in).
+    for (unsigned n = 0; n < loop_tracks; ++n) {
+        const uint64_t ask = grow_ask[n].load(std::memory_order_acquire);
+        if (ask == grow_done[n]) continue;
+        const uint32_t frames = uint32_t(ask);
+        const bool both = (ask >> 32) & 1;
+        if (!frames) { grow_done[n] = ask; continue; }
+        Grown g;
+        g.loop = uint8_t(n);
+        const float at = memory_rate.load(std::memory_order_acquire);
+        const uint64_t bytes = uint64_t(frames) * 2 * sizeof(float) * (both ? 2 : 1);
+        if (bytes + looper::memory_reserve <= available_memory()) {
+            try {
+                g.undo = new LoopBuffer(frames, at);
+                if (both) g.audio = new LoopBuffer(frames, at);
+            } catch (const std::bad_alloc&) {
+                delete g.undo; g.undo = nullptr;
+            }
+        }
+        if (!grown.push(g)) { delete g.audio; delete g.undo; continue; } // full: asked again next time
+        grow_done[n] = ask;
+        owned.fetch_add(unsigned(g.audio != nullptr) + unsigned(g.undo != nullptr), std::memory_order_acq_rel);
     }
     for (auto& l : loops) {
         auto expected = FitState::Wanted;

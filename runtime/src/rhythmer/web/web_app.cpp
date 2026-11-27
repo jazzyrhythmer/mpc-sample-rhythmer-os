@@ -91,6 +91,7 @@ void WebApp::publish(const Facts& now) {
         std::lock_guard<std::mutex> held(lock);
         facts = now;
     }
+    mdns.share_files(now.file_sharing);
     published.notify_all();
 }
 

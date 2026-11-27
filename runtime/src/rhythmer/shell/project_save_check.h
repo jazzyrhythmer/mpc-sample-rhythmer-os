@@ -118,9 +118,16 @@ struct ProjectSavingChecks {
         c.ui.shift=true;tap(SurfaceButton::WheelPush);c.ui.shift=false;
         SAVE_CHECK(c.ui.ask==UiState::Ask::None&&c.after_project_save==0&&c.project_path==path_before,"Shift encoder cancels project switch");
         c.ask_new_project();SAVE_CHECK(c.ui.ask==UiState::Ask::ProjectChanges,"NEW does not silently overwrite");
+        const auto recovery_before_cancel = store.active_recovery;
         ask_button(c,SurfaceButton::TopMiddle);service(store);
-        SAVE_CHECK(c.ui.ask==UiState::Ask::NewProject&&store.active_recovery.empty(),"DISCARD retains manual file and dismisses startup recovery");
+        SAVE_CHECK(c.ui.ask==UiState::Ask::NewProject&&c.dirty&&store.active_recovery==recovery_before_cancel,"DISCARD keeps recovery until NEW is confirmed");
         ask_button(c,SurfaceButton::TopLeft);
+        SAVE_CHECK(c.dirty&&c.project_path==path_before,"cancelling NEW retains edits and manual save identity");
+        c.request_project_open((card/"missing-review-project.mldp").string());
+        ask_button(c,SurfaceButton::TopMiddle);pump();
+        auto failed_open = store.take_loaded();
+        SAVE_CHECK(failed_open&&!failed_open->error.empty(),"OPEN fixture reports an unreadable project");
+        SAVE_CHECK(c.dirty&&c.project_path==path_before&&store.active_recovery==recovery_before_cancel,"failed OPEN retains edits and recovery");
         // Media copies and origin are stored with the recovery, not inferred from its display name.
         c.project_path=manual;c.project.tempo=1610;c.dirty=true;
         fs::create_directories(card/"Music/Set A/Session Audio");

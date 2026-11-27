@@ -7,6 +7,7 @@
 #include "rhythmer/model/pad_params.h"
 #include "rhythmer/model/scene_links.h"
 #include "rhythmer/model/scales.h"
+#include "rhythmer/model/step_order.h"
 #include "rhythmer/engine/engine_info.h"
 #include "rhythmer/engine/midi_engine.h"
 #include "rhythmer/engine/sampler.h"
@@ -73,7 +74,8 @@ void open_as_plugin(Project& project, unsigned t, const LegacySynth& synth, unsi
     tr.params = {};
     tr.mods = {};
 }
-constexpr unsigned loop_record = 15; // LOOP: bars, feedback, source, frames, ticks, tempo, layers, stopped
+// LOOP: bars, feedback, source, frames, ticks (to 65535), tempo, layers, stopped, ticks in 1/256 (any length)
+constexpr unsigned loop_record = 19;
 
 class Writer {
 public:
@@ -243,6 +245,9 @@ std::vector<uint8_t> save_project(const Project& project, const PatternBank& pat
     at = w.begin("PVER"); // which engine parameters TRAK's values cover
     w.u8(params_version);
     w.end(at);
+    at = w.begin("TPQN"); // the clock every tick in the file counts (without it, file_ticks_per_quarter)
+    w.u16(ticks_per_quarter);
+    w.end(at);
     at = w.begin("KGVR"); // saved with keygroup tracks: an instrument on a kit pad is one on purpose (no migration)
     w.u8(1);
     w.end(at);
@@ -270,7 +275,7 @@ std::vector<uint8_t> save_project(const Project& project, const PatternBank& pat
         w.u8(used);
         for (unsigned n = 0; n < legacy_pads; ++n) if (tr.pads[n].used()) write_pad(w, n, tr.pads[n]);
         w.end(at);
-        for (unsigned p = 0; p < pattern_count; ++p) { // each pattern's notes, on the 96-a-quarter clock
+        for (unsigned p = 0; p < pattern_count; ++p) { // each pattern's notes, on the TPQN clock
             const auto& pattern = patterns.at[t][p];
             bool plain = pattern.length == 16 * sixteenth_ticks && pattern.division == Division::Sixteenth && pattern.events.empty() &&
                          pattern.motion.empty() && pattern.lanes.empty() && pattern.feel == Feel {} && pattern.euclids.empty() &&
@@ -279,8 +284,19 @@ std::vector<uint8_t> save_project(const Project& project, const PatternBank& pat
             at = w.begin("EVNT");
             w.u8(t); w.u8(p); w.u32(pattern.length); w.u8(unsigned(pattern.division));
             w.u32(uint32_t(pattern.events.size()));
-            for (const auto& e : pattern.events) { w.u32(e.tick); w.u16(e.length); w.u8(e.key); w.u8(e.velocity); w.u8(e.chance); w.u8(e.flags); }
+            for (const auto& e : pattern.events) {
+                w.u32(e.tick); w.u16(std::min<uint32_t>(e.length, 0xffff)); w.u8(e.key); w.u8(e.velocity); w.u8(e.chance); w.u8(e.flags);
+            }
             w.end(at);
+            uint32_t long_notes = 0;
+            for (const auto& e : pattern.events) long_notes += e.length > 0xffff;
+            if (long_notes) { // notes longer than EVNT's 16 bits hold (17 bars of 4/4), by their place in EVNT
+                at = w.begin("ELEN");
+                w.u8(t); w.u8(p); w.u32(long_notes);
+                for (uint32_t n = 0; n < pattern.events.size(); ++n)
+                    if (pattern.events[n].length > 0xffff) { w.u32(n); w.u32(pattern.events[n].length); }
+                w.end(at);
+            }
             if (pattern.is_free()) { // Free length (shell/free_length.h), after its EVNT: older builds read it as fixed
                 at = w.begin("FREE");
                 w.u8(t); w.u8(p);
@@ -313,6 +329,15 @@ std::vector<uint8_t> save_project(const Project& project, const PatternBank& pat
                     if (pattern.events[n].slice) { w.u32(n); w.u8(pattern.events[n].slice); }
                 w.end(at);
             }
+            uint32_t locked = 0;
+            for (const auto& e : pattern.events) locked += e.sample != 0;
+            if (locked) { // step SOUND: notes playing a sample of their own, its slot + 1, by their place in EVNT
+                at = w.begin("ESMP");
+                w.u8(t); w.u8(p); w.u32(locked);
+                for (uint32_t n = 0; n < pattern.events.size(); ++n)
+                    if (pattern.events[n].sample) { w.u32(n); w.u16(pattern.events[n].sample); }
+                w.end(at);
+            }
             uint32_t ratchets = 0;
             for (const auto& e : pattern.events) ratchets += e.hits() > 1 || e.ramp || e.pitch_ramp;
             if (ratchets) { // ratchets (roadmap P1), by their place in EVNT: hits, velocity ramp, pitch ramp
@@ -339,8 +364,19 @@ std::vector<uint8_t> save_project(const Project& project, const PatternBank& pat
                 w.u8(t); w.u8(p); w.u8(f.strength); w.u8(f.swing); w.u8(f.humanize); w.u8(f.humanize_velocity);
                 w.u16(legacy_groove(f.groove_from)); w.u8(f.groove_amount); w.u16(f.groove_step);
                 w.u8(unsigned(f.groove_offsets.size()));
-                for (size_t n = 0; n < f.groove_offsets.size(); ++n) { w.u8(uint8_t(f.groove_offsets[n])); w.u8(n < f.groove_levels.size() ? f.groove_levels[n] : 100); }
+                bool wide = false; // an offset past what a byte holds: all of them again in GRVW
+                for (size_t n = 0; n < f.groove_offsets.size(); ++n) {
+                    int offset = f.groove_offsets[n];
+                    wide |= offset < -128 || offset > 127;
+                    w.u8(uint8_t(int8_t(std::clamp(offset, -128, 127)))); w.u8(n < f.groove_levels.size() ? f.groove_levels[n] : 100);
+                }
                 w.end(at);
+                if (wide) {
+                    at = w.begin("GRVW");
+                    w.u8(t); w.u8(p); w.u8(unsigned(f.groove_offsets.size()));
+                    for (auto offset : f.groove_offsets) w.i16(offset);
+                    w.end(at);
+                }
                 if (f.groove_from && !legacy_groove(f.groove_from)) { // a groove from a pattern past P16 (the banks): its source
                     at = w.begin("GRVB");
                     w.u8(t); w.u8(p); w.u16(f.groove_from);
@@ -388,7 +424,16 @@ std::vector<uint8_t> save_project(const Project& project, const PatternBank& pat
                 at = w.begin(strip_lanes ? "MOTS" : "MOTK");
                 w.u8(t); w.u8(p); w.u32(count);
                 for (const auto& m : pattern.motion)
-                    if (is_strip_lane(m.param) == strip_lanes) { w.u32(m.tick); w.u8(m.param); w.u8(m.pad); w.i16(m.value); w.u16(m.hold); }
+                    if (is_strip_lane(m.param) == strip_lanes) { w.u32(m.tick); w.u8(m.param); w.u8(m.pad); w.i16(m.value); w.u16(std::min<uint32_t>(m.hold, 0xffff)); }
+                w.end(at);
+            }
+            uint32_t long_holds = 0;
+            for (const auto& m : pattern.motion) long_holds += m.hold > 0xffff;
+            if (long_holds) { // locks held longer than MOTK's 16 bits hold, by tick and lane (after MOTK and MOTS)
+                at = w.begin("MHLD");
+                w.u8(t); w.u8(p); w.u32(long_holds);
+                for (const auto& m : pattern.motion)
+                    if (m.hold > 0xffff) { w.u32(m.tick); w.u8(m.param); w.u8(m.pad); w.u32(m.hold); }
                 w.end(at);
             }
         }
@@ -396,9 +441,21 @@ std::vector<uint8_t> save_project(const Project& project, const PatternBank& pat
     bool sped = false; // the tracks' playback speeds (roadmap P1), when one is not x1
     for (const auto& tr : project.tracks) sped |= tr.speed != speed_normal;
     if (sped) {
-        at = w.begin("TSPD");
+        at = w.begin("TSPD"); // as builds before x1/64 .. x4 number them (the nearest they play)
+        w.u8(track_count);
+        for (const auto& tr : project.tracks) w.u8(uint8_t(legacy_speed(tr.speed)));
+        w.end(at);
+        at = w.begin("TSP2"); // today's, after TSPD: model/pattern.h speeds
         w.u8(track_count);
         for (const auto& tr : project.tracks) w.u8(tr.speed);
+        w.end(at);
+    }
+    bool directed = false; // the tracks' playback directions (model/step_order.h), when one is not forward
+    for (const auto& tr : project.tracks) directed |= tr.direction != 0;
+    if (directed) {
+        at = w.begin("TDIR");
+        w.u8(track_count);
+        for (const auto& tr : project.tracks) w.u8(tr.direction);
         w.end(at);
     }
     bool named = false; // tracks with a name of their own (Tracks, Shift + Push), kept when their sound changes
@@ -450,6 +507,7 @@ std::vector<uint8_t> save_project(const Project& project, const PatternBank& pat
         for (const auto& l : lp.loops) {
             w.u8(l.bars); w.u8(l.feedback); w.u8(l.source); w.u32(l.frames);
             w.u32(uint32_t(std::clamp(l.ticks, 0.0, 65535.0) * 65536.0)); w.u16(l.tempo); w.u8(l.layers); w.u8(l.stopped);
+            w.u32(uint32_t(std::clamp(l.ticks, 0.0, 16777215.0) * 256.0));
         }
         w.end(at);
         at = w.begin("LPMX");
@@ -594,6 +652,16 @@ std::vector<uint8_t> save_project(const Project& project, const PatternBank& pat
         at = w.begin("PCOL");
         w.u8(t); w.u8(used);
         for (unsigned n = 0; n < sampler_pads; ++n) if (tr.pads[n].used() && tr.pads[n].colour) { w.u8(n); w.u32(tr.pads[n].colour); }
+        w.end(at);
+    }
+    for (unsigned t = 0; t < track_count; ++t) { // the colours kit pads' MPC kits brought (COLOUR's Kit): pad, 0xRRGGBB
+        const auto& tr = project.tracks[t];
+        unsigned kept = 0;
+        for (const auto& pad : tr.pads) kept += pad.used() && pad.kit_colour;
+        if (!kept) continue;
+        at = w.begin("PKCL");
+        w.u8(t); w.u8(kept);
+        for (unsigned n = 0; n < sampler_pads; ++n) if (tr.pads[n].used() && tr.pads[n].kit_colour) { w.u8(n); w.u32(tr.pads[n].kit_colour); }
         w.end(at);
     }
     for (unsigned t = 0; t < track_count; ++t) { // kit pads' own sends into buses A-D: pad, four sends
@@ -754,7 +822,7 @@ std::vector<uint8_t> save_project(const Project& project, const PatternBank& pat
     }
     { // sequence links (model/scene_links.h): the scene in hand, the tracks off, each track's pattern in each scene
         at = w.begin("SEQL");
-        w.u8(1); // the section's version
+        w.u8(2); // the section's version: 2 adds the mutes kept in each scene
         w.u8(project.scene);
         uint16_t off = 0;
         unsigned listed = 0;
@@ -772,6 +840,17 @@ std::vector<uint8_t> save_project(const Project& project, const PatternBank& pat
             if (!any) continue;
             w.u8(uint8_t(t));
             for (auto v : track.in_scene) w.u8(v);
+        }
+        unsigned muted = 0; // version 2: each track's mutes, a bit a scene (Track::scene_mutes)
+        for (const auto& track : project.tracks) for (auto bits : track.scene_mutes) if (bits) { ++muted; break; }
+        w.u8(uint8_t(muted));
+        for (unsigned t = 0; t < track_count; ++t) {
+            const auto& track = project.tracks[t];
+            bool any = false;
+            for (auto bits : track.scene_mutes) any |= bits != 0;
+            if (!any) continue;
+            w.u8(uint8_t(t));
+            for (auto bits : track.scene_mutes) for (unsigned k = 0; k < 8; ++k) w.u8(uint8_t(bits >> (8 * k)));
         }
         w.end(at);
     }
@@ -853,7 +932,8 @@ std::vector<uint8_t> save_project(const Project& project, const PatternBank& pat
     // SMPL names its slot in a byte and holds the first legacy_sample_slots, as it always has; the slots past them
     // go in SMPX, the slot in two. A build that holds 64 samples a project skips SMPX and loads the pads that name
     // those slots empty (its read_pad() takes a slot past its own as none).
-    for (unsigned n = 0; n < sample_slots; ++n) {
+    const size_t sample_span = project.samples.span();
+    for (unsigned n = 0; n < sample_span; ++n) {
         const auto& s = project.samples[n];
         if (!s.used()) continue;
         if (n < legacy_sample_slots) { at = w.begin("SMPL"); w.u8(n); }
@@ -905,8 +985,14 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
     std::array<std::vector<uint8_t>, max_plugins> plugin_states;
     PrintTable prints;
     unsigned file_version = 0;
+    // TPQN: the clock the file's ticks count. Without it, 96 a quarter (parity phase 2 until 960): each tick read is
+    // turned into the sequencer's (times ten), to the nearest.
+    unsigned file_ticks = file_ticks_per_quarter;
+    auto ticks = [&](uint64_t v) { return (v * ticks_per_quarter + file_ticks / 2) / file_ticks; };
+    auto signed_ticks = [&](int64_t v) { return int64_t(std::llround(double(v) * ticks_per_quarter / file_ticks)); };
     bool keygroups_known = false; // KGVR: saved since keygroup tracks
     bool links_known = false;     // SEQL: saved since sequence links
+    bool mutes_known = false;     // SEQL version 2: saved since scenes keep mutes
     std::array<std::bitset<pattern_count>, track_count> played_on; // KEPT: patterns whose punches may reach past their end
     if (data.size() < 8 || std::memcmp(data.data(), magic, 8)) return "not a Rhythmer project";
     auto project = std::make_unique<Project>();
@@ -978,6 +1064,8 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
             for (unsigned k = 0; k < used && r.ok; ++k) read_pad(r, tr.pads.data(), sampler_pads);
         } else if (name == "PVER") {
             file_version = r.u8();
+        } else if (name == "TPQN") { // before any section with ticks in it
+            file_ticks = std::max(1u, r.u16());
         } else if (name == "KGVR") {
             keygroups_known = r.u8() >= 1;
         } else if (name == "KITX") {
@@ -1068,6 +1156,15 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
                 uint32_t colour = r.u32() & 0xFFFFFF;
                 if (r.ok) project->tracks[t].pads[n % sampler_pads].colour = colour;
             }
+        } else if (name == "PKCL") { // the colours kit pads' MPC kits brought; without it COLOUR's Kit is the pad's colour while it is one of a kit
+            unsigned t = r.u8();
+            if (t >= track_count) continue;
+            unsigned kept = r.u8();
+            for (unsigned k = 0; k < kept && r.ok; ++k) {
+                unsigned n = r.u8();
+                uint32_t colour = r.u32() & 0xFFFFFF;
+                if (r.ok) project->tracks[t].pads[n % sampler_pads].kit_colour = colour;
+            }
         } else if (name == "PSND") { // kit pads' own sends; without it no pad sends on its own
             unsigned t = r.u8();
             if (t >= track_count) continue;
@@ -1133,7 +1230,7 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
                 for (const auto& n : step.notes) {
                     if (!n.velocity) continue;
                     Event e;
-                    e.tick = s * q; e.length = uint16_t(step.length * q);
+                    e.tick = s * q; e.length = note_ticks(uint64_t(step.length) * q);
                     e.key = n.key; e.velocity = n.velocity; e.chance = step.chance; e.flags = step.flags;
                     pattern.add(e);
                 }
@@ -1142,7 +1239,7 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
             unsigned t = r.u8(), p = r.u8();
             if (t >= track_count || p >= pattern_count) continue;
             auto& pattern = patterns->at[t][p];
-            pattern.length = std::clamp<uint32_t>(r.u32(), 1, max_bars * 16 * ticks_per_quarter);
+            pattern.length = uint32_t(std::clamp<uint64_t>(ticks(r.u32()), 1, max_pattern_ticks));
             pattern.free = false; // written: its length was set, unless FREE follows
             pattern.division = Division(std::min<unsigned>(r.u8(), unsigned(Division::Count) - 1));
             uint32_t count = std::min<uint32_t>(r.u32(), max_pattern_events);
@@ -1150,12 +1247,21 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
             pattern.events.reserve(count);
             for (uint32_t k = 0; k < count && r.ok; ++k) {
                 Event e;
-                e.tick = r.u32(); e.length = uint16_t(std::max(1u, r.u16()));
+                e.tick = uint32_t(std::min<uint64_t>(ticks(r.u32()), max_pattern_ticks)); e.length = note_ticks(ticks(r.u16()));
                 e.key = uint8_t(r.u8()); e.velocity = uint8_t(std::clamp(r.u8(), 1u, 127u));
                 e.chance = uint8_t(std::min(100u, r.u8())); e.flags = uint8_t(r.u8());
                 if (r.ok) pattern.events.push_back(e);
             }
             pattern.sort();
+        } else if (name == "ELEN") { // notes longer than EVNT holds, by their place in it (after EVNT's sort, as written)
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            uint32_t count = std::min<uint32_t>(r.u32(), max_pattern_events);
+            for (uint32_t k = 0; k < count && r.ok; ++k) {
+                uint32_t place = r.u32(), length = r.u32();
+                if (r.ok && place < pattern.events.size()) pattern.events[place].length = note_ticks(ticks(length));
+            }
         } else if (name == "PTCH") {
             unsigned t = r.u8(), p = r.u8();
             if (t >= track_count || p >= pattern_count) continue;
@@ -1185,7 +1291,18 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
                 uint32_t place = r.u32();
                 unsigned slice = r.u8();
                 // Written in order with their slices, so the places after EVNT's sort are still theirs.
-                if (r.ok && place < pattern.events.size()) pattern.events[place].slice = uint8_t(std::min(slice, max_slices));
+                if (r.ok && place < pattern.events.size())
+                    pattern.events[place].slice = uint8_t(slice == slice_random ? slice : std::min(slice, max_slices));
+            }
+        } else if (name == "ESMP") { // step SOUND; without it every note plays its pad's own sample
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            uint32_t count = std::min<uint32_t>(r.u32(), max_pattern_events);
+            for (uint32_t k = 0; k < count && r.ok; ++k) {
+                uint32_t place = r.u32();
+                unsigned sample = r.u16();
+                if (r.ok && place < pattern.events.size() && sample && sample <= sample_slots) pattern.events[place].sample = uint16_t(sample);
             }
         } else if (name == "RTCH") { // ratchets (roadmap P1); without it every note plays once
             unsigned t = r.u8(), p = r.u8();
@@ -1218,11 +1335,23 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
                 bool own = r.u8() != 0;
                 if (k < track_count && r.ok) project->tracks[k].named = own;
             }
-        } else if (name == "TSPD") { // the tracks' playback speeds (roadmap P1); without it every track at x1
+        } else if (name == "TSPD") { // the tracks' playback speeds (roadmap P1), x1/2 .. x2; without it every track at x1
+            unsigned count = r.u8();
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                unsigned speed = r.u8();
+                if (k < track_count && r.ok) project->tracks[k].speed = uint8_t(speed_of_legacy(speed));
+            }
+        } else if (name == "TSP2") { // x1/64 .. x4, after TSPD (which an older build reads)
             unsigned count = r.u8();
             for (unsigned k = 0; k < count && r.ok; ++k) {
                 unsigned speed = r.u8();
                 if (k < track_count && r.ok) project->tracks[k].speed = uint8_t(speed < speed_count ? speed : speed_normal);
+            }
+        } else if (name == "TDIR") { // the tracks' playback directions; without it every track forward
+            unsigned count = r.u8();
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                unsigned direction = r.u8();
+                if (k < track_count && r.ok) project->tracks[k].direction = uint8_t(direction_of(direction));
             }
         } else if (name == "KEPT") { // punches kept with a pattern (pad-fx C); without it a pattern keeps none
             unsigned t = r.u8(), p = r.u8();
@@ -1232,7 +1361,7 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
             pattern.punches.clear();
             for (unsigned k = 0; k < count && r.ok; ++k) {
                 PatternPunch punch;
-                punch.tick = r.u32(); punch.length = r.u32();
+                punch.tick = uint32_t(std::min<uint64_t>(ticks(r.u32()), max_pattern_ticks)); punch.length = note_ticks(ticks(r.u32()));
                 punch.kind = uint8_t(r.u8()); punch.target = uint8_t(r.u8()); punch.depth = uint8_t(std::min(100u, r.u8()));
                 unsigned grid = r.u8();
                 punch.snap = uint8_t(grid & 3); punch.tail = uint8_t(std::min(2u, (grid >> 4) & 3));
@@ -1266,13 +1395,22 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
             f.strength = uint8_t(std::min(100u, r.u8())); f.swing = uint8_t(std::clamp(r.u8(), 50u, 75u));
             f.humanize = uint8_t(std::min(100u, r.u8())); f.humanize_velocity = uint8_t(std::min(100u, r.u8()));
             f.groove_from = groove_of_legacy(uint16_t(r.u16())); f.groove_amount = uint8_t(std::min(100u, r.u8()));
-            f.groove_step = uint16_t(std::clamp(r.u16(), 1u, 4u * ticks_per_quarter));
+            f.groove_step = uint16_t(std::clamp<uint64_t>(ticks(r.u16()), 1, 4u * ticks_per_quarter));
             unsigned steps = std::min(r.u8(), 64u);
             for (unsigned k = 0; k < steps && r.ok; ++k) {
-                f.groove_offsets.push_back(int8_t(uint8_t(r.u8())));
+                f.groove_offsets.push_back(int16_t(std::clamp<int64_t>(signed_ticks(int8_t(uint8_t(r.u8()))), -f.groove_step, f.groove_step)));
                 f.groove_levels.push_back(uint8_t(std::clamp(r.u8(), 25u, 175u)));
             }
             if (r.ok) patterns->at[t][p].feel = f;
+        } else if (name == "GRVW") { // a groove's offsets past what FEEL's bytes hold (after its FEEL): all of them
+            unsigned t = r.u8(), p = r.u8(), count = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& f = patterns->at[t][p].feel;
+            for (unsigned k = 0; k < count && r.ok; ++k) {
+                int offset = r.i16();
+                if (r.ok && k < f.groove_offsets.size())
+                    f.groove_offsets[k] = int16_t(std::clamp<int64_t>(signed_ticks(offset), -f.groove_step, f.groove_step));
+            }
         } else if (name == "GRVB") { // a groove's source past P16 (after its FEEL)
             unsigned t = r.u8(), p = r.u8(), from = r.u16();
             if (r.ok && t < track_count && p < pattern_count && from <= track_count * pattern_count) patterns->at[t][p].feel.groove_from = uint16_t(from);
@@ -1290,8 +1428,8 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
             pattern.lanes.clear();
             for (unsigned k = 0; k < count && r.ok; ++k) {
                 unsigned key = r.u8();
-                uint32_t ticks = r.u32();
-                if (r.ok) pattern.set_lane_length(key, ticks); // EVNT came first: the pattern's length is known
+                uint32_t lane = r.u32();
+                if (r.ok) pattern.set_lane_length(key, uint32_t(std::min<uint64_t>(ticks(lane), max_pattern_ticks))); // EVNT came first: the pattern's length is known
             }
         } else if (name == "MOTK" || name == "MOTS") { // Motion (roadmap P1): a pattern's points at their ticks
             // (MOTS: the mixer strip's lanes, after MOTK, joining its points)
@@ -1305,11 +1443,26 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
             pattern.motion.reserve(pattern.motion.size() + count);
             for (uint32_t k = 0; k < count && r.ok; ++k) {
                 MotionPoint m;
-                m.tick = r.u32(); m.param = uint8_t(r.u8()); m.pad = uint8_t(r.u8() % sampler_pads); m.value = int16_t(r.i16());
-                m.hold = uint16_t(r.u16());
+                m.tick = uint32_t(std::min<uint64_t>(ticks(r.u32()), max_pattern_ticks));
+                m.param = uint8_t(r.u8()); m.pad = uint8_t(r.u8() % sampler_pads); m.value = int16_t(r.i16());
+                unsigned hold = r.u16();
+                m.hold = hold ? note_ticks(ticks(hold)) : 0;
                 if (r.ok && is_strip_lane(m.param) == strip_lanes) pattern.motion.push_back(m);
             }
             pattern.sort_motion();
+        } else if (name == "MHLD") { // locks held longer than MOTK holds (after MOTK and MOTS): by tick and lane
+            unsigned t = r.u8(), p = r.u8();
+            if (t >= track_count || p >= pattern_count) continue;
+            auto& pattern = patterns->at[t][p];
+            uint32_t count = std::min<uint32_t>(r.u32(), motion_points);
+            for (uint32_t k = 0; k < count && r.ok; ++k) {
+                uint32_t tick = uint32_t(std::min<uint64_t>(ticks(r.u32()), max_pattern_ticks));
+                unsigned param = r.u8(), pad = r.u8() % sampler_pads;
+                uint32_t hold = r.u32();
+                if (!r.ok || !hold) continue;
+                for (size_t n = pattern.motion_lower(tick); n < pattern.motion.size() && pattern.motion[n].tick == tick; ++n)
+                    if (pattern.motion[n].on(param, pad) && pattern.motion[n].lock()) { pattern.motion[n].hold = note_ticks(ticks(hold)); break; }
+            }
         } else if (name == "MOTN" || name == "MOT2") { // the project's Motion before roadmap P1
             bool division = name == "MOTN";
             unsigned count = r.u16();
@@ -1423,7 +1576,8 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
             if (!r.done()) scene.colour = uint8_t(std::min(r.u8(), 16u)); // older files end here: none
             if (r.ok && n < pattern_count) project->scenes[n] = scene;
         } else if (name == "SEQL") { // sequence links (model/scene_links.h); without it the scenes are columns (keep_columns)
-            if (r.u8() < 1) continue; // a later version would add after these
+            const unsigned seql = r.u8();
+            if (seql < 1) continue; // a later version would add after these
             links_known = true;
             project->scene = uint8_t(r.u8() % pattern_count);
             unsigned off = r.u16(), listed = r.u8();
@@ -1433,6 +1587,16 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
                 std::array<uint8_t, pattern_count> values {};
                 for (auto& v : values) { v = uint8_t(r.u8()); if (v != scene_off && v > pattern_count) v = 0; }
                 if (r.ok && t < track_count) project->tracks[t].in_scene = values;
+            }
+            if (seql >= 2 && r.ok && !r.done()) { // the mutes kept in each scene; before, the mutes as saved (mutes_from_mix)
+                mutes_known = true;
+                const unsigned muted = r.u8();
+                for (unsigned k = 0; k < muted && r.ok; ++k) {
+                    unsigned t = r.u8();
+                    decltype(Track::scene_mutes) bits {};
+                    for (auto& b : bits) for (unsigned n = 0; n < 8; ++n) b |= uint64_t(r.u8()) << (8 * n);
+                    if (r.ok && t < track_count) project->tracks[t].scene_mutes = bits;
+                }
             }
         } else if (name == "PROG") { // the Prog layout's progression; without it none
             unsigned t = r.u8(), version = r.u8();
@@ -1551,7 +1715,7 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
             for (unsigned k = 0; k < count && r.ok; ++k) {
                 Clip c;
                 c.track = uint8_t(r.u8() % track_count); c.pattern = uint8_t(r.u8() % pattern_count);
-                c.bar = uint16_t(std::min<unsigned>(r.u16(), song_bars)); c.bars = uint16_t(std::clamp<unsigned>(r.u16(), 1, 16)); c.muted = r.u8() != 0;
+                c.bar = uint16_t(std::min<unsigned>(r.u16(), song_bars)); c.bars = uint16_t(std::clamp<unsigned>(r.u16(), 1, max_bars)); c.muted = r.u8() != 0;
                 if (song.count < song.clips.size()) song.clips[song.count++] = c;
             }
             unsigned markers = r.u8();
@@ -1606,10 +1770,15 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
                 auto byte = [&]() -> unsigned { if (!left) return 0; --left; return r.u8(); };
                 auto word = [&]() { unsigned a = byte(); return a | byte() << 8; };
                 auto quad = [&]() { uint32_t a = word(); return a | uint32_t(word()) << 16; };
-                t.bars = uint8_t(std::min(16u, byte())); t.feedback = uint8_t(std::min(100u, byte()));
+                t.bars = uint8_t(std::min(looper::longest_bars, byte())); t.feedback = uint8_t(std::min(100u, byte()));
                 unsigned source = byte();
                 t.source = uint8_t(source < looper::source_count && source != looper::source_loop(l) ? source : looper::source_input);
-                t.frames = quad(); t.ticks = quad() / 65536.0; t.tempo = uint16_t(word()); t.layers = uint8_t(byte()); t.stopped = byte() != 0;
+                t.frames = quad();
+                const uint32_t coarse = quad();
+                t.ticks = coarse / 65536.0; t.tempo = uint16_t(word()); t.layers = uint8_t(byte()); t.stopped = byte() != 0;
+                const uint32_t fine = quad(); // any length, a 256th of a tick: when the first stopped at 65535
+                if (fine && coarse >= 65535u * 65536u) t.ticks = fine / 256.0;
+                t.ticks = t.ticks * ticks_per_quarter / file_ticks;
                 while (left) byte(); // what a newer build added
                 if (!r.ok || t.ticks <= 0) t.frames = 0;
             }
@@ -1733,6 +1902,7 @@ std::string load_project(const std::vector<uint8_t>& data, Project& target, Patt
     if (!keygroups_known) migrate_instrument_pads(*project, *patterns);
     // From before sequence links: each scene with notes, a name, tempo or colour plays its column, as it did.
     if (!links_known) keep_columns(*project, *patterns);
+    if (!mutes_known) mutes_from_mix(*project); // from before scenes kept mutes: each keeps the mute as saved
     for (unsigned t = 0; t < track_count; ++t) // freeze plan F3: takes only on audio tracks' patterns
         if (project->tracks[t].engine != EngineKind::Audio) for (auto& p : patterns->at[t]) p.audio = AudioRegion {};
     target = *project;
@@ -1801,6 +1971,14 @@ std::vector<uint8_t> save_bank(const BankFile& bank) {
         at = w.begin("BCOL");
         w.u8(coloured);
         for (unsigned k = 0; k < bank_pads; ++k) if (bank.pads[k].used() && bank.pads[k].colour) { w.u8(k); w.u32(bank.pads[k].colour); }
+        w.end(at);
+    }
+    unsigned kept = 0; // the colours their MPC kits brought, as PKCL: pad, 0xRRGGBB
+    for (const auto& pad : bank.pads) kept += pad.used() && pad.kit_colour;
+    if (kept) {
+        at = w.begin("BKCL");
+        w.u8(kept);
+        for (unsigned k = 0; k < bank_pads; ++k) if (bank.pads[k].used() && bank.pads[k].kit_colour) { w.u8(k); w.u32(bank.pads[k].kit_colour); }
         w.end(at);
     }
     unsigned sending = 0; // the pads' own sends, as PSND: pad, four sends
@@ -1880,6 +2058,13 @@ bool load_bank(const std::vector<uint8_t>& data, BankFile& out) {
                 unsigned n = r.u8();
                 uint32_t colour = r.u32() & 0xFFFFFF;
                 if (r.ok) bank.pads[n % bank_pads].colour = colour;
+            }
+        } else if (name == "BKCL") {
+            unsigned kept = r.u8();
+            for (unsigned k = 0; k < kept && r.ok; ++k) {
+                unsigned n = r.u8();
+                uint32_t colour = r.u32() & 0xFFFFFF;
+                if (r.ok) bank.pads[n % bank_pads].kit_colour = colour;
             }
         } else if (name == "BSUB") {
             unsigned routed = r.u8();

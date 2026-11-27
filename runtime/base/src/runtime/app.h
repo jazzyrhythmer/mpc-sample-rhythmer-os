@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include "drivers/audio.h"
+#include "drivers/file_share.h"
 #include "drivers/hardware_midi.h"
 #include "drivers/screen_mirror.h"
 #include "runtime/session.h"
@@ -114,6 +115,12 @@ public:
     // session().mirror says how it goes. Apps that never override it have
     // no webcam (a webcam an earlier app left is taken out).
     virtual ScreenMirrorMode screen_mirror() const { return {}; }
+    // Any thread: whether the card is a network drive for the computer on
+    // the USB-C network, and the name the server goes by
+    // (drivers/file_share.h). The runtime acts on a change within a second;
+    // off closes every connection. session().file_share says how it goes.
+    // Apps that never override it share nothing.
+    virtual FileSharing file_sharing() const { return {}; }
     // Audio thread, right after each render(): that block's stems, one mono
     // channel per track, which a computer records over USB-C beside the main
     // mix (channels 3 to 18), or null for silence there. The app owns the

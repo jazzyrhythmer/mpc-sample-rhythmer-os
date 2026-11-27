@@ -47,9 +47,14 @@ inline bool internal_source(InputSource s) { return s == InputSource::Resample |
 inline const char* input_route(InputSource s) { return s == InputSource::Mic ? "mic" : from_rear(s) ? "line" : "off"; }
 
 // Rec length: Free (until stopped), Seq (the selected track's pattern: while
-// playing, the take starts where the pattern comes round), or Rhythmer's 1-16 bars.
-constexpr unsigned rec_free = 0, rec_seq = 1, rec_lengths = 18; // 2.. = 1..16 bars
-inline unsigned rec_bars(unsigned length) { return length >= 2 ? length - 1 : 0; }
+// playing, the take starts where the pattern comes round), or bars: 1-16 one
+// at a time, then 24, 32, 48, 64, 96 and 128 (as long as a pattern), all on a
+// pot. Settings keep the index: 2..17 are 1..16 bars as before.
+constexpr unsigned rec_free = 0, rec_seq = 1, rec_lengths = 24;
+inline unsigned rec_bars(unsigned length) {
+    static const unsigned longer[] {24, 32, 48, 64, 96, 128};
+    return length < 2 ? 0 : length <= 17 ? length - 1 : longer[std::min(length - 18, 5u)];
+}
 
 struct InputConfig {
     InputSource source = InputSource::Rear;

@@ -21,39 +21,39 @@ void bounded(const Pattern& p,const BreakMap& m) {
         assert(e.tick>=prev&&e.tick<p.length&&e.length>0&&e.tick+e.length<=p.length);
         assert(e.ratchet>=1&&e.ratchet<=4&&e.velocity>=1&&e.velocity<=127);
         assert(std::find(m.slices.begin(),m.slices.end(),e.key)!=m.slices.end());prev=e.tick;
-        if(e.ratchet>1)assert(e.length<=48);
+        if(e.ratchet>1)assert(e.length<=2*sixteenth_ticks);
     }
 }
 int main() {
     assert(gen8_genre_count==59);
     std::set<std::string> names;for(const auto& g:gen8_genres)names.insert(g.name);
     assert(names.size()==59);
-    Pattern p;p.length=1536;MotionPoint point;point.tick=96;point.param=2;point.value=42;p.motion.push_back(point);
+    Pattern p;p.length=16*ticks_per_quarter;MotionPoint point;point.tick=ticks_per_quarter;point.param=2;point.value=42;p.motion.push_back(point);
     BreakMap map;for(unsigned i=0;i<16;i++)map.slices[i]=uint8_t(148+i); // highest sampler bank
     Gen8Settings s;s.seed=42;s.amount=80;s.genre=uint8_t(genre("JUNGLE"));
     auto straight=break_generate(p,BreakAction::Straight,s,map,164);
     assert(straight.events.size()==32);
-    for(unsigned i=0;i<32;i++){assert(straight.events[i].tick==48*i);assert(straight.events[i].key==map.slices[i%16]);}
+    for(unsigned i=0;i<32;i++){assert(straight.events[i].tick==2*sixteenth_ticks*i);assert(straight.events[i].key==map.slices[i%16]);}
     assert(straight.motion==p.motion&&p.events.empty());
     auto random=break_generate(p,BreakAction::Random,s,map,164);
     assert(random.events==break_generate(p,BreakAction::Random,s,map,164).events);
     s.seed++;assert(random.events!=break_generate(p,BreakAction::Random,s,map,164).events);s.seed--;
     auto mut=break_generate(straight,BreakAction::Mutate,s,map,164);
     assert(mut.events!=straight.events&&mut.events.size()==straight.events.size()&&mut.motion==straight.motion);
-    for(unsigned i=0;i<mut.events.size();i++)if(straight.events[i].tick%96==0)assert(mut.events[i]==straight.events[i]);
+    for(unsigned i=0;i<mut.events.size();i++)if(straight.events[i].tick%ticks_per_quarter==0)assert(mut.events[i]==straight.events[i]);
     assert(break_generate(p,BreakAction::Mutate,s,map,164).events.empty());
     auto fill=break_generate(straight,BreakAction::Fill,s,map,164);
-    for(const auto& e:straight.events)if(e.tick<1536-8*24)assert(std::find(fill.events.begin(),fill.events.end(),e)!=fill.events.end());
+    for(const auto& e:straight.events)if(e.tick<16*ticks_per_quarter-8*sixteenth_ticks)assert(std::find(fill.events.begin(),fill.events.end(),e)!=fill.events.end());
     assert(fill.motion==straight.motion);bounded(fill,map);
     s.amount=0;assert(break_generate(straight,BreakAction::Mutate,s,map,164).events==straight.events);s.amount=80;
     s.genre=uint8_t(genre("BOOM BAP"));auto hip=break_generate(p,BreakAction::Genre,s,map,140);
-    assert(!hip.events.empty());for(const auto& e:hip.events)assert(e.tick%48==0&&e.ratchet==1);
+    assert(!hip.events.empty());for(const auto& e:hip.events)assert(e.tick%(2*sixteenth_ticks)==0&&e.ratchet==1);
     s.genre=uint8_t(genre("JUNGLE"));auto jungle=break_generate(p,BreakAction::Genre,s,map,164);
     assert(std::any_of(jungle.events.begin(),jungle.events.end(),[](const Event& e){return e.ratchet>1;}));
     // Every genre, cold start, multiple seeds, short/partial bars and long patterns.
     for(unsigned g=0;g<59;g++)for(unsigned seed=0;seed<8;seed++) {
         s.genre=uint8_t(g);s.seed=uint16_t(seed);
-        for(unsigned len:{1u,25u,384u,1536u,49152u}) {
+        for(unsigned len:{1u,sixteenth_ticks+1,4*ticks_per_quarter,16*ticks_per_quarter,512*ticks_per_quarter}) {
             Pattern src=p;src.length=len;
             for(auto action:{BreakAction::Genre,BreakAction::Straight,BreakAction::Random}) {
                 auto made=break_generate(src,action,s,map,160);bounded(made,map);assert(made.motion==src.motion);
@@ -81,13 +81,13 @@ int main() {
         }
     }
     for(unsigned bars=1;bars<=4;bars++){
-        Pattern src;src.length=bars*384;BreakMap map;map.bars=bars;for(unsigned i=0;i<16;i++)map.slices[i]=uint8_t(36+i);
+        Pattern src;src.length=bars*4*ticks_per_quarter;BreakMap map;map.bars=bars;for(unsigned i=0;i<16;i++)map.slices[i]=uint8_t(36+i);
         auto straight=break_generate(src,BreakAction::Straight,Gen8Settings{},map,120);
         assert(straight.events.size()==16);
-        for(unsigned i=0;i<16;i++){assert(straight.events[i].tick==i*bars*24);assert(straight.events[i].key==36+i);}
+        for(unsigned i=0;i<16;i++){assert(straight.events[i].tick==i*bars*sixteenth_ticks);assert(straight.events[i].key==36+i);}
     }
     for(const auto& engine:gen_engines){
-        Pattern src;src.length=1536;Gen8Voice voice;voice.drums=engine.drums;voice.mono=engine.mono;voice.acid=engine.acid;voice.low=engine.low;voice.high=engine.high;
+        Pattern src;src.length=16*ticks_per_quarter;Gen8Voice voice;voice.drums=engine.drums;voice.mono=engine.mono;voice.acid=engine.acid;voice.low=engine.low;voice.high=engine.high;
         auto made=generate8(src,engine.drums?Gen8Role::Percussion:Gen8Role::Bass,Gen8Settings{},voice,0,0);
         assert(!made.events.empty());for(const auto& e:made.events){assert(e.tick<src.length&&e.key<=127);if(!voice.drums)assert(e.key>=voice.low&&e.key<=voice.high);}
     }

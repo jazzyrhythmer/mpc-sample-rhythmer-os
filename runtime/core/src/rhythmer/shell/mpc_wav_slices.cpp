@@ -134,6 +134,12 @@ SampleChop read_mpc_slices(const std::string& path) {
         chop.amount = int16_t(number(ours, "Amount"));
         if (const auto* hand = ours["Hand"].getArray()) for (const auto& at : *hand) chop.hand.pin(model(double(at)));
         if (const auto* out = ours["Out"].getArray()) for (const auto& at : *out) chop.hand.take_out(model(double(at)));
+        if (const auto* back = ours["Reverse"].getArray()) // the slices reversed on their own, by where they start
+            for (const auto& at : *back) {
+                const uint32_t from = model(double(at));
+                for (unsigned n = 0; n < sl.count; ++n)
+                    if ((sl.start[n] > from ? sl.start[n] - from : from - sl.start[n]) <= 1) sl.reverse[n] = true;
+            }
         break;
     }
     return chop;
@@ -179,7 +185,8 @@ bool write_mpc_slices(const std::string& path, const SampleChop& chop, bool in_p
         put(uint32_t(start), 4); put(uint32_t(end), 4); put(uint32_t(start), 4); put(0, 2);
     }
     const std::string atem = juce::JSON::toString(doc).toStdString();
-    // Rhythmer's own chunk: the type, its amount, the cuts made by hand and the ones taken out (at the file's rate).
+    // Rhythmer's own chunk: the type, its amount, the cuts made by hand and the ones taken out, and the starts of the
+    // slices reversed on their own (at the file's rate).
     std::string mlch;
     if (sl.count) {
         auto* ours = new juce::DynamicObject();
@@ -190,6 +197,9 @@ bool write_mpc_slices(const std::string& path, const SampleChop& chop, bool in_p
         for (unsigned n = 0; n < chop.hand.drop_count; ++n) out.add(juce::int64(file_frame(chop.hand.drops[n])));
         ours->setProperty("Hand", hand);
         ours->setProperty("Out", out);
+        juce::Array<juce::var> back;
+        for (unsigned n = 0; n < sl.count; ++n) if (sl.reverse[n]) back.add(juce::int64(file_frame(sl.start[n])));
+        if (!back.isEmpty()) ours->setProperty("Reverse", back);
         mlch = juce::JSON::toString(juce::var(ours), true).toStdString();
     }
 

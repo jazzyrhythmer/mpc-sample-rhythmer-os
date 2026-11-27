@@ -98,6 +98,12 @@ class RuntimeTests(unittest.TestCase):
             subprocess.run([str(binary), temp], check=True, timeout=20,
                            env={**os.environ, "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/nonexistent-sample-base-bus"})
 
+    def test_file_sharing_share_list_in_ndr(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "smb-pipe"
+            compile_fixture(binary, "tests/smb_pipe.cpp", "src/drivers/smb_pipe.cpp")
+            subprocess.run([str(binary)], check=True, timeout=10)
+
     @unittest.skipUnless((ROOT / "build/sample-base").is_file(), "build application first")
     def test_headless_control_commands_and_clean_shutdown(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -348,7 +354,8 @@ class RuntimeTests(unittest.TestCase):
                 # The runtime's fields only: the starter adds none.
                 self.assertTrue(status.startswith("OK frames=") and status.endswith("push_exit=1 usb_output=stopped card_share=home "
                                                                      "audio_rate=44100 audio_periods=3 audio_latency_frames=384 audio_reopens=0 "
-                                                                     "mirror=off mirror_size=0x0 mirror_fps=0 mirror_frames=0 mirror_late=0 mirror_bad=0 mirror_held=0"), status) # headless: no Screen Mirror
+                                                                     "mirror=off mirror_size=0x0 mirror_fps=0 mirror_frames=0 mirror_late=0 mirror_bad=0 mirror_held=0 "
+                                                                     "file_share=off file_share_users=0"), status) # headless: no Screen Mirror, no File Sharing
                 self.assertNotIn("page=", status)
                 self.assertEqual(command("audition"), "OK audition pad 1")
                 for _ in range(300):

@@ -18,15 +18,19 @@
 // a saved loop; at another device rate it reads them that much further a
 // frame, as at another tempo. Its memory is made 64 s long at the device's
 // rate (looper::frames_at), and made again for an empty loop when that changes.
+// A set length past that (up to 128 bars) gets two buffers made to its length,
+// as memory allows (MemAvailable less looper::memory_reserve: else NoRoom);
+// a saved loop longer than 64 s gets an undo as long.
 //
-// Time is the sequencer's: ticks (96 a quarter) from bar 1, as a double. A
+// Time is the sequencer's: ticks (960 a quarter) from bar 1, as a double. A
 // loop's place is (tick - start) mod its ticks, so it stays on the beat
 // whatever the tempo does; at the tempo it was recorded at it reads its
 // frames, at another it is stretched in pitch (LoopStretch).
 namespace rhythmer {
 
 namespace looper {
-constexpr uint32_t seconds = 64; // the longest loop, and its undo
+constexpr uint32_t seconds = 64; // a loop's memory, and its undo's, unless a longer set length has it made longer
+constexpr uint64_t memory_reserve = 256ull << 20; // what a longer loop's memory leaves of the memory available
 inline uint32_t frames_at(float rate) { return uint32_t(float(seconds) * rate + 0.5f); } // a buffer's frames at a rate
 constexpr unsigned fade = 32;          // seam and punch fades, 44.1 kHz frames (0.7 ms)
 constexpr unsigned ramp = 64;          // play, stop and level ramps, 44.1 kHz frames (1.5 ms)
@@ -38,7 +42,7 @@ constexpr unsigned block = 128;        // the engine host's block
 enum class State : uint8_t { Empty, Armed, Recording, Playing, Overdub, Stopped };
 enum class Pending : uint8_t { None, Start, Close, Play, Stop };
 enum class Undo : uint8_t { None, Undo, Redo };
-enum class Error : uint8_t { None, NoMemory, Locked, TooLong, Tempo, Busy };
+enum class Error : uint8_t { None, NoMemory, Locked, TooLong, Tempo, Busy, Growing, NoRoom }; // Growing: longer memory being made; NoRoom: not enough for it
 // Command::Looper's index: what the shell asks of loop `track`.
 enum class Do : uint8_t {
     Enable,    // value: on (memory is asked for) or off (every loop cleared, memory handed back)
@@ -63,12 +67,13 @@ inline const char* state_word(State s) {
 } // namespace looper
 
 // Loop memory: one stereo buffer of `frames` (64 s at the device's rate when
-// made). The service thread makes it (zeroed, so its pages are there before
-// the audio thread writes) and frees it; the audio thread holds two a loop,
-// audio and undo.
+// made, or a longer loop's length). The service thread makes it (zeroed, so
+// its pages are there before the audio thread writes) and frees it; the audio
+// thread holds two a loop, audio and undo.
 struct LoopBuffer {
-    explicit LoopBuffer(uint32_t length) : frames(length), left(new float[length]()), right(new float[length]()) {}
+    explicit LoopBuffer(uint32_t length, float made_at = 0) : frames(length), rate(made_at), left(new float[length]()), right(new float[length]()) {}
     uint32_t frames;
+    float rate; // the device's rate it was made for (0: a saved loop's, made to its file)
     std::unique_ptr<float[]> left, right;
 };
 
@@ -114,7 +119,7 @@ public:
     // takes start); `counting` a count-in plays (loops wait it out).
     struct Clock {
         double tick = 0, per_frame = 0;  // ticks at frame 0, ticks a device frame (from the tempo even while stopped)
-        unsigned bar = 384, beat = 96;   // ticks
+        unsigned bar = 4 * ticks_per_quarter, beat = ticks_per_quarter; // ticks
         bool running = false, restart = false, counting = false;
         float rate = dsp::model_rate;    // the device's frames a second
         unsigned input_lag = 0;          // the input's round trip, device frames, unless `looper latency` set one
@@ -201,6 +206,7 @@ private:
         float feedback = 1;
         LoopBuffer* audio = nullptr;
         LoopBuffer* undo = nullptr;
+        bool growing = false;        // longer memory asked of the service thread, not here yet
         // The writer, `lag` behind the play side: its mode, the next one and the frames until it applies.
         Write write = Write::Off, write_next = Write::Off;
         int write_in = -1;
@@ -288,12 +294,17 @@ private:
     void toggle(Loop& l, double now);
     void halt(Loop& l, double now);
     void fit_render(Loop& l); // service thread
+    // Longer memory: what a set length needs past looper::seconds at the tempo now (frames, 0 none), asked of the
+    // service thread (both buffers, or the undo alone: a saved loop's), and handed in.
+    uint32_t grow_need(const Loop& l) const;
+    void ask_grow(Loop& l, unsigned n, uint32_t frames, bool both);
+    void take_grown();
 
     std::array<Loop, loop_tracks> loops;
     std::array<Published, loop_tracks> loops_view;
     bool enabled = false, disable_wanted = false;
     uint8_t quantize_mode = 0, then_mode = 0, transport_mode = 0;
-    double last_bar = 384, last_beat = 96, last_per_frame = 0; // the clock's last time signature and pace
+    double last_bar = 4 * ticks_per_quarter, last_beat = ticks_per_quarter, last_per_frame = 0; // the clock's last time signature and pace
     unsigned default_lag = 0;
     std::array<Coefficients, 2> lp_coef {};
     int input_latency = -1;   // frames; -1: none set (the input arrives in the next block, nothing more)
@@ -304,7 +315,13 @@ private:
     std::atomic<float> memory_rate {dsp::model_rate}; // the rate the service thread makes memory for (64 s of it)
     unsigned block_frames = looper::block;
     // Memory: made by the service thread, handed in (`pool`) and back (`retired`).
-    SpscQueue<16, LoopBuffer*> pool, retired;
+    SpscQueue<16, LoopBuffer*> pool;
+    SpscQueue<32, LoopBuffer*> retired;
+    struct Grown { uint8_t loop = 0; LoopBuffer* audio = nullptr; LoopBuffer* undo = nullptr; }; // none: refused
+    SpscQueue<8, Grown> grown;
+    std::array<std::atomic<uint64_t>, loop_tracks> grow_ask {}; // frames | both << 32 | serial << 33 (audio thread)
+    std::array<uint64_t, loop_tracks> grow_done {};              // the last ask the service thread answered
+    uint32_t grow_serial = 0;
     SpscQueue<8, LoopLoad> loads;
     std::array<LoopBuffer*, 2 * loop_tracks> spare {};   // handed in, not in a loop yet
     std::atomic<bool> want_memory {false};
@@ -319,7 +336,18 @@ private:
     struct Asked { looper::Do what; uint8_t loop; int value; uint32_t position; };
     std::array<Asked, 16> deferred {};
     unsigned deferred_count = 0;
-    bool retire(LoopBuffer*& b) { if (!b) return true; if (!retired.push(b)) return false; b = nullptr; return true; }
+    // Handed back to the service thread to free; a full queue's kept here and sent the next block.
+    std::array<LoopBuffer*, 16> unretired {};
+    unsigned unretired_free() const { unsigned n = 0; for (auto* u : unretired) n += !u; return n; }
+    bool retire(LoopBuffer*& b) {
+        if (!b) return true;
+        if (!retired.push(b)) {
+            for (auto& u : unretired) if (!u) { u = b; b = nullptr; return true; }
+            return false;
+        }
+        b = nullptr;
+        return true;
+    }
 };
 
 } // namespace rhythmer

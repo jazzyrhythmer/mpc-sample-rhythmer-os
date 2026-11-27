@@ -213,14 +213,16 @@ void Context::gen8_action(unsigned action) {
                 auto active=[&](unsigned track){for(unsigned n=0;n<fm1->count;n++)if(fm1->events[n].track==track)return true;return false;};
                 if(!active(source))for(unsigned candidate=1;candidate<4;candidate++)if(active(candidate)){source=candidate;break;}
             }
+            constexpr unsigned fm1_bar_ticks = 384;
+            constexpr unsigned clock_ratio = ticks_per_quarter / 96;
             const unsigned original_phrase=std::max(1u,fm1->track_ticks[source]),bar_ticks=project.bar_ticks();
-            const unsigned phrase=bar_ticks==384?original_phrase:((original_phrase+383)/384)*bar_ticks;
+            const unsigned phrase=bar_ticks==fm1_bar_ticks*clock_ratio?original_phrase*clock_ratio:((original_phrase+fm1_bar_ticks-1)/fm1_bar_ticks)*bar_ticks;
             made.length=settings.length?settings.length*bar_ticks:settings.assign&&action==0?phrase:p.length;
             if(settings.assign&&action==0)made.feel=Feel{};
-            auto place=[&](unsigned raw,bool ending){unsigned bar=raw/384,pos=raw%384;if(bar_ticks==384)return raw;
+            auto place=[&](unsigned raw,bool ending){unsigned bar=raw/fm1_bar_ticks,pos=(raw%fm1_bar_ticks)*clock_ratio;if(bar_ticks==fm1_bar_ticks*clock_ratio)return raw*clock_ratio;
                 if(pos>=bar_ticks){return ending?(bar+1)*bar_ticks:UINT32_MAX;}
                 return bar*bar_ticks+pos;};
-            for(unsigned d=0;d<unsigned(Division::Count);d++)if(division_ticks(Division(d))==fm1->grid[source]){made.division=Division(d);break;}
+            for(unsigned d=0;d<unsigned(Division::Count);d++)if(division_ticks(Division(d))==fm1->grid[source]*clock_ratio){made.division=Division(d);break;}
             for(unsigned offset=0;offset<made.length;offset+=phrase)for(unsigned n=0;n<fm1->count;n++){const auto& original=fm1->events[n];if(original.track!=source)continue;
                 unsigned raw=original.tick;
                 // The FM-1 bridge has already baked its genre swing into ticks.
@@ -231,7 +233,7 @@ void Context::gen8_action(unsigned action) {
                 Event event;event.tick=offset+at;
                 event.key=v.drums?v.drum_keys[original.key%8]:uint8_t(settings.assign&&action==0?std::clamp<int>(original.key,0,127):gen_follow_note(original.key,fm1->root,fm1->scale,project.root,scales()[project.scale%scales().size()].mask,v));if(event.key==255)continue;
                 event.velocity=std::max<uint8_t>(1,original.velocity);unsigned finish=place(raw+original.ticks,true);unsigned duration=finish>at?finish-at:1;
-                event.length=uint16_t(std::max(1u,std::min<unsigned>(duration,made.length-event.tick)));event.ratchet=original.ratchet;event.chance=original.chance;
+                event.length=std::max(1u,std::min<unsigned>(duration,made.length-event.tick));event.ratchet=original.ratchet;event.chance=original.chance;
                 if(original.flags&1)event.flags|=step_accent;
                 if(original.flags&2)event.flags|=step_slide;
                 made.add(event);

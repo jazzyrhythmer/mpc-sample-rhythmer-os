@@ -89,7 +89,7 @@ inline KeygroupMove migrate_instrument_pads(Project& project, PatternBank& bank)
                 made.mods = kit.mods;
                 made.pattern = kit.pattern;
                 made.chain = kit.chain; made.chain_count = kit.chain_count; made.chain_at = kit.chain_at;
-                made.speed = kit.speed;
+                made.speed = kit.speed; made.direction = kit.direction;
                 made.midi_channel = 0; // the kit keeps its MIDI channel
             }
             made.engine = EngineKind::Keygroup;

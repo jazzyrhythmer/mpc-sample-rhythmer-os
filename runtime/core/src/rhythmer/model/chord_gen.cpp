@@ -43,7 +43,7 @@ int gen_follow_note(int note,unsigned fr,unsigned fm,unsigned tr,unsigned tm,con
 }
 Pattern generate_chords(const Pattern& source,const ChordGenSettings& s,const Gen8Voice& voice,unsigned root,unsigned scale,unsigned bar_ticks,bool mutate){
  Pattern out=source;out.events.clear();out.euclids.clear();out.division=Division::Sixteenth;
- bar_ticks=std::clamp(bar_ticks,24u,3072u);unsigned bars=std::clamp<unsigned>(s.bars,1,16),count=std::clamp<unsigned>(s.chords,1,8),rhythm=std::min<unsigned>(s.rhythm,100),color=std::min<unsigned>(s.color,3);
+ bar_ticks=std::clamp(bar_ticks,sixteenth_ticks,32*ticks_per_quarter);unsigned bars=std::clamp<unsigned>(s.bars,1,16),count=std::clamp<unsigned>(s.chords,1,8),rhythm=std::min<unsigned>(s.rhythm,100),color=std::min<unsigned>(s.color,3);
  out.length=bar_ticks*bars;Random rng(s.seed^(mutate?0x39a8d2e1u:0x61491cfbu));
  Random harmony(s.harmony);
  unsigned genre=s.genre<2?harmony.next()%gen8_genre_count:gen_fm1_menu[(s.genre-2)%gen8_genre_count];const auto& g=gen8_genres[genre];
@@ -114,19 +114,19 @@ Pattern generate_chords(const Pattern& source,const ChordGenSettings& s,const Ge
    unsigned extras=rhythm>=85?4:rhythm>=60?3:rhythm>=30?2:rhythm>=10?1:0;
    for(unsigned k=0;k<extras;k++)if(rng.chance(35+rhythm/2)){
     uint32_t tick=anchor+uint64_t(positions[k])*bar_ticks/16;
-    if(tick>begin&&tick<end&&tick-begin>=12&&end-tick>=12)strikes.push_back(tick);
+    if(tick>begin&&tick<end&&tick-begin>=ticks_per_quarter/8&&end-tick>=ticks_per_quarter/8)strikes.push_back(tick);
    }
   }
   std::sort(strikes.begin(),strikes.end());strikes.erase(std::unique(strikes.begin(),strikes.end()),strikes.end());
   for(unsigned h=0;h<strikes.size();h++){
    uint32_t tick=strikes[h],next=h+1<strikes.size()?strikes[h+1]:end;
-   unsigned delay=lazy?std::min<unsigned>(5,(next-tick)/8):0;tick=std::min(tick+delay,next-1);
+   unsigned delay=lazy?std::min<unsigned>(5 * (ticks_per_quarter / 96),(next-tick)/8):0;tick=std::min(tick+delay,next-1);
    unsigned duration=std::max(1u,(next-tick)*std::clamp<unsigned>(s.gate,10,100)/100);
    unsigned play=s.play%5;if(voice.mono&&(play==0||play==4))play=1;
-   const unsigned arp_steps[]={96,48,24,12},strum_steps[]={1,2,4,8};
+   const unsigned arp_steps[]={ticks_per_quarter, ticks_per_quarter/2, ticks_per_quarter/4, ticks_per_quarter/8},strum_steps[]={ticks_per_quarter/96, ticks_per_quarter/48, ticks_per_quarter/24, ticks_per_quarter/12};
    auto emit=[&](uint32_t at,unsigned index,unsigned length){if(at>=next)return;Event e;e.tick=at;e.key=uint8_t(chosen[index]);
     e.velocity=uint8_t(std::clamp(48+int(s.energy)*55/100-int(index)+int(rng.next()%9)-4-(h?4:0),30,120));
-    e.length=uint16_t(std::max(1u,std::min<unsigned>(length,next-at)));out.add(e);};
+    e.length=std::max(1u,std::min<unsigned>(length,next-at));out.add(e);};
    if(play>=1&&play<=3){
     unsigned step=std::max(1u,std::min<unsigned>(arp_steps[s.rate%4],next-tick)),k=0;
     for(uint32_t at=tick;at<next;at+=step,++k){unsigned n=chosen.size(),index=play==2?n-1-k%n:play==3&&n>1?unsigned((k%(2*n-2)<n)?k%(2*n-2):2*n-2-k%(2*n-2)):k%n;

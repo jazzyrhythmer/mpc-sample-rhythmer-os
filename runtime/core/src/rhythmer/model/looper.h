@@ -14,8 +14,10 @@
 namespace rhythmer {
 
 namespace looper {
-// Set lengths, bars (0 free).
-constexpr std::array<uint8_t, 6> lengths {0, 1, 2, 4, 8, 16};
+// Set lengths, bars (0 free), up to 128 as a pattern: one past what a loop's 64 s of memory hold gets memory made
+// to its length (engine/looper.h).
+constexpr unsigned longest_bars = 128;
+constexpr std::array<uint8_t, 9> lengths {0, 1, 2, 4, 8, 16, 32, 64, 128};
 enum class Quantize : uint8_t { Bar, Beat, Off, Count };
 enum class Then : uint8_t { Play, Overdub, Stop, Count };     // after the first take
 enum class Transport : uint8_t { Follow, Free, Count };     // stopped: the loops hold, or keep time on their own

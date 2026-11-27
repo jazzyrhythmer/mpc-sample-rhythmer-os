@@ -17,6 +17,21 @@ namespace rhythmer {
 
 using ChopOf = std::function<const Slices&(unsigned sample)>;
 
+// The kit pad that plays `sample`'s slices on Chop: the last pad when it holds the sample, else the first that does
+// (-1: none, or not a kit).
+inline int chop_kit_pad(const Track& track, unsigned sample) {
+    if (track.engine != EngineKind::Sampler || sample >= sample_slots) return -1;
+    const unsigned last = track.last_pad % sampler_pads;
+    if (track.pads[last].used() && track.pads[last].sample == sample) return int(last);
+    for (unsigned n = 0; n < sampler_pads; ++n) if (track.pads[n].used() && track.pads[n].sample == sample) return int(n);
+    return -1;
+}
+// Whether slice n of `sample`'s chop `s` plays backwards on `track`: its own Reverse turns its kit pad's round.
+inline bool slice_heard_reversed(const Track& track, unsigned sample, const Slices& s, unsigned n) {
+    const int kit = chop_kit_pad(track, sample);
+    return s.reversed(n) != (kit >= 0 && track.pads[size_t(kit)].reverse);
+}
+
 // The kit pad a note plays (-1: a note off the kit's pads).
 inline int kit_pad_of(const Event& e) {
     return e.key >= sampler_first_note && e.key < sampler_first_note + sampler_pads ? int(e.key - sampler_first_note) : -1;
@@ -31,7 +46,7 @@ inline unsigned slice_hits(const Project& project, const PatternBank& patterns, 
         if (track.engine != EngineKind::Sampler) continue;
         for (const auto& pattern : patterns.at[t])
             for (const auto& e : pattern.events) {
-                if (!e.slice || unsigned(e.slice - 1) < from) continue;
+                if (!e.slice || unsigned(e.slice - 1) < from) continue; // SLICE RND counts: any slice may change under it
                 const int pad = kit_pad_of(e);
                 if (pad >= 0 && track.pads[size_t(pad)].used() && track.pads[size_t(pad)].sample == sample) ++count;
             }
@@ -81,7 +96,7 @@ inline unsigned lay_slice_hits(Project& project, PatternBank& patterns, const Ch
                 const int pad = kit_pad_of(e), slice = e.slice - 1;
                 e.slice = 0;
                 changed = true;
-                if (pad < 0) continue;
+                if (pad < 0 || slice == int(slice_random) - 1) continue; // SLICE RND: the pad's region
                 auto at = laid.find({pad, slice});
                 if (at == laid.end()) {
                     int to = -2;
@@ -91,7 +106,7 @@ inline unsigned lay_slice_hits(Project& project, PatternBank& patterns, const Ch
                         if (unsigned(slice) < s.count) {
                             while (next < sampler_pads && track.pads[next].used()) ++next;
                             to = -1;
-                            if (next < sampler_pads) { track.pads[next] = slice_sound(parent, s.start[size_t(slice)], s.stop[size_t(slice)], region_frames(parent, project.samples[parent.sample].frames)); to = int(next); }
+                            if (next < sampler_pads) { track.pads[next] = chop_slice_sound(parent, s, unsigned(slice), region_frames(parent, project.samples[parent.sample].frames)); to = int(next); }
                         }
                     }
                     at = laid.emplace(std::make_pair(pad, slice), to).first;

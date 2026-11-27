@@ -68,6 +68,11 @@ struct Session {
     std::atomic<bool> card_connected {false}, card_ejected {false};
     std::atomic<uint64_t> card_returns {0};
 
+    // File Sharing (drivers/file_share.h), written by the service thread: a
+    // FileShareState and how many connections a computer has to the card.
+    std::atomic<uint8_t> file_share {0};
+    std::atomic<uint16_t> file_share_users {0};
+
     // Screen Mirror (drivers/screen_mirror.h), written by the screen thread:
     // a MirrorState, the picture size and rate offered, whether it is JPEG, whether a
     // JPEG size fell back to 640 x 480 YUYV (no encoder), whether a change the

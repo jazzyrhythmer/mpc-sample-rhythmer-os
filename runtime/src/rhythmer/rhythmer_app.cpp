@@ -607,7 +607,8 @@ void RhythmerApp::card_access(Hardware& hardware) {
         if (gadget_mirror_live()) card_note = CardNote::Camera; // nothing let go: the camera would be unplugged under the computer
         else if (library.busy()) card_note = CardNote::Writing; // a take or a render still writes to it
         else if (!library.release_instruments()) card_note = CardNote::Failed;
-        else if (!card.lend()) card_note = card.status().message == "no card" ? CardNote::NoCard : CardNote::Failed;
+        else if (!card.lend()) card_note = card.status().message == "no card" ? CardNote::NoCard
+                                         : card.status().message == card_network_in_use ? CardNote::Network : CardNote::Failed;
         break;
     case CardRequest::Return: card.take_back(false); break;
     case CardRequest::Force: card.take_back(true); break;
@@ -625,7 +626,7 @@ void RhythmerApp::card_access(Hardware& hardware) {
     CardNote note = card_note;
     if (note == CardNote::None && !now.message.empty()) {
         const auto& m = now.message;
-        note = m == "no card" ? CardNote::NoCard : m == mirror_in_use ? CardNote::Camera
+        note = m == "no card" ? CardNote::NoCard : m == mirror_in_use ? CardNote::Camera : m == card_network_in_use ? CardNote::Network
              : m == "the card is in use" || m == "the card is still mounted" ? CardNote::InUse
              : m == "the card came back with nothing to mount" ? CardNote::Empty : now.locked ? CardNote::Locked : CardNote::Failed;
     }
@@ -796,6 +797,7 @@ void RhythmerApp::web_service(Hardware& hardware) {
     facts.scans = update_scans;
     facts.card_free = machine.card_free.load(std::memory_order_relaxed);
     facts.card_total = machine.card_total.load(std::memory_order_relaxed);
+    facts.file_sharing = FileShareState(session().file_share.load()) == FileShareState::Serving;
     web.publish(facts);
     std::string note;
     if (web.take_note(note)) link.note(note);

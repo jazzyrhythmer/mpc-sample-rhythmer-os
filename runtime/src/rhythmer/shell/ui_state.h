@@ -52,7 +52,7 @@ struct Pot {
 // SD card access (parity phase 10b, shell/card_access.h): what the page shows.
 // `state` is the base's CardShareState (0 home, 1 lending, 2 lent, 3 returning).
 // Camera: a computer shows Screen Mirror's camera, which the drive would unplug (base drivers/screen_mirror.h).
-enum class CardNote : uint8_t { None, NoCard, InUse, Writing, Locked, Empty, Failed, Camera };
+enum class CardNote : uint8_t { None, NoCard, InUse, Writing, Locked, Empty, Failed, Camera, Network };
 struct CardView {
     uint8_t state = 0;
     bool connected = false, ejected = false, locked = false;
@@ -68,6 +68,21 @@ constexpr uint8_t mix32 = 0, mix24 = 1, mix16 = 2, stems = 3, midi = 4, mpc3 = 5
 // Trim's and Chop's view zoomed in, kept while its handle moves inside it (shell/zoom_view.h); key 0: none kept.
 struct ZoomView {
     uint32_t from = 0, to = 0, key = 0;
+};
+
+// Samples: the audio file under the cursor trimmed before it goes onto a pad (shell/browse_trim.h). K2 or K3 read it
+// into a sample slot, as Push would, and raise the sheet; Push or Shift + pad load it with START and END on the pad.
+struct BrowseTrim {
+    int16_t slot = -1;           // the slot the file is read into; -1: the sheet is down
+    bool fresh = false;          // the slot was taken for the sheet: it is freed again unless the file goes onto a pad
+    uint32_t start = 0, end = 0; // frames (44.1 kHz); end 0: the file's end
+    uint8_t focus = 0;           // 0 START, 1 END: the handle the zoom is on and the wheel moves
+    uint8_t zoom = 0;            // Shift + K2 / K3: 0..100 as on Trim (shell/zoom_view.h)
+    bool own_zoom = false;       // a zoom set by Shift + K2 / K3; else about 120 ms round the handle
+    ZoomView view;               // the view kept while an own zoom is set
+    uint32_t opened_at = 0;      // ms: the sheet's rise
+    uint32_t heard_at = 0;       // ms the kept part plays once, a moved end gone still (0: none due)
+    bool up() const { return slot >= 0; }
 };
 
 struct UiState {
@@ -92,6 +107,7 @@ struct UiState {
     bool pad_bank_used = false;  // Pad Bank held did something (a pad, -/+, the wheel): its release steps no bank
     uint32_t pad_bank_down = 0;  // ms: when Pad Bank went down (held past pad_bank_hold_ms, its release steps no bank)
     bool erase_used = false;     // Erase held did something (a pad, a pot, the fader): its release deletes nothing
+    uint8_t erase_cleared = 0;   // Erase held: the pots that took a lock out (a bit each); the rest of their turn says nothing
     // Mute mode (shell/mute_mode.cpp): a tap latches it, a hold lasts while held.
     bool mute_latch = false, mute_used = false;
     uint32_t mute_down = 0;
@@ -125,7 +141,7 @@ struct UiState {
     uint8_t menu = 0, menu_tile = 0, menu_row = 0;
     // The undo list (shell/history_list.h), Shift + Minus held: open, and the row the cursor is on.
     bool history = false;
-    uint8_t history_row = 0;
+    uint16_t history_row = 0;
     // A lesson (shell/lesson.h): which (0 none, else its number + 1), the step in hand, the button held with the
     // step's control (-1 none), where the step's knob stood when it first moved (-1 not yet), when the step began.
     uint8_t lesson = 0, lesson_step = 0;
@@ -328,6 +344,8 @@ struct UiState {
     uint16_t files_cursor = 0;  // Samples, the browser: the row under the cursor
     uint16_t files_count = 0;   // rows in the folder listed, copied in by the shell
     uint8_t files_drive = 0;    // B2: 0 the card, 1 the internal drive (Drive in sample_library.h)
+    bool files_audio = false;   // the row under the cursor is an audio file (K2 / K3 trim it), copied in by the shell
+    BrowseTrim browse;          // and its trim sheet
     uint8_t trim_zoom = 0;      // Trim: 0 the whole sample .. 100 a few hundred frames (shell/zoom_view.h)
     ZoomView trim_view;         // and the view it keeps
     uint8_t pad_layer = 0;      // Layers (roadmap P3): the layer in hand, 0-3
@@ -409,8 +427,14 @@ struct UiState {
     // turned last (-1 none) and its track, which ADD takes (shell/mod_jobs.h).
     uint8_t mod_view = 0, mod_index = 0, mod_target = 0, macro_index = 0, macro_target = 0;
     uint8_t patterns_cards = 0; // Patterns' cards: 0 the pattern's, 1 SCENE (Shift + B1), 2 FOLLOW (Shift + B2)
-    uint8_t step_cards = 0;     // Step Edit's B1: 0 NOTE, 1 LOCK, 2 TRIG, 3 EUCLID (a kit or Drums lane)
+    uint8_t step_cards = 0;     // Step Edit's B1 (shell/step_lane.h StepCards): NOTE, LOCK, TRIG, SOUND (kit, keygroup), EUCLID (kit or Drums lane)
     bool step_pads = false;     // Step Edit's Shift + B1 PADS: false PLAY (entry at the caret), true STEPS (the bar's steps)
+    // Step SOUND's sounds on the pads (Step Edit, SAMPLE SELECT with a step held or on the SOUND cards;
+    // shell/step_sounds.h): the step (-1 closed) of track `sounds_for`, the track whose pads show and their bank, and
+    // B2 SLICES: the step's sample's slices on the pads instead.
+    int16_t sounds_step = -1;
+    uint8_t sounds_for = 0, sounds_track = 0, sounds_bank = 0;
+    bool sounds_slices = false;
     int16_t learn_lane = -1;
     uint8_t learn_track = 0;
     uint16_t project_cursor = 0;  // Project: row under the cursor (0 is SD card access at the top)
@@ -469,10 +493,10 @@ struct UiState {
     // Tracks), one key's notes onto another key (a synth's play pages, Roll,
     // Step Edit), or one step onto another (Steps). Armed, then the source,
     // then the target (shell/erase_copy.h).
-    enum class Copying : uint8_t { Off, Pads, Patterns, Tracks, Keys, Steps, Notes }; // Notes: Roll's marked notes, Push pastes
+    enum class Copying : uint8_t { Off, Pads, Patterns, Tracks, Keys, Steps, Notes, Scenes }; // Notes: Roll's marked notes, Push pastes; Scenes: Sequences' pads
     Copying copying = Copying::Off;
-    int16_t copy_from = -1;   // the kit pad, pattern, track, key or step picked first, -1 until then
-    uint8_t copy_track = 0;   // Patterns: the track the pattern is copied from
+    int16_t copy_from = -1;   // the kit pad, pattern, track, key, step or sequence picked first, -1 until then
+    uint8_t copy_track = 0;   // Patterns and kit pads: the track the pattern or pad is copied from
     bool moving = false;      // Tracks: a move (B2 MOVE: the two trade places) instead of a copy (shell/track_swap.h)
     void stop_copying() { copying = Copying::Off; copy_from = -1; moving = false; }
     // A question over the page that B1 (Cancel) or B3 (Do it) answers, as the

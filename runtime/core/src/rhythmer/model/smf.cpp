@@ -220,7 +220,7 @@ bool smf_pattern(const std::vector<SmfTrack>& tracks, const Track& track, uint32
             int key = n.key;
             if (kit) { if (key < 36 || key >= 36 + int(sampler_pads)) continue; key = int(sampler_first_note) + key - 36; }
             Event e;
-            e.tick = n.tick; e.length = uint16_t(std::clamp<uint32_t>(n.length, 1, 0xffff)); e.key = uint8_t(key & 0xff);
+            e.tick = n.tick; e.length = note_ticks(n.length); e.key = uint8_t(key & 0xff);
             e.velocity = std::clamp<uint8_t>(n.velocity, 1, 127);
             events.push_back(e);
             end = std::max(end, n.tick + n.length);

@@ -269,8 +269,8 @@ struct Song {
 
 // Roadmap P5: a scene (a sequence on screen) launches a pattern on each track together on the next bar, with a name
 // and a tempo of its own (0: none; tenths of a BPM) taking over on that bar, and a colour (issue 19) its cell and pad
-// show (0: none; 1-16 a track colour, ui/shades.h). Which pattern each track plays in it is the track's
-// (Track::in_scene, model/scene_links.h).
+// show (0: none; 1-16 a track colour, ui/shades.h). Which pattern each track plays in it, and whether the track is
+// muted in it, is the track's (Track::in_scene and scene_mutes, model/scene_links.h).
 struct Scene {
     char name[12] {};
     uint16_t tempo = 0;
@@ -383,12 +383,16 @@ struct Track {
     uint8_t midi_channel = 0; // MIDI Config: 0 none, 1..16 notes on it play this track; its notes go out on it (parity phase 9)
     TrackMidiIn midi_in = TrackMidiIn::Any; // the port its own channel is heard on (MIDC's third byte)
     uint8_t plugin = no_plugin; // a PLUGIN track: the entry of Project::plugins it plays
-    uint8_t speed = speed_normal; // its patterns' playback speed (roadmap P1), an index into speeds: x1/2 .. x2
+    uint8_t speed = speed_normal; // its patterns' playback speed (roadmap P1), an index into speeds: x1/64 .. x4
+    uint8_t direction = 0;        // its patterns' steps forward, backward or shuffled each pass (model/step_order.h PlayDirection)
     MidiDevice midi;              // a MIDI track's device name, drum map and SysEx file (roadmap P4, MIDT v3)
     AudioTrackSettings audio;     // an AUDIO track's source and monitor (freeze plan F3, AUDT)
     // Its pattern in each scene (model/scene_links.h): 0 none (the track plays on when the scene launches), n + 1
     // pattern n, scene_off: the track stops. Kept with the track, so a move, copy or clear takes them along.
     std::array<uint8_t, pattern_count> in_scene {};
+    // Its mute in each scene, a bit a scene (model/scene_links.h scene_muted): where a scene keeps a pattern or off
+    // for the track, launching it sets the mixer mute to the bit. Kept with the track, as in_scene (SEQL v2).
+    std::array<uint64_t, (pattern_count + 63) / 64> scene_mutes {};
     bool off = false; // stopped by its scene or SEQ + STOP: its pattern does not play until a launch (SEQL)
     bool used() const { return engine != EngineKind::None; }
     bool is_audio() const { return engine == EngineKind::Audio; }

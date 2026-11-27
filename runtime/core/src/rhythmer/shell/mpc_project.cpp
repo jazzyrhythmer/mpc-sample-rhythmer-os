@@ -22,7 +22,8 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr ssize_t largest_document = 256 * 1024 * 1024;
-constexpr unsigned mpc_ticks_per_tick = 960 / ticks_per_quarter; // the MPC counts 960 a quarter
+constexpr unsigned mpc_ticks_per_tick = 960 / ticks_per_quarter; // the MPC counts 960 a quarter, as the sequencer
+static_assert(960 % ticks_per_quarter == 0, "the MPC's pulses are whole ticks");
 constexpr int note_event = 3;                                    // an event's "type"
 constexpr int mpc_pads = 128;
 
@@ -369,7 +370,7 @@ unsigned read_notes(const juce::var& clip, const std::array<int, 128>& pad_of_no
         if (tick >= pattern.length) continue;
         Event e;
         e.tick = tick;
-        e.length = uint16_t(std::clamp(std::lround(number(note, "length") / mpc_ticks_per_tick), 1l, 65535l));
+        e.length = note_ticks(uint64_t(std::max(1l, std::lround(number(note, "length") / mpc_ticks_per_tick))));
         e.key = uint8_t(sampler_first_note + unsigned(pad_of_note[size_t(key)]));
         e.velocity = uint8_t(std::clamp(std::lround(number(note, "velocity", 1) * 127), 1l, 127l));
         e.chance = uint8_t(std::clamp(integer(note, "probability", 100), 0, 100));
@@ -393,7 +394,7 @@ unsigned read_keys(const juce::var& clip, Pattern& pattern) {
         if (tick >= pattern.length) continue;
         Event e;
         e.tick = tick;
-        e.length = uint16_t(std::clamp(std::lround(number(note, "length") / mpc_ticks_per_tick), 1l, 65535l));
+        e.length = note_ticks(uint64_t(std::max(1l, std::lround(number(note, "length") / mpc_ticks_per_tick))));
         e.key = uint8_t(key);
         e.velocity = uint8_t(std::clamp(std::lround(number(note, "velocity", 1) * 127), 1l, 127l));
         e.chance = uint8_t(std::clamp(integer(note, "probability", 100), 0, 100));
@@ -530,7 +531,7 @@ std::string import_mpc_project(const std::vector<uint8_t>& file, const std::stri
                 const auto* events = clip_of(*sequence, name)["eventList"]["events"].getArray();
                 if (!events) continue;
                 for (const auto& event : *events)
-                    if (integer(event, "type") == 4 && integer(event, "time") <= int(mpc_ticks_per_tick) && !firsts.count(n)) firsts[n] = &event;
+                    if (integer(event, "type") == 4 && integer(event, "time") <= 10 && !firsts.count(n)) firsts[n] = &event;
                 for (const auto& event : *events) {
                     if (integer(event, "type") != 4) continue;
                     ++regions;
@@ -648,7 +649,7 @@ std::string import_mpc_project(const std::vector<uint8_t>& file, const std::stri
             if (slot < 0) { ++report.over_limit; continue; }
             report.missing += missing;
             read_pad(instrument, layer, unsigned(slot), layered ? 1.0 : samples.to_model(unsigned(slot)), track.pads[size_t(n)], layered);
-            track.pads[size_t(n)].colour = colours[size_t(n)];
+            track.pads[size_t(n)].colour = track.pads[size_t(n)].kit_colour = colours[size_t(n)];
             ++report.pads;
         }
 

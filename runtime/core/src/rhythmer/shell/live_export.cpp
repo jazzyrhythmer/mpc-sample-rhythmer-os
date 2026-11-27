@@ -328,7 +328,7 @@ std::vector<Note> notes_of(const Project& project, const Planned& planned, const
         const uint32_t lane = std::max<uint32_t>(played.lane_length(e.key), 1);
         const unsigned hits = e.hits();
         for (uint32_t round = e.tick; round < length; round += lane) {
-            const double each = double(std::max<uint16_t>(e.length, 1)) / hits;
+            const double each = double(std::max<uint32_t>(e.length, 1)) / hits;
             for (unsigned n = 0; n < hits; ++n) {
                 const double from = round + n * each, to = from + each;
                 if (from >= length) break;

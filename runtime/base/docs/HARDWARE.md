@@ -33,33 +33,63 @@ both.
 
 ### Load Untrusted OS
 
-Read on 1.4.0.7 without switching it on. inMusic has not published 1.4's
-sources: [az0x-open-source](https://github.com/inmusic-software/az0x-open-source)
-has no MPC Sample branch after `mpc-sample/1.3.0`, so there is no 6.18.59
-kernel, 1.4 device tree or U-Boot `2026.07-inmusic-20260909` to read. Its
-`engine-os-g2/5.3` branch has a nearer U-Boot, `2026.07-inmusic-20260721`
-(archive SHA-256 `164245cc…`), with no untrusted mode either: `az07.c` differs
-from 1.3.0's only by a removed unused variable, `board/inmusic/common` is the
-same, and `az07.h` still imports only `serial#` and `ethaddr`. The switch's
-U-Boot side, if it has one, came after 21 July 2026. What the switch lets the
-MPC start is therefore not known.
+Read on 1.4.0.7 without switching it on, then against inMusic's
+[MPC Sample 1.4.0 open-source release](https://github.com/inmusic-software/az0x-open-source/tree/mpc-sample/1.4.0)
+(commit `c879e12d4fa5c334e7dd456cd396179fff9cb946`, 24 November 2026):
+
+| Public package | SHA-256 |
+| --- | --- |
+| `linux-imb-6.18.59+git-r0` | `2123c75b243f5d544c4cc3589073a589537a267c5557a5dacd8d337c356c447d` |
+| `u-boot-imb-1_2026.07-inmusic-20260930-r0` | `eb48188475d2256de89fa136901a9be518cb8db16bed09344e488f7cef01051c` |
+
+Neither has an untrusted mode:
+
+- U-Boot `2026.07-inmusic-20260930`: `board/inmusic/az07` has no switch, and
+  `az07.h` still imports only `serial#` and `ethaddr` from `env1`/`env2`.
+  The MPC's U-Boot device tree includes `az0x-akai-keys.dtsi` (key `akai-1`,
+  `required = "conf"`), and `SPL_FIT_SIGNATURE` selects `FIT_SIGNATURE`, so
+  `bootm` refuses a `kernel.fit` whose configuration inMusic has not signed.
+  The environment cannot turn this off (`verify` is not imported).
+  `fw_setenv bootargs ...` and `fw_setenv loadpin.enforce 0` cannot disable
+  LoadPin either: neither variable is imported or added to the kernel command
+  line. `loadpin.enforce=0` must reach the kernel at boot.
+- Kernel: LoadPin is the upstream code, and no file reads the switch.
+
+What the switch changes is outside the published sources: the Rockchip
+loader, OP-TEE, or a U-Boot other than 20260930 (1.4.0.7 had
+`2026.07-inmusic-20260909`; both `uboot1` and `uboot2` on the connected
+1.4.0.8 unit also identify as `2026.07-inmusic-20260909`, read without
+writing the partitions). What it lets the MPC start is therefore still not known.
 
 | Area | 1.4.0.7 |
 | --- | --- |
 | Setting | Stock app property `Enhancements.UntrustedOS` (settings key `untrusted_os`). Its text: switching it off turns secure boot back on, after which the MPC "may fall back to firmware update mode". |
-| Use record | The stock app has code that writes `imb-dev-mode-used=1` and `imb-beta-features-used=1` into the U-Boot environment (`/etc/fw_env.config`: `env1` primary, `env2` backup). This unit's environment holds only `serial#` so far. |
+| Developer flags | The stock app on 1.4.0.7 holds two obfuscated strings, decoded as `dev-mode` and `beta-features`, in code that also uses a plain `imb-` string and links libubootenv. What that code does with them was not traced. No variable made from them has been seen in the U-Boot environment (`/etc/fw_env.config`: `env1` primary, `env2` backup): on 1.4.0.7, and on 1.4.0.8 also after Developer Mode was turned off and on again, it held only `serial#`. |
 | eMMC | GPT: `spl1`/`spl2` 480K, `env1`/`env2` 512K, `uboot1`/`uboot2` 4M, `factory` 64M (p7), `boot` 128M (p8), `recovery` 128M (p9), `rootfs` 1G (p10, dm-verity), `content` 4G (p11), `data` (p12). |
-| Boot | 1.3.0's U-Boot loads `kernel.fit` from `boot` (or `recovery`) and runs `bootm $loadaddr#conf-rk3566-az07-ac50`. The kernel command line carries the dm-verity table of `rootfs` with its root hash (no `DM_VERITY_VERIFY_ROOTHASH_SIG`), so a new kernel, device tree or command line can keep inMusic's root file system unchanged. 1.3.0's U-Boot imports only `serial#` and `ethaddr` from `env1`/`env2` and has no untrusted mode. |
+| Boot | 1.3.0's and 1.4.0's U-Boot load `kernel.fit` from `boot` (or `recovery`) and run `bootm $loadaddr#conf-rk3566-az07-ac50`. The kernel command line carries the dm-verity table of `rootfs` with its root hash (no `DM_VERITY_VERIFY_ROOTHASH_SIG`), so a new kernel, device tree or command line can keep inMusic's root file system unchanged. Both import only `serial#` and `ethaddr` from `env1`/`env2` and have no untrusted mode. |
 | Kernel | `SECURITY_LOADPIN_ENFORCE` and `SECURITY_LOADPIN_VERITY` on, `/usr/lib/az0x/trusted-verity-digests` empty; `MODULE_SIG`, `MODVERSIONS`, `KEXEC`, lockdown and IMA off. `loadpin.enforce=0` on the command line would let unsigned modules load. |
-| Base modules | `KERNEL=6.18 tools/build_kernel_modules.sh` builds them for `6.18.59-imb-2026-10-26-rt9` against inMusic's public 6.18.45 tree (`engine-os-g2/5.3`, `rk3566-az07-ac50.dts` included) brought to 6.18.59 with kernel.org's stable increments; the headers match (stable rejects touch only `.c` files, and upstream `-rt6` to `-rt9` changes no header) and the 1.4 `/proc/config.gz` gives the same configuration apart from the compiler's name. Every symbol they need is exported by the 6.18 tree or the stock `videobuf2` modules. The webcam module carries its own `f_uvc` (6.18's in `kernel/uvc-6.18`), so the kernel's missing `F_UVC` does not matter. |
-| Recovery | 1.3.0's U-Boot: 2 failed starts go to update mode, 4 to the `recovery` partition, 6 to fastboot over USB; the recovery button on a clean start goes to `recovery`. U-Boot also has a rollback generation number (`AZ0X_GENERATION_NUMBER`), so going back to 1.3.0.12 may be refused (not tried). |
+| Base modules | `KERNEL=6.18 tools/build_kernel_modules.sh` builds them for `6.18.59-imb-2026-10-26-rt9` against inMusic's 1.4.0 kernel release with the 1.4 `/proc/config.gz`. The first builds used inMusic's 6.18.45 tree (`engine-os-g2/5.3`) brought to 6.18.59 with kernel.org's stable increments; that tree differs from the 1.4.0 release only in five `.c` files (`seq_midi.c`, `8250_port.c`, three DSI panel drivers) and the `az04`/`az07` defconfigs, and the modules built against the release are byte-identical. Every symbol they need is exported by the 6.18 tree or the stock `videobuf2` modules. The webcam module carries its own `f_uvc` (6.18's in `kernel/uvc-6.18`), so the kernel's missing `F_UVC` does not matter. |
+| Recovery | 1.3.0's and 1.4.0's U-Boot: 2 failed starts go to update mode, 4 to the `recovery` partition, 6 to fastboot over USB; the recovery button on a clean start goes to `recovery`. U-Boot also has a rollback generation number (`AZ0X_GENERATION_NUMBER`), so going back to 1.3.0.12 may be refused (not tried). |
+
+On the connected 1.4.0.8 unit, root's
+`sysctl -w kernel.loadpin.enforce=0` returned `Invalid argument`; a second
+read still returned `1`. The boot log shows `dm-0` read-only and pinning
+engaged when PID 1 loads `ipv6.ko`. The running `/proc/config.gz` confirms
+`SECURITY_LOADPIN`, `SECURITY_LOADPIN_ENFORCE` and `SECURITY_LOADPIN_VERITY`
+on, with `KEXEC`, `KEXEC_FILE`, `DEVMEM`, `MODULE_UNLOAD` and `MODULE_SIG`
+off. Root cannot turn off enforcement through the sysctl after this pin;
+there is no `/dev/mem` or kexec route in this build. The upstream
+[LoadPin documentation](https://docs.kernel.org/admin-guide/LSM/LoadPin.html)
+describes the boot argument and the read-only pin restriction.
 
 The smallest own boot image: the stock 1.4 kernel, a device tree whose sound
 node has no `system-clock-frequency` (48 and 96 kHz), and `loadpin.enforce=0`,
 packed as `kernel.fit` for `boot` only. `recovery`, `spl1`/`spl2` and
 `uboot1`/`uboot2` stay stock; the bootloaders sit under the chip's own secure
-boot and must not be written. First step: get the 1.4 sources from inMusic and
-read the 2026.07 U-Boot to see what untrusted mode accepts.
+boot and must not be written. The 1.4 sources do not show what untrusted
+mode accepts. The installed 20260909 U-Boot differs from the published
+20260930 source; neither the untrusted-mode boot path nor an own boot image
+has been tested.
 
 ## Reference and reproducibility
 
@@ -647,6 +677,60 @@ request of the computer's (`delayed_status`, so composite has nothing to
 warn about), and a process that leaves while the computer waits on it
 answers first. A webcam an earlier run left is taken as it is
 (`gadget_mirror_format()`), so a restart with the same size never rebinds.
+
+## File Sharing (the card as a network drive)
+
+File Sharing serves the SD card over SMB 2 and 3 to the computer on the USB-C
+network ([src/drivers/file_share.h](../src/drivers/file_share.h)). The card
+stays mounted on the MPC: the app and the computer use the same exFAT file
+system at once, unlike [SD card access](#sd-card-access). An app turns it on
+through `App::file_sharing()`.
+
+The MPC's kernel is built without an SMB server and the root file system has
+no Samba. `kernel/ksmbd/` is the kernel's own server, `fs/smb/server` from
+the 6.12.60 release, built out of tree as `sample_base_smb.ko` together with
+`cifs_arc4.c` and `nls_ucs2_utils.c` (`CIFS` and `NLS_UCS2_UTILS` are off).
+The crypto it asks for by name (`md5`, `cmac`, `ccm`, `gcm`) and `nls_utf8`
+are stock modules. On firmware 1.4 every base module is refused by LoadPin
+(above), and this one with them; File Sharing reports `failed` there. The
+6.18 build (`kernel/ksmbd-6.18/`, with `lib/crypto/arc4.c`; 6.18's ksmbd
+calls `libmd5` directly) has not been loaded on an MPC.
+
+ksmbd moves the files itself and asks a process for everything else over
+generic netlink (`SMBD_GENL`); the runtime is that process, on a thread of
+its own:
+
+- **Start**: port 445 on the gadget's network interface only (`usb0`),
+  signing when the computer asks for it, a 10 s heartbeat. A new run finds
+  the server running and takes it over, so a computer keeps its connection
+  across a restart; when no run answers, ksmbd's heartbeat stops the server
+  10 to 20 s later (from its source; not timed here). A server reset under
+  a run (`kill_server` from elsewhere; its `stats` say `startup`) is started
+  again within a second.
+- **Logins**: the name `guest` (or none) is a guest. Any other name is a user
+  with an empty password, checked by the server; its session is signed.
+  macOS refuses a named login that the server answers as a guest
+  (`smbutil`: "Authentication error"); Windows 11 turns guest logons away
+  by default (Microsoft's documentation; Windows not tried here).
+- **Shares**: `SD Card` is the card's mount point, read-write, files made as
+  root (exFAT has no owners). The share's top folder is where the card is
+  mounted, so it needs ksmbd's `CROSSMNT` flag: without it the server
+  lists the empty `/media/<uuid>` folder under the mount. `IPC$` carries
+  srvsvc's share list (NetrShareEnum and NetrShareGetInfo,
+  [src/drivers/smb_pipe.h](../src/drivers/smb_pipe.h)); other pipes
+  (macOS asks for `mdssvc` and `MsFteWds`) are refused by ksmbd itself.
+- **Connections**: while a computer has `SD Card` open, SD card access
+  refuses to lend the card ("the card is open on the computer over the
+  network"); lending stops the server first in any case
+  (`/sys/class/ksmbd-control/kill_server`, which closes every connection).
+  The server stops too when the card's mount point changes under an open
+  connection, and when the computer has been unplugged for 5 s.
+  `restore-stock.sh` stops it for the stock app. The module is never
+  unloaded.
+
+Measured on 1.3.0.12 from macOS (`smbutil`, `mount_smbfs`): SMB 3.1.1, the
+share list as guest and by name, a 32 MB file written in 2.4 s and read back
+in 1.0 s with the same SHA-256.
 
 ## Jack detection
 

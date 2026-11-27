@@ -41,7 +41,7 @@ inline int break_p1_check(){
     // Tone frequency remains 220 Hz while duration follows source/project tempo.
     for(unsigned tempo:{600u,1200u,2400u}){
         SamplerEngine sampler;SamplerEngine::Table table{};table[preview_slot]=&tone;sampler.set_samples(&table);sampler.set_tempo(tempo);
-        sampler.audition(preview_slot,0,0,100,-1,1200);
+        sampler.audition(preview_slot,0,0,100,-1,false,1200);
         unsigned last=0,crossings=0;float previous=0;double square=0;unsigned measured=0;
         std::vector<float> result;const unsigned expected=unsigned(uint64_t(tone.frames)*1200/tempo);
         std::array<float,128> l{},r{};
@@ -169,13 +169,13 @@ inline int break_p1_check(){
         SampleData data;std::string path=root+"/Fixtures/"+std::to_string(bars)+"bar-"+variant+".wav";
         if(!read_wav(path,data).empty())return fail(32);
         BreakMap map;map.bars=bars;for(unsigned i=0;i<16;++i)map.slices[i]=uint8_t(36+i);
-        Pattern source;source.length=bars*384;Gen8Settings settings{};settings.seed=137;settings.amount=80;settings.complexity=55;settings.genre=0;
+        Pattern source;source.length=bars*4*ticks_per_quarter;Gen8Settings settings{};settings.seed=137;settings.amount=80;settings.complexity=55;settings.genre=0;
         source=break_generate(source,BreakAction::Straight,settings,map,120);
         for(unsigned bpm:{90u,140u,175u})for(auto action:{BreakAction::Straight,BreakAction::Genre,BreakAction::Random,BreakAction::Mutate}){
             auto pattern=break_generate(source,action,settings,map,bpm);
             if(!(pattern==break_generate(source,action,settings,map,bpm))||pattern.events.empty())return fail(33);
             for(const auto& e:pattern.events)if(e.key<36||e.key>51||e.tick>=pattern.length||!e.length||e.tick+e.length>pattern.length)return fail(34);
-            if(action==BreakAction::Mutate)for(const auto& e:source.events)if(e.tick%96==0){
+            if(action==BreakAction::Mutate)for(const auto& e:source.events)if(e.tick%ticks_per_quarter==0){
                 auto it=std::find_if(pattern.events.begin(),pattern.events.end(),[&](const Event& v){return e.tick==v.tick&&e.key==v.key;});if(it==pattern.events.end())return fail(35);}
             for(unsigned mode=0;mode<2;++mode){
                 struct Edge{unsigned frame;int key;bool on;};std::vector<Edge> edges;

@@ -33,9 +33,9 @@ unsigned split_events(std::vector<Event>& notes, unsigned q) {
         uint32_t first = std::max<uint32_t>(q, (e.length / 2 + q / 2) / q * q);
         if (first >= e.length) first = e.length - q;
         Event a = e, b = e;
-        a.length = uint16_t(first);
+        a.length = note_ticks(first);
         b.tick = e.tick + first;
-        b.length = uint16_t(e.length - first);
+        b.length = note_ticks(e.length - first);
         out.push_back(a); out.push_back(b);
         ++split;
     }
@@ -51,7 +51,7 @@ void legato_events(std::vector<Event>& notes, const Pattern& rest, bool per_key)
         };
         for (const auto& o : rest.events) later(o);
         for (const auto& o : notes) later(o);
-        e.length = uint16_t(std::clamp<uint32_t>(next - e.tick, 1, 0xffff));
+        e.length = note_ticks(next - e.tick);
     }
 }
 
@@ -91,7 +91,7 @@ int ramp_of(const std::vector<Event>& notes) {
 std::vector<Event> arp_events(const std::vector<Event>& notes, unsigned mode, unsigned rate, unsigned octaves, unsigned gate,
                               uint32_t length, int lane, int top) {
     std::vector<Event> out;
-    const uint32_t each = arp_rate_ticks(rate);
+    const uint32_t each = arp_rate_sequencer_ticks(rate);
     auto row = [&](const Event& e) { return lane >= 0 ? 60 + int(e.pitch) : int(e.key); };
     for (size_t first = 0; first < notes.size();) {
         size_t last = first;
@@ -113,7 +113,7 @@ std::vector<Event> arp_events(const std::vector<Event>& notes, unsigned mode, un
             if (key < 0) break;
             Event e = like;
             e.tick = t;
-            e.length = uint16_t(std::clamp<uint32_t>(std::min<uint32_t>(each * std::clamp(gate, 1u, 100u) / 100, end - t), 1, 0xffff));
+            e.length = note_ticks(std::min<uint32_t>(each * std::clamp(gate, 1u, 100u) / 100, end - t));
             e.velocity = uint8_t(std::clamp(velocity, 1, 127));
             e.ratchet = 1; e.ramp = 0; e.pitch_ramp = 0;
             if (lane >= 0) { e.key = uint8_t(lane); e.pitch = int8_t(std::clamp(key - 60, -48, 48)); }

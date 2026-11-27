@@ -58,7 +58,7 @@ struct Snapshot {
     bool following = false;                  // MIDI clock in leads the transport (parity phase 9)
     bool following_mtc = false;              // and MTC in (parity phase 9b)
     std::array<uint8_t, track_count> playing_patterns {};
-    uint32_t ticks = 0;                      // 96 a quarter since Play
+    uint32_t ticks = 0;                      // ticks_per_quarter a quarter since Play
     bool song_playing = false;
     unsigned song_bar = 0;
     std::array<float, track_count> meters {};
@@ -88,6 +88,9 @@ struct Snapshot {
     // Pads (round 2, pads B): each pad of the bank in view drawn as its own waveform, start to end; a bit a pad that has one.
     std::array<std::array<uint8_t, 32>, 16> pad_waves {};
     uint16_t pad_waves_shown = 0;
+    // Step Edit's SOUND panel: the whole sample the step in hand plays (its own, else its pad's).
+    std::array<uint8_t, 96> step_wave {};
+    bool step_wave_shown = false;
     struct Take {
         uint8_t state = 0;             // TakeRecorder::State
         uint32_t frames = 0, length = 0;
@@ -102,13 +105,14 @@ struct Snapshot {
     bool monitoring = false, speaker_quieted = false;
     uint8_t usb_state = 0;             // UsbStreamState
     std::vector<HistoryRow> history;   // the undo list's rows, top down, while it is open (shell/history_list.h)
-    uint8_t history_redos = 0;         // how many of them are undone: the row of the state in hand
+    uint16_t history_redos = 0;        // how many of them are undone: the row of the state in hand
     std::vector<SampleFile> files;     // Samples: the folder listed
     std::string sample_root;           // the card's Samples folder, Rhythmer/Samples; empty: no card
     std::string files_folder;          // the folder listed (empty: the internal drive's categories)
     bool files_top = true;             // nothing above it (B1 has no job)
     PluginRack::View plugins;          // the PLUG-INS picker: the folder listed
     PluginPrograms presets;            // PRESETS: the plug-in's programs
+    std::vector<std::string> own_sounds; // SOUNDS: the names of the track's engine's sounds of one's own (sound_name())
     std::shared_ptr<const PluginSkin> plugin_skin; // the plug-in in the panel's skin (plugin/plugin_skin.h), null none
     ScreenPicturePtr plugin_picture; // its own screen's newest picture (plugin/plugin_screen.h), null none
     ProjectStore::View projects;       // Project page and Exit

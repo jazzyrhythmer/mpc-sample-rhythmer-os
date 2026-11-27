@@ -3,6 +3,7 @@
 #include "rhythmer/model/chord_gen_access.h"
 #include "rhythmer/shell/bindings.h"
 #include "rhythmer/shell/free_length.h"
+#include "rhythmer/shell/step_sounds.h"
 #include "rhythmer/shell/levels_keys.h"
 #include "rhythmer/shell/features.h"
 #include "rhythmer/shell/mix_hub.h"
@@ -29,6 +30,7 @@
 #include "rhythmer/shell/sample_mode.h"
 #include "rhythmer/shell/stage_map.h"
 #include "rhythmer/shell/zoom_view.h"
+#include "rhythmer/shell/browse_trim.h"
 #include "rhythmer/shell/step_edit.h"
 #include "rhythmer/shell/step_lane.h"
 #include "rhythmer/model/generators.h"
@@ -110,13 +112,6 @@ Binding cloud_card(const PadSound& pad, int id) {
 }
 // The Sample Mode cards of the last pad hit (parity phase 4).
 Binding trim_zoom(const UiState& ui, int handle) { return {Kind::TrimZoom, handle, 0, zoom_top, ui.trim_zoom}; }
-// A handle's card in frames between lo and hi: zoomed in, the pot turns across the view on screen
-// (shell/zoom_view.h), which stays put while the handle is inside it.
-Binding handle_card(Kind kind, int id, uint32_t value, uint32_t lo, uint32_t hi, FrameView view) {
-    if (view.width() && value >= view.from && value <= view.to) { lo = std::max(lo, view.from); hi = std::min(hi, view.to); } // another handle's view: all of it
-    if (hi <= lo) { lo = std::min(lo, value); hi = std::max(hi, value + 1); }
-    return {kind, id, int(lo), int(hi), int(std::clamp(value, lo, hi))};
-}
 // Decay on One shot, Release on Note On (Gate), as the MPC swaps them; the other on row 2.
 Binding amp_second(const PadSound& pad, bool other) {
     bool decay = (pad.play == PadPlay::OneShot) != other;
@@ -268,7 +263,7 @@ bool lock_place(const Project& project, const UiState& ui, const Pattern& patter
     unsigned q = pattern.q();
     // Step Edit: a step held (the pads on the steps), or the caret's on LOCK; as long as its longest note on its lane
     // (a step at least)
-    if (ui.page == PageId::StepEdit && (ui.held_step >= 0 || ui.step_cards % (steps_lane(track) >= 0 ? 4 : 3) == 1)) {
+    if (ui.page == PageId::StepEdit && (ui.held_step >= 0 || step_set(track, ui.step_cards) == cards_lock)) {
         unsigned st = unsigned(ui.held_step >= 0 ? ui.held_step : std::max<int>(ui.step_cursor, 0)) % pattern.steps();
         tick = st * q; hold = q;
         int lane = steps_lane(track);
@@ -319,7 +314,8 @@ bool pad_reset_value(const Binding& b, int& value) {
 
 bool erase_resets(const Binding& b) {
     int value = 0;
-    return b.kind == Kind::Param || b.kind == Kind::KnobParam || b.kind == Kind::PluginParam || pad_reset_value(b, value);
+    return b.kind == Kind::Param || b.kind == Kind::KnobParam || b.kind == Kind::PluginParam || b.kind == Kind::Lock
+        || pad_reset_value(b, value);
 }
 
 namespace {
@@ -594,7 +590,7 @@ std::array<Binding, 3> stage_bindings(const Project& project, const UiState& ui,
     if (page.kind == SK::Colour) { // K1 (and the wheel) the last pad's colour; Shift nothing
         const auto& pad = track.pads[track.last_pad % sampler_pads];
         if (shift_row || track.engine != EngineKind::Sampler || !pad.used()) return {};
-        return {Binding {Kind::PadColour, 0, colour_track, colour_last(pad.colour), colour_choice(pad.colour)}, Binding {}, Binding {}};
+        return {Binding {Kind::PadColour, 0, colour_track, colour_last(pad), colour_choice(pad.colour)}, Binding {}, Binding {}};
     }
     switch (page.kind) {
     case SK::Params: {
@@ -721,6 +717,19 @@ std::array<Binding, 3> levels_cards(const Project& project, const Track& track) 
             Binding {Kind::LevelsHigh, 0, range.low, range.high, ends[1]}};
 }
 
+// Step Edit's SOUND row on step `at` (on a kit its lane's note): its sample, slice and way.
+std::array<Binding, 3> sound_cards(const Project& project, const Track& track, const Pattern& pattern, unsigned at) {
+    int n = lane_event(pattern, at, steps_lane(track));
+    if (n < 0) return {};
+    const auto& e = pattern.events[size_t(n)];
+    const auto choices = step_sound_choices(project);
+    const unsigned slices = step_sound_slices(project, track, e.key, e.sample);
+    const int slice = e.slice == slice_random ? int(slices) + 1 : std::min<int>(e.slice, int(slices));
+    return {Binding {Kind::StepSound, int(e.sample), 0, int(choices.size()), std::max(step_sound_index(choices, e.sample), 0)},
+            Binding {Kind::StepSlice, int(slices), 0, slices ? int(slices) + 1 : 0, slices ? slice : 0},
+            Binding {Kind::StepPlay, 0, 0, int(StepPlay::Count) - 1, int(step_play(e.flags))}};
+}
+
 std::array<Binding, 3> trig_cards(const Event& e, bool step) {
     return {Binding {step ? Kind::StepRatchet : Kind::EventRatchet, 0, 1, int(max_ratchet), int(e.hits())},
             Binding {step ? Kind::StepRamp : Kind::EventRamp, 0, -100, 100, e.ramp},
@@ -782,6 +791,11 @@ std::array<Binding, 3> shift_bindings(const Project& project, const UiState& ui,
             return track.used() ? std::array<Binding, 3> {Binding {Kind::FollowOther, 0, 0, int(FollowAction::Count) - 1, pattern.follow.other}, Binding {}, Binding {}}
                                 : std::array<Binding, 3> {};
         return pattern_shift_cards(project, ui, pattern);
+    case PageId::Samples: { // Shift + K2 / K3: the trim sheet's zoom at START or END, as on Trim
+        if (ui.break_browse || ui.sheet_open || !(ui.browse.up() || ui.files_audio)) return {};
+        const auto zoom = browse_zoom_cards(project, ui.browse);
+        return {Binding {}, zoom[0], zoom[1]};
+    }
     case PageId::Scenes: // roadmap P5: Shift + K1 the follow action's second, on the odds the first leaves
         if (!follow_shown(ui)) return pattern_shift_cards(project, ui, pattern); // Basic: as Patterns' Shift row
         if (!track.used()) return {};
@@ -799,14 +813,14 @@ std::array<Binding, 3> shift_bindings(const Project& project, const UiState& ui,
         int lane = steps_lane(track);
         if (ui.held_step >= 0) return {};
         if (lane >= 0) {
-            unsigned q = pattern.q(), steps = pattern.steps(), set = ui.step_cards % 4;
+            unsigned q = pattern.q(), steps = pattern.steps(), set = step_set(track, ui.step_cards);
             unsigned at = unsigned(std::max<int>(ui.step_cursor, 0)) % steps;
-            if (set == 2) {
+            if (set == cards_trig) {
                 int n = lane_event(pattern, at, lane);
                 if (n < 0) return {};
                 return {Binding {}, Binding {Kind::StepPitchRamp, 0, -max_pitch_ramp, max_pitch_ramp, pattern.events[size_t(n)].pitch_ramp}, Binding {}};
             }
-            if (set == 3 || ui.step_pads) {
+            if (set == cards_euclid || ui.step_pads) {
                 unsigned own = std::clamp<unsigned>((pattern.lane_length(unsigned(lane)) + q - 1) / q, 1, steps);
                 return {Binding {Kind::LaneLength, lane, 1, int(std::max(steps, 2u)), int(own)}, Binding {}, Binding {}};
             }
@@ -1068,18 +1082,24 @@ std::array<Binding, 3> base_bindings(const Project& project, const UiState& ui, 
     }
     case PageId::StepEdit: { // B1's card sets on the caret's step; on a kit (or Drums) its lane's note, the last pad's
         unsigned at = unsigned(std::max<int>(ui.step_cursor, 0)) % pattern.steps();
-        if (ui.held_step >= 0) return lock_cards(project, ui, pattern, unsigned(ui.held_step) % pattern.steps() * pattern.q()); // STEPS, held: locks
+        const unsigned set = step_set(track, ui.step_cards);
+        if (sounds_open(ui)) return sound_cards(project, track, pattern, sound_step(ui, pattern)); // the sounds on the pads: the step's
+        if (ui.held_step >= 0) { // STEPS, held: its SOUND row on SOUND, else locks
+            if (set == cards_sound) return sound_cards(project, track, pattern, unsigned(ui.held_step) % pattern.steps());
+            return lock_cards(project, ui, pattern, unsigned(ui.held_step) % pattern.steps() * pattern.q());
+        }
         int lane = steps_lane(track);
         bool spare = in_spare(ui, pattern); // past the end (shell/spare_bar.h): no step's cards, only what a pad writes
-        switch (ui.step_cards % (lane >= 0 ? 4 : 3)) {
-        case 1: if (spare) return {}; return lock_cards(project, ui, pattern, at * pattern.q()); // LOCK: the Motion lanes locked on the caret's step
-        case 2: { // TRIG: its ratchet, ramp and condition
+        switch (set) {
+        case cards_lock: if (spare) return {}; return lock_cards(project, ui, pattern, at * pattern.q()); // LOCK: the Motion lanes locked on the caret's step
+        case cards_sound: if (spare) return {}; return sound_cards(project, track, pattern, at); // SOUND: its sample, slice, way
+        case cards_trig: { // TRIG: its ratchet, ramp and condition
             if (spare) return {};
             int n = lane_event(pattern, at, lane);
             if (n < 0) return {};
             return trig_cards(pattern.events[size_t(n)], true);
         }
-        case 3: { // EUCLID: the last pad's lane's rhythm (roadmap P1)
+        case cards_euclid: { // EUCLID: the last pad's lane's rhythm (roadmap P1)
             unsigned key = unsigned(lane);
             const EuclidLane* e = euclid_of(pattern, key);
             int steps = e ? e->steps : int(std::min(pattern.steps(), euclid_max_steps));
@@ -1140,7 +1160,7 @@ std::array<Binding, 3> base_bindings(const Project& project, const UiState& ui, 
         int length_value = clip >= 0 ? project.song.clips[size_t(clip)].bars : ui.song_length;
         return {Binding {Kind::SongZoom, 0, 0, int(sizeof(song_zooms) / sizeof(song_zooms[0])) - 1, ui.song_zoom},
                 Binding {Kind::SongPattern, int16_t(clip), 0, int(pattern_count) - 1, pattern_value},
-                Binding {Kind::SongLength, int16_t(clip), 1, 16, length_value}};
+                Binding {Kind::SongLength, int16_t(clip), 1, int(max_bars), length_value}};
     }
     case PageId::Rack:
     case PageId::Bus:
@@ -1221,10 +1241,14 @@ std::array<Binding, 3> base_bindings(const Project& project, const UiState& ui, 
     }
     case PageId::FlexBeat: // K1 One Shot / Loop, K3 mix (as on the MPC)
         return {Binding {Kind::FlexMode, 0, 0, 1, project.flex.mode}, Binding {}, Binding {Kind::FlexMix, 0, 0, 100, project.flex.mix}};
-    case PageId::Samples:
+    case PageId::Samples: { // every list: K1 jumps; on an audio file K2 START, K3 END (the trim sheet, shell/browse_trim.h)
         if(ui.break_browse&&ui.break_load_b)return {Binding{},Binding{Kind::BreakPreviewMode,0,0,1,ui.break_preview_sync},Binding{}}; // Break loop length is chosen before loading
         if(ui.break_browse)return {Binding{Kind::GenBars,0,1,4,ui.break_bars},Binding{Kind::BreakPreviewMode,0,0,1,ui.break_preview_sync},Binding{}};
-        return {Binding {Kind::FileJump, 0, 0, std::max(int(ui.files_count) - 1, 1), ui.files_cursor}, Binding {}, Binding {}};
+        const Binding jump {Kind::FileJump, 0, 0, std::max(int(ui.files_count) - 1, 1), ui.files_cursor};
+        if (ui.sheet_open || !(ui.browse.up() || ui.files_audio)) return {jump, Binding {}, Binding {}};
+        const auto trim = browse_cards(project, ui.browse);
+        return {jump, trim[0], trim[1]};
+    }
     case PageId::TrackActions: return {};
     case PageId::Plugins:
         return {Binding {Kind::PluginJump, 0, 0, std::max(int(ui.plugins_count) - 1, 1), ui.plugins_cursor}, Binding {}, Binding {}};

@@ -67,6 +67,7 @@
 #include "rhythmer/shell/midi_route.h"
 #include "rhythmer/shell/mtc_in.h"
 #include "rhythmer/engine/midi_out.h"
+#include "rhythmer/model/step_order.h"
 #include "rhythmer/engine/midi_engine.h"
 #include "rhythmer/model/fader.h"
 #include "rhythmer/engine/effect_info.h"
@@ -643,8 +644,8 @@ void motion() {
 void audio_takes() {
     AudioRegion take;
     take.take = 3; take.tempo = 1200;
-    take.frames = take.take_frames = uint32_t(ticks_to_frames(2 * 384, 1200)); // two bars at 120 BPM
-    CHECK(take.frames == 176400 && frames_to_ticks(take.frames, 1200) == 768);
+    take.frames = take.take_frames = uint32_t(ticks_to_frames(2 * 4 * ticks_per_quarter, 1200)); // two bars at 120 BPM
+    CHECK(take.frames == 176400 && frames_to_ticks(take.frames, 1200) == 2 * 4 * ticks_per_quarter);
     Pattern pattern;
     CHECK(pattern.empty());
     pattern.audio = take;
@@ -658,7 +659,7 @@ void audio_takes() {
     project->tracks[3].audio.source = InputSource::Usb; project->tracks[3].audio.monitor = TrackMonitor::Off;
     take.gain = -35; take.fade_in = 441; take.offset = 100; take.frames -= 100; take.reverse = true;
     bank->at[3][5].audio = take;
-    bank->at[3][5].length = 2 * 384;
+    bank->at[3][5].length = 2 * 4 * ticks_per_quarter;
     bank->at[6][0].audio = take; // a kit track's: dropped
     auto bytes = save_project(*project, *bank);
     auto back = std::make_unique<Project>();
@@ -666,7 +667,7 @@ void audio_takes() {
     CHECK(load_project(bytes, *back, *back_bank).empty());
     const auto& t = back->tracks[3];
     CHECK(t.engine == EngineKind::Audio && std::string(t.name) == "VOX" && t.audio.source == InputSource::Usb && t.audio.monitor == TrackMonitor::Off);
-    CHECK(back_bank->at[3][5].audio == take && back_bank->at[3][5].length == 768 && !back_bank->at[3][4].audio.used());
+    CHECK(back_bank->at[3][5].audio == take && back_bank->at[3][5].length == 2 * 4 * ticks_per_quarter && !back_bank->at[3][4].audio.used());
     CHECK(!back_bank->at[6][0].audio.used());
 }
 
@@ -734,7 +735,7 @@ void arrange() {
         auto& pattern = bank->at[0][0];
         pattern.length = 4 * project->bar_ticks();
         Event note;
-        note.tick = 2 * project->bar_ticks(); note.key = 60; note.length = 24;
+        note.tick = 2 * project->bar_ticks(); note.key = 60; note.length = sixteenth_ticks;
         pattern.add(note);
         project->song.place({0, 0, 0, 8, false});
         project->song.loop_start = 2; project->song.loop_end = 4;
@@ -747,7 +748,7 @@ void arrange() {
         for (unsigned n = 0; n < 100; ++n) host->render(block.data(), 128, 1);
         CHECK(tones.at[0].count(0x90, 60) == 1);
         for (unsigned n = 0; n < 1400; ++n) host->render(block.data(), 128, 1); // 192000 frames: the loop came round at 176400
-        CHECK(host->song_bar() == 2 && tones.at[0].count(0x90, 60) == 2 && host->position_of(0) >= 2 * 384 && host->position_of(0) < 3 * 384);
+        CHECK(host->song_bar() == 2 && tones.at[0].count(0x90, 60) == 2 && host->position_of(0) >= 2 * int(project->bar_ticks()) && host->position_of(0) < 3 * int(project->bar_ticks()));
         for (unsigned n = 0; n < 1400; ++n) host->render(block.data(), 128, 1); // and again
         CHECK(tones.at[0].count(0x90, 60) == 3);
         host->send({Command::Type::Stop});
@@ -774,10 +775,10 @@ void arrange() {
         Command change {Command::Type::SongClip, 0, 0, 0};
         change.clip = Clip {0, 1, 0, 8, false};
         host.send(change);
-        for (unsigned n = 0; n < 700; ++n) host.render(block.data(), 128, 1); // 102400 frames: bar 2, tick 61 of it
-        CHECK(host.song_bar() == 1 && host.pattern_of(0) == 1 && host.position_of(0) >= 384 + 55 && host.position_of(0) <= 384 + 65);
+        for (unsigned n = 0; n < 700; ++n) host.render(block.data(), 128, 1); // 102400 frames: bar 2, tick 618 of it
+        CHECK(host.song_bar() == 1 && host.pattern_of(0) == 1 && host.position_of(0) >= 3840 + 610 && host.position_of(0) <= 3840 + 625);
     }
-    // Patterns: a launch waits for the next bar; the position counts ticks (96 a quarter, 229.7 samples each at 120 BPM).
+    // Patterns: a launch waits for the next bar; the position counts ticks (960 a quarter, 22.97 samples each at 120 BPM).
     {
         auto project = std::make_unique<Project>();
         auto bank = std::make_unique<PatternBank>();
@@ -788,10 +789,10 @@ void arrange() {
         tones_for(host, *project);
         host.send({Command::Type::Play});
         std::vector<int32_t> block(256);
-        for (unsigned n = 0; n < 80; ++n) host.render(block.data(), 128, 1); // 10240 samples: tick 44
-        CHECK(host.position_of(0) == 44 && host.pattern_of(0) == 0);
-        for (unsigned n = 0; n < 10; ++n) host.render(block.data(), 128, 1); // 11520: tick 50
-        CHECK(host.position_of(0) == 50);
+        for (unsigned n = 0; n < 80; ++n) host.render(block.data(), 128, 1); // 10240 samples: tick 445
+        CHECK(host.position_of(0) == 445 && host.pattern_of(0) == 0);
+        for (unsigned n = 0; n < 10; ++n) host.render(block.data(), 128, 1); // 11520: tick 501
+        CHECK(host.position_of(0) == 501);
         host.send({Command::Type::Pattern, 0, 0, 0, 1});
         host.render(block.data(), 128, 1);
         CHECK(host.pattern_of(0) == 0); // still the old one until the bar ends
@@ -1115,8 +1116,8 @@ void project_files() {
     load_sound(project->tracks[4], EngineKind::Sampler, 0);
     project->tracks[4].pads[9].sample = 2; project->tracks[4].pads[9].start = 1234; project->tracks[4].pads[9].group = 3;
     std::snprintf(project->samples.edit(2).path, sizeof(SampleRef::path), "/media/card/Samples/Kick.wav");
-    bank->at[0][3].length = 96 * 48; bank->at[0][3].division = Division::Eighth;
-    bank->at[0][3].add({95 * 48 + 5, 40, 64, 77, 100, step_tie}); // five ticks late, Rec Quantize off
+    bank->at[0][3].length = 96 * 480; bank->at[0][3].division = Division::Eighth;
+    bank->at[0][3].add({95 * 480 + 5, 40, 64, 77, 100, step_tie}); // five ticks late, Rec Quantize off
     bank->at[0][3].write_motion(point(7, midi_track::Cc2, 61));
     project->song.place({0, 3, 8, 4, true});
     project->song.step_marker(8);
@@ -1146,8 +1147,8 @@ void project_files() {
     }
     CHECK(!copy->tracks[4].pads[8].used());
     CHECK(std::string(copy->samples[2].path) == "/media/card/Samples/Kick.wav");
-    CHECK(copy_bank->at[0][3].length == 96 * 48 && copy_bank->at[0][3].division == Division::Eighth);
-    CHECK(copy_bank->at[0][3].events.size() == 1 && copy_bank->at[0][3].events[0] == Event({95 * 48 + 5, 40, 64, 77, 100, step_tie}));
+    CHECK(copy_bank->at[0][3].length == 96 * 480 && copy_bank->at[0][3].division == Division::Eighth);
+    CHECK(copy_bank->at[0][3].events.size() == 1 && copy_bank->at[0][3].events[0] == Event({95 * 480 + 5, 40, 64, 77, 100, step_tie}));
     CHECK(copy_bank->at[0][3].step(95).notes[0].key == 64 && copy_bank->at[0][3].step(95).notes[0].offset == 5);
     CHECK(copy_bank->at[0][3].motion.size() == 1 && copy_bank->at[0][3].motion[0].value == 61 && copy_bank->at[0][3] == bank->at[0][3]);
     CHECK(copy->song.count == 1 && copy->song.clips[0].muted && copy->song.marker_count == 1 && copy->song.loop_end == 12);
@@ -1252,9 +1253,9 @@ void kept_punches() {
         Pattern p;
         p.length = 384;
         p.punches = {{96, 48, 4, 255, 100, 2, 1}, {300, 24, 8, 255, 100, 2, 1}};
-        auto fast = speed_pattern(p, 4); // x2: half the ticks
+        auto fast = speed_pattern(p, 9); // x2: half the ticks
         CHECK(fast.length == 192 && fast.punches[0].tick == 48 && fast.punches[0].length == 24 && fast.punches[1].tick == 150 && fast.punches[1].length == 12);
-        auto slow = speed_pattern(p, 0); // x1/2: twice
+        auto slow = speed_pattern(p, 5); // x1/2: twice
         CHECK(slow.punches[1].tick == 600 && slow.punches[1].length == 48);
         Pattern twice = p;
         CHECK(double_pattern(twice, 4 * 384) && twice.punches.size() == 4 && twice.punches[2].tick == 96 + 384 && twice.punches[3].tick == 300 + 384);
@@ -1277,7 +1278,7 @@ void kept_punches() {
         CHECK(stretched.punches.size() == 1 && stretched.punches[0].tick == 300 && stretched.punches[0].length == 84);
         Pattern shorter = p; // a shorter length: the punch past the end is not played at another speed either
         shorter.length = 192;
-        auto shorter_fast = speed_pattern(shorter, 4);
+        auto shorter_fast = speed_pattern(shorter, 9);
         CHECK(shorter_fast.punches.size() == 1 && shorter_fast.punches[0].tick == 48);
         // A file from before: a punch across the loop point as it was heard, in two parts; one longer than its
         // pattern ends with it; one past the end stays there.
@@ -1299,7 +1300,7 @@ void kept_punches() {
         auto project = std::make_unique<Project>();
         auto bank = std::make_unique<PatternBank>();
         project->song.add_punch({2, 4, 8, 3, 255, 90});
-        bank->at[3][5].punches = {{0, 96, 8, 255, 100, 2, 1}, {288, 48, 14, 3, 70, 3, 2}};
+        bank->at[3][5].punches = {{0, 960, 8, 255, 100, 2, 1}, {2880, 480, 14, 3, 70, 3, 2}};
         auto data = save_project(*project, *bank);
         auto copy = std::make_unique<Project>();
         auto copy_bank = std::make_unique<PatternBank>();
@@ -1309,7 +1310,7 @@ void kept_punches() {
         CHECK(copy_bank->at[0][0].punches.empty() && copy_bank->at[3][4].punches.empty());
         // A file from before kept punches ended with their pattern (no 128 in a punch's last byte): one across the
         // loop point is read in two parts; a file since is read as it is.
-        bank->at[3][5].punches = {{300, 200, 8, 255, 100, 2, 1}};
+        bank->at[3][5].punches = {{3000, 2000, 8, 255, 100, 2, 1}};
         auto since = save_project(*project, *bank);
         CHECK(load_project(since, *copy, *copy_bank).empty() && copy_bank->at[3][5].punches.size() == 1);
         const uint8_t tag[] {'K', 'E', 'P', 'T'};
@@ -1317,8 +1318,8 @@ void kept_punches() {
         CHECK(since.end() - kept >= 23 && (kept[22] & 128));
         kept[22] &= 127; // tag, size, track, pattern, count, then tick, length, kind, target, depth and this
         CHECK(load_project(since, *copy, *copy_bank).empty() && copy_bank->at[3][5].punches.size() == 2);
-        CHECK(copy_bank->at[3][5].punches[0] == PatternPunch({0, 116, 8, 255, 100, 2, 1}));
-        CHECK(copy_bank->at[3][5].punches[1] == PatternPunch({300, 84, 8, 255, 100, 2, 1}));
+        CHECK(copy_bank->at[3][5].punches[0] == PatternPunch({0, 1160, 8, 255, 100, 2, 1}));
+        CHECK(copy_bank->at[3][5].punches[1] == PatternPunch({3000, 840, 8, 255, 100, 2, 1}));
     }
     { // The host: Low on the master from the bar's start for a sixteenth's two, Stutter on track 1 from the first
       // sixteenth's end for four; both at once, each let go after its length, again on the next pass; Stop lets go.
@@ -1327,41 +1328,41 @@ void kept_punches() {
         synth(project->tracks[0], 0);
         project->tempo = 1200;
         bank->at[0][0].length = project->bar_ticks();
-        bank->at[0][0].punches = {{0, 48, uint8_t(PunchKind::Low), 255, 100, 2, 1}, {24, 96, uint8_t(PunchKind::Stutter), 0, 100, 2, 1}};
+        bank->at[0][0].punches = {{0, 480, uint8_t(PunchKind::Low), 255, 100, 2, 1}, {240, 960, uint8_t(PunchKind::Stutter), 0, 100, 2, 1}};
         auto host = std::make_unique<EngineHost>();
         host->load(*project, *bank);
         tones_for(*host, *project);
         std::vector<int32_t> out(256);
         host->send({Command::Type::Play});
         unsigned blocks = 0;
-        auto run_to = [&](unsigned n) { for (; blocks < n; ++blocks) host->render(out.data(), 128, 1); }; // a tick is 229.7 samples
+        auto run_to = [&](unsigned n) { for (; blocks < n; ++blocks) host->render(out.data(), 128, 1); }; // a tick is 22.97 samples
         run_to(1);
         CHECK(host->kept_punches() == 1);
-        run_to(50); // tick 27
+        run_to(50); // tick 275
         CHECK(host->kept_punches() == 3);
-        run_to(100); // tick 55: Low let go
+        run_to(100); // tick 557: Low let go
         CHECK(host->kept_punches() == 2);
-        run_to(230); // tick 128: Stutter let go
+        run_to(230); // tick 1297: Stutter let go
         CHECK(host->kept_punches() == 0);
         run_to(700); // the next pass
         CHECK(host->kept_punches() == 1);
-        // A live punch wins: from its grid line (408) the kept ones are quiet, Stutter due there too; let go, both
+        // A live punch wins: from its grid line (4080) the kept ones are quiet, Stutter due there too; let go, both
         // come back for the rest of their length.
         Command on {Command::Type::PunchOn, 255, uint8_t(2 | 1 << 4), uint16_t(PunchKind::Gate), 100};
         on.position = 1;
         host->send(on);
-        run_to(740); // tick 412
+        run_to(740); // tick 4123
         CHECK(host->live_punches() == 1 && host->kept_punches() == 0);
         Command off {Command::Type::PunchOff, 255};
         off.position = 1;
         host->send(off);
-        run_to(745); // tick 414: Low (to 432) and Stutter (to 504) again
+        run_to(745); // tick 4151: Low (to 4320) and Stutter (to 5040) again
         CHECK(host->live_punches() == 0 && host->kept_punches() == 3);
         host->send({Command::Type::Stop});
         run_to(746);
         CHECK(host->kept_punches() == 0);
     }
-    { // Pad FX quantize (Shift + B3): playing, a live punch waits for its snap grid's next line (1/4 here: tick 96)
+    { // Pad FX quantize (Shift + B3): playing, a live punch waits for its snap grid's next line (1/4 here: tick 960)
       // while a kept one sounds on; with 64 in its timing (quantize off) it starts at once, the kept one giving way.
         auto project = std::make_unique<Project>();
         auto bank = std::make_unique<PatternBank>();
@@ -1375,27 +1376,27 @@ void kept_punches() {
         std::vector<int32_t> out(256);
         host->send({Command::Type::Play});
         unsigned blocks = 0;
-        auto run_to = [&](unsigned n) { for (; blocks < n; ++blocks) host->render(out.data(), 128, 1); }; // a tick is 229.7 samples
-        run_to(20); // tick 11
+        auto run_to = [&](unsigned n) { for (; blocks < n; ++blocks) host->render(out.data(), 128, 1); }; // a tick is 22.97 samples
+        run_to(20); // tick 111
         CHECK(host->kept_punches() == 1);
         Command on {Command::Type::PunchOn, 255, uint8_t(0 | 1 << 4), uint16_t(PunchKind::Gate), 100};
         on.position = 1;
         host->send(on);
-        run_to(60); // tick 33: waiting for 96
+        run_to(60); // tick 334: waiting for 960
         CHECK(host->live_punches() == 1 && host->kept_punches() == 1);
-        run_to(180); // tick 100
+        run_to(180); // tick 1003
         CHECK(host->kept_punches() == 0);
         Command off {Command::Type::PunchOff, 255};
         off.position = 1;
         host->send(off);
-        run_to(183); // tick 102: Low back
+        run_to(183); // tick 1020: Low back
         CHECK(host->live_punches() == 0 && host->kept_punches() == 1);
         on.pattern = uint8_t(0 | 1 << 4 | 64);
         host->send(on);
-        run_to(186); // tick 103, the next quarter 192
+        run_to(186); // tick 1036, the next quarter 1920
         CHECK(host->live_punches() == 1 && host->kept_punches() == 0);
     }
-    // A kept punch ends with its pattern's loop, and with the pattern itself. A tick is 229.7 samples, 1.794 blocks.
+    // A kept punch ends with its pattern's loop, and with the pattern itself. A tick is 22.97 samples, 0.1794 blocks.
     auto kept_host = [](Project& project, PatternBank& bank) {
         synth(project.tracks[0], 0);
         project.tempo = 1200;
@@ -1413,22 +1414,22 @@ void kept_punches() {
       // loop's end, quiet from the top to its tick again, pass after pass. It stayed on from the second pass.
         auto project = std::make_unique<Project>();
         auto bank = std::make_unique<PatternBank>();
-        bank->at[0][0].length = 384;
-        bank->at[0][0].punches = {{192, 384, uint8_t(PunchKind::Low), 255, 100, 2, 1}};
+        bank->at[0][0].length = 3840;
+        bank->at[0][0].punches = {{1920, 3840, uint8_t(PunchKind::Low), 255, 100, 2, 1}};
         auto host = kept_host(*project, *bank);
         std::vector<int32_t> out(256);
         host->send({Command::Type::Play});
         unsigned blocks = 0;
         auto run_to = [&](unsigned n) { for (; blocks < n; ++blocks) host->render(out.data(), 128, 1); };
-        run_to(180); // tick 100
+        run_to(180); // tick 1003
         CHECK(host->kept_punches() == 0);
-        run_to(362); // tick 201
+        run_to(362); // tick 2014
         CHECK(host->kept_punches() == 1);
-        run_to(782); // tick 435, the second pass
+        run_to(782); // tick 4358, the second pass
         CHECK(host->kept_punches() == 0);
-        run_to(1052); // tick 586
+        run_to(1052); // tick 5862
         CHECK(host->kept_punches() == 1);
-        run_to(1472); // tick 820, the third
+        run_to(1472); // tick 8203, the third
         CHECK(host->kept_punches() == 0);
     }
     { // Half Seq while a punch running into the second half sounds: it goes on to the first half's end, and plays
@@ -1436,23 +1437,23 @@ void kept_punches() {
         auto project = std::make_unique<Project>();
         auto bank = std::make_unique<PatternBank>();
         auto& pattern = bank->at[0][0];
-        pattern.length = 768;
-        pattern.punches = {{300, 300, uint8_t(PunchKind::Low), 255, 100, 2, 1}};
+        pattern.length = 7680;
+        pattern.punches = {{3000, 3000, uint8_t(PunchKind::Low), 255, 100, 2, 1}};
         auto host = kept_host(*project, *bank);
         std::vector<int32_t> out(256);
         host->send({Command::Type::Play});
         unsigned blocks = 0;
         auto run_to = [&](unsigned n) { for (; blocks < n; ++blocks) host->render(out.data(), 128, 1); };
-        run_to(578); // tick 322
+        run_to(578); // tick 3221
         CHECK(host->kept_punches() == 1);
         half_pattern(pattern);
-        CHECK(pattern.length == 384 && pattern.punches.size() == 1 && pattern.punches[0].length == 84);
+        CHECK(pattern.length == 3840 && pattern.punches.size() == 1 && pattern.punches[0].length == 840);
         send_pattern(*host, pattern);
-        run_to(582); // tick 324
+        run_to(582); // tick 3243
         CHECK(host->kept_punches() == 1);
-        run_to(700); // tick 390, the next pass's 6
+        run_to(700); // tick 3900, the next pass's 60
         CHECK(host->kept_punches() == 0);
-        run_to(1240); // tick 691, its 307
+        run_to(1240); // tick 6909, its 3069
         CHECK(host->kept_punches() == 1);
         pattern.punches.clear(); // Erase + pad while it sounds: gone at once
         send_pattern(*host, pattern);
@@ -1463,39 +1464,39 @@ void kept_punches() {
         auto project = std::make_unique<Project>();
         auto bank = std::make_unique<PatternBank>();
         auto& pattern = bank->at[0][0];
-        pattern.length = 768;
-        pattern.punches = {{700, 60, uint8_t(PunchKind::High), 255, 100, 2, 1}};
+        pattern.length = 7680;
+        pattern.punches = {{7000, 600, uint8_t(PunchKind::High), 255, 100, 2, 1}};
         auto host = kept_host(*project, *bank);
         std::vector<int32_t> out(256);
         host->send({Command::Type::Play});
         unsigned blocks = 0;
         auto run_to = [&](unsigned n) { for (; blocks < n; ++blocks) host->render(out.data(), 128, 1); };
-        run_to(1275); // tick 710
+        run_to(1275); // tick 7105
         CHECK(host->kept_punches() == 1);
         half_pattern(pattern);
         CHECK(pattern.punches.empty());
         send_pattern(*host, pattern);
-        run_to(1278); // tick 712
+        run_to(1278); // tick 7122
         CHECK(host->kept_punches() == 0);
     }
     { // An editor's loop: a punch reaching past the loop's end ends there.
         auto project = std::make_unique<Project>();
         auto bank = std::make_unique<PatternBank>();
-        bank->at[0][0].length = 768;
-        bank->at[0][0].punches = {{96, 500, uint8_t(PunchKind::Low), 255, 100, 2, 1}};
+        bank->at[0][0].length = 7680;
+        bank->at[0][0].punches = {{960, 5000, uint8_t(PunchKind::Low), 255, 100, 2, 1}};
         auto host = kept_host(*project, *bank);
         std::vector<int32_t> out(256);
         Command loop {Command::Type::EditLoop, 0};
-        loop.position = 0; loop.index = 192; // the first two beats
+        loop.position = 0; loop.index = 1920; // the first two beats
         host->send(loop);
         host->send({Command::Type::Play});
         unsigned blocks = 0;
         auto run_to = [&](unsigned n) { for (; blocks < n; ++blocks) host->render(out.data(), 128, 1); };
-        run_to(200); // tick 111
+        run_to(200); // tick 1114
         CHECK(host->kept_punches() == 1);
-        run_to(380); // tick 211, the loop's 19
+        run_to(380); // tick 2117, the loop's 197
         CHECK(host->kept_punches() == 0);
-        run_to(560); // tick 312, its 120
+        run_to(560); // tick 3121, its 1201
         CHECK(host->kept_punches() == 1);
     }
     { // A punch held across the loop point, kept in two parts, sounds as one: the second carries on from the first,
@@ -1505,24 +1506,24 @@ void kept_punches() {
             auto project = std::make_unique<Project>();
             auto bank = std::make_unique<PatternBank>();
             auto& pattern = bank->at[0][0];
-            pattern.length = 384;
+            pattern.length = 3840;
             for (unsigned step : {0u, 3u, 6u, 8u, 11u, 14u}) put(pattern, step, uint8_t(48 + step), 110, 2);
-            if (length == 768) CHECK(double_pattern(pattern, 768));
+            if (length == 7680) CHECK(double_pattern(pattern, 7680));
             pattern.punches = std::move(punches);
             auto host = kept_host(*project, *bank);
             std::vector<int32_t> out(256);
             std::vector<float> heard;
             host->send({Command::Type::Play});
-            for (unsigned n = 0; n < 1150; ++n) { // to tick 641, before the punch comes round again
+            for (unsigned n = 0; n < 1150; ++n) { // to tick 6409, before the punch comes round again
                 host->render(out.data(), 128, 1);
                 for (unsigned f = 0; f < 128; ++f) heard.push_back(float(out[2 * f]) / 2147483648.0f);
             }
             return heard;
         };
         const uint8_t stutter = uint8_t(PunchKind::Stutter);
-        auto one = render(768, {{0, 40, stutter, 255, 100, 2, 1}, {300, 124, stutter, 255, 100, 2, 1}});
-        auto two = render(384, {{0, 40, stutter, 255, 100, 2, 1}, {300, 84, stutter, 255, 100, 2, 1}});
-        auto apart = render(384, {{0, 40, stutter, 255, 99, 2, 1}, {300, 84, stutter, 255, 100, 2, 1}});
+        auto one = render(7680, {{0, 400, stutter, 255, 100, 2, 1}, {3000, 1240, stutter, 255, 100, 2, 1}});
+        auto two = render(3840, {{0, 400, stutter, 255, 100, 2, 1}, {3000, 840, stutter, 255, 100, 2, 1}});
+        auto apart = render(3840, {{0, 400, stutter, 255, 99, 2, 1}, {3000, 840, stutter, 255, 100, 2, 1}});
         float most = 0, least = 0, loud = 0;
         for (size_t n = 0; n < one.size(); ++n) {
             most = std::max(most, std::fabs(one[n] - two[n]));
@@ -1535,61 +1536,61 @@ void kept_punches() {
       // after the last to end it, and it sounded on until Stop was pressed.
         auto project = std::make_unique<Project>();
         auto bank = std::make_unique<PatternBank>();
-        bank->at[0][0].length = 384;
-        bank->at[0][0].punches = {{192, 192, uint8_t(PunchKind::Low), 255, 100, 2, 1}};
+        bank->at[0][0].length = 3840;
+        bank->at[0][0].punches = {{1920, 1920, uint8_t(PunchKind::Low), 255, 100, 2, 1}};
         project->song.place({0, 0, 0, 1, false});
         auto host = kept_host(*project, *bank);
         std::vector<int32_t> out(256);
         host->send({Command::Type::Play, 0, 0, 0, 1});
         unsigned blocks = 0;
         auto run_to = [&](unsigned n) { for (; blocks < n; ++blocks) host->render(out.data(), 128, 1); };
-        run_to(400); // tick 222
+        run_to(400); // tick 2225
         CHECK(host->playing() && host->kept_punches() == 1);
-        run_to(700); // past tick 384
+        run_to(700); // past tick 3840
         CHECK(!host->playing() && host->kept_punches() == 0);
     }
     { // The wheel moves the playhead (Locate) while a kept punch sounds: where it plays now is outside the punch,
       // which lets go. Its end was a tick counted from Play, so after a move back it sounded on for a pass and more.
         auto project = std::make_unique<Project>();
         auto bank = std::make_unique<PatternBank>();
-        bank->at[0][0].length = 768;
-        bank->at[0][0].punches = {{700, 60, uint8_t(PunchKind::High), 255, 100, 2, 1}};
+        bank->at[0][0].length = 7680;
+        bank->at[0][0].punches = {{7000, 600, uint8_t(PunchKind::High), 255, 100, 2, 1}};
         auto host = kept_host(*project, *bank);
         std::vector<int32_t> out(256);
         host->send({Command::Type::Play});
         unsigned blocks = 0;
         auto run_to = [&](unsigned n) { for (; blocks < n; ++blocks) host->render(out.data(), 128, 1); };
-        run_to(1275); // tick 710
+        run_to(1275); // tick 7105
         CHECK(host->kept_punches() == 1);
         Command locate {Command::Type::Locate};
-        locate.position = 96;
+        locate.position = 960;
         host->send(locate);
-        run_to(1280); // tick 98
-        CHECK(host->position_of(0) < 110 && host->kept_punches() == 0);
-        run_to(1880); // tick 432
+        run_to(1280); // tick 982
+        CHECK(host->position_of(0) < 1100 && host->kept_punches() == 0);
+        run_to(1880); // tick 4321
         CHECK(host->kept_punches() == 0);
-        locate.position = 720; // into the punch: not sounding (as Play from inside one), then on the next pass
+        locate.position = 7200; // into the punch: not sounding (as Play from inside one), then on the next pass
         host->send(locate);
         run_to(1890);
         CHECK(host->kept_punches() == 0);
-        run_to(1890 + 1340); // tick 720 + 748: the next pass's 700
+        run_to(1890 + 1340); // tick 7200 + 7480: the next pass's 7000
         CHECK(host->kept_punches() == 1);
     }
     { // A track loaded whole while it plays (a track copied onto it, an undo): the punch of the pattern it played
       // lets go with that pattern.
         auto project = std::make_unique<Project>();
         auto bank = std::make_unique<PatternBank>();
-        bank->at[0][0].length = 768;
-        bank->at[0][0].punches = {{96, 600, uint8_t(PunchKind::High), 255, 100, 2, 1}};
+        bank->at[0][0].length = 7680;
+        bank->at[0][0].punches = {{960, 6000, uint8_t(PunchKind::High), 255, 100, 2, 1}};
         auto host = kept_host(*project, *bank);
         std::vector<int32_t> out(256);
         host->send({Command::Type::Play});
         unsigned blocks = 0;
         auto run_to = [&](unsigned n) { for (; blocks < n; ++blocks) host->render(out.data(), 128, 1); };
-        run_to(360); // tick 200
+        run_to(360); // tick 2003
         CHECK(host->kept_punches() == 1);
         auto bare = std::make_unique<std::array<Pattern, pattern_count>>();
-        (*bare)[0].length = 768;
+        (*bare)[0].length = 7680;
         Command load {Command::Type::TrackLoad};
         load.track_pack = new TrackPack(0, project->tracks[0], *bare);
         CHECK(host->send(load));
@@ -2321,10 +2322,10 @@ void mtc_in() {
         };
         render();
         host.send({Command::Type::Play});
-        mtc(1, 2.5, frame); // 2.5 s at 120 BPM: tick 480, the bar's second beat
+        mtc(1, 2.5, frame); // 2.5 s at 120 BPM: tick 4800, the bar's second beat (a block more: 5.6 ticks)
         render();
-        CHECK(host.playing() && host.mtc_following() && host.ticks() >= 480 && host.ticks() <= 481 && host.position_of(0) >= 96 &&
-              host.position_of(0) <= 97 && host.mtc_places() == 1);
+        CHECK(host.playing() && host.mtc_following() && host.ticks() >= 4800 && host.ticks() <= 4806 && host.position_of(0) >= 960 &&
+              host.position_of(0) <= 966 && host.mtc_places() == 1);
         // A master 0.1 % fast with up to 1 ms of jitter: the song keeps on its time, trimmed about 1000 ppm.
         double start = 2.5;
         uint64_t from = frame - 128; // where 2.5 s was
@@ -2339,18 +2340,18 @@ void mtc_in() {
             render();
         }
         double master = start + double(frame - from) / 44100 * 1.001;
-        double ticks = master * 192;
-        CHECK(std::fabs(double(host.ticks()) - ticks) < 2 && host.mtc_places() == 1);
+        double ticks = master * 2 * ticks_per_quarter;
+        CHECK(std::fabs(double(host.ticks()) - ticks) < 20 && host.mtc_places() == 1);
         CHECK(host.mtc_trim_ppm() > 900 && host.mtc_trim_ppm() < 1100 && host.mtc_error_us() > 300 && host.mtc_error_us() < 700);
         // A sample far off is ignored; four in a row place it again.
         mtc(2, master + 5, frame); render();
         CHECK(host.mtc_places() == 1);
         for (unsigned n = 0; n < 4; ++n) { mtc(2, master + 5 + n * 128 / 44100.0, frame); render(); }
-        CHECK(host.mtc_places() == 2 && std::fabs(double(host.ticks()) - (master + 5) * 192) < 4);
+        CHECK(host.mtc_places() == 2 && std::fabs(double(host.ticks()) - (master + 5) * 2 * ticks_per_quarter) < 40);
         // A locate within 20 ms of where it is: no jump.
         mtc(1, master + 5 + 5 * 128 / 44100.0, frame); render();
         CHECK(host.mtc_places() == 2);
-        // BPM per pattern: pattern 1 at 90 BPM leads, so 2 s is tick 288.
+        // BPM per pattern: pattern 1 at 90 BPM leads, so 2 s is tick 2880.
         host.send({Command::Type::Stop});
         host.send({Command::Type::PatternTempo, 0, 0, 0, 900});
         host.send({Command::Type::SeqTempo, 0, 0, 0, 1});
@@ -2359,7 +2360,7 @@ void mtc_in() {
         host.send({Command::Type::Play});
         mtc(1, 2.0, frame);
         render();
-        CHECK(host.ticks() >= 288 && host.ticks() <= 289);
+        CHECK(host.ticks() >= 2880 && host.ticks() <= 2885);
         host.send({Command::Type::Stop});
         host.send({Command::Type::SeqTempo, 0, 0, 0, 0});
         // The song: bar 5 and a beat; then round its loop (bars 3-4); past its end (no loop) it stops.
@@ -2370,7 +2371,7 @@ void mtc_in() {
         host.send({Command::Type::Play, 0, 0, 0, 1});
         mtc(1, 8.5, frame);
         render();
-        CHECK(host.song_playing() && host.song_bar() == 4 && host.position_of(0) >= 96 && host.position_of(0) <= 97);
+        CHECK(host.song_playing() && host.song_bar() == 4 && host.position_of(0) >= 960 && host.position_of(0) <= 966);
         for (unsigned n = 0; n < 600; ++n) render(); // into bar 6: three beats left of bar 5 (1.5 s), 1.74 s rendered
         CHECK(host.song_bar() == 5);
         host.send({Command::Type::Stop});
@@ -2378,7 +2379,7 @@ void mtc_in() {
         host.send({Command::Type::Play, 0, 0, 0, 1});
         mtc(1, 10.0, frame); // bar 6 on the bar line: the loop's bar 3 (index 2 + (5 - 2) % 2 = 3)
         render();
-        CHECK(host.song_bar() == 3 && host.position_of(0) >= 0 && host.position_of(0) <= 1);
+        CHECK(host.song_bar() == 3 && host.position_of(0) >= 0 && host.position_of(0) <= 6);
         host.send({Command::Type::Stop});
         host.send({Command::Type::SongLoop, 0, 0, 0, 0});
         host.send({Command::Type::Play, 0, 0, 0, 1});
@@ -2570,9 +2571,9 @@ void looper_rates() {
     bool restart = true;
     std::vector<float> heard;
     auto block = [&](float rate) {
-        const double per = 96.0 * 240 / 60.0 / rate; // 240 BPM: a bar of 4/4 is a second
+        const double per = 960.0 * 240 / 60.0 / rate; // 240 BPM: a bar of 4/4 is a second
         Looper::Clock c;
-        c.tick = tick; c.per_frame = per; c.bar = 384; c.beat = 96; c.running = true; c.restart = restart; c.rate = rate;
+        c.tick = tick; c.per_frame = per; c.bar = 3840; c.beat = 960; c.running = true; c.restart = restart; c.rate = rate;
         restart = false;
         Looper::Sources s;
         s.frames = frame ? looper::block : 0;
@@ -2592,13 +2593,13 @@ void looper_rates() {
     CHECK(looper.buffers_out() == 2 * loop_tracks);
     // A bar at 48 kHz: 48000 frames of its own, the tempo right, and played back frame for frame a bar later.
     looper.ask(looper::Do::Length, 0, 1);
-    while (tick < 384 - 2 * looper::block * 96.0 * 4 / 48000) block(48000);
+    while (tick < 3840 - 2 * looper::block * 960.0 * 4 / 48000) block(48000);
     looper.ask(looper::Do::Primary, 0, 0);
-    while (tick < 768 + 4 * looper::block * 96.0 * 4 / 48000) block(48000);
+    while (tick < 7680 + 4 * looper::block * 960.0 * 4 / 48000) block(48000);
     auto v = looper.view(0);
     CHECK(v.state == Looper::State::Playing && v.length == 48000 && v.rate == 48000 && v.tempo == 2400 && !v.stretched);
     const uint64_t take_start = 48000; // bar 2's frame
-    while (tick < 1152 - 4 * looper::block * 96.0 * 4 / 48000) block(48000);
+    while (tick < 11520 - 4 * looper::block * 960.0 * 4 / 48000) block(48000);
     float worst = 0;
     for (uint64_t f = take_start + 48000 + 2000; f < take_start + 96000 - 2000; ++f)
         worst = std::max(worst, std::fabs(heard[f] - signal(f - 48000)));
@@ -2614,8 +2615,8 @@ void looper_rates() {
     // What it plays at 96 kHz is its 48 kHz frames read half a frame a frame: frame g is the take's g / 2.
     double phase = 0; // the loop's place at the first frame heard here, in its frames
     {
-        double t0 = tick - 750.0 * looper::block * 96.0 * 4 / 96000; // the tick at `from`
-        phase = std::fmod(t0, 384.0) / 384.0 * 48000;
+        double t0 = tick - 750.0 * looper::block * 960.0 * 4 / 96000; // the tick at `from`
+        phase = std::fmod(t0, 3840.0) / 3840.0 * 48000;
     }
     worst = 0;
     for (size_t g = 4000; g < 90000; g += 7) {
@@ -2638,7 +2639,7 @@ void looper_rates() {
     // A loop saved at 44.1 kHz (a project from before) comes back and plays a bar a second at 96 kHz.
     auto* buffer = new LoopBuffer(looper::frames_at(96000));
     for (unsigned f = 0; f < 44100; ++f) buffer->left[f] = buffer->right[f] = 0.25f;
-    LoopLoad item; item.buffer = buffer; item.loop = 2; item.frames = 44100; item.rate = 44100; item.ticks = 384; item.tempo = 2400;
+    LoopLoad item; item.buffer = buffer; item.loop = 2; item.frames = 44100; item.rate = 44100; item.ticks = 3840; item.tempo = 2400;
     CHECK(looper.give_load(item));
     for (unsigned n = 0; n < 8; ++n) block(96000);
     v = looper.view(2);
@@ -2650,7 +2651,7 @@ void looper_rates() {
 }
 
 void looper_engine() {
-    constexpr double bpm = 240, per = 96.0 * bpm / 60.0 / 44100.0; // ticks a frame; a bar of 4/4 is one second
+    constexpr double bpm = 240, per = 960.0 * bpm / 60.0 / 44100.0; // ticks a frame; a bar of 4/4 is one second
     constexpr unsigned bar_frames = 44100;
     auto signal = [](uint64_t f) { return float(0.3 * std::sin(double(f) * 0.0137) + 0.1 * std::sin(double(f) * 0.29)); };
     auto lp = std::make_unique<Looper>();
@@ -2665,7 +2666,7 @@ void looper_engine() {
     // One block: the source played the block before (as the host keeps it), then the looper.
     auto block = [&](unsigned frames = looper::block) {
         Looper::Clock c;
-        c.tick = tick; c.per_frame = per; c.bar = 384; c.beat = 96;
+        c.tick = tick; c.per_frame = per; c.bar = 3840; c.beat = 960;
         c.running = running; c.restart = restart; c.rate = 44100;
         restart = false;
         Looper::Sources s;
@@ -2697,18 +2698,18 @@ void looper_engine() {
 
     // A take of one bar on the bar: Armed, then Recording on bar 2's downbeat, closed one bar later, then playing.
     looper.ask(looper::Do::Length, 0, 1);
-    while (tick < 384 - 2 * looper::block * per) block();
+    while (tick < 3840 - 2 * looper::block * per) block();
     looper.ask(looper::Do::Primary, 0, 0);
     block();
     CHECK(looper.view(0).state == Looper::State::Armed && looper.view(0).pending == Looper::Pending::Start);
-    while (tick < 384 + 10 * looper::block * per) block();
+    while (tick < 3840 + 10 * looper::block * per) block();
     CHECK(looper.view(0).state == Looper::State::Recording && looper.armed() == false && looper.recording());
-    uint64_t take_start = uint64_t(std::llround(384 / per)); // the frame of bar 2
-    while (tick < 768 + 4 * looper::block * per) block();
+    uint64_t take_start = uint64_t(std::llround(3840 / per)); // the frame of bar 2
+    while (tick < 7680 + 4 * looper::block * per) block();
     auto v = looper.view(0);
-    CHECK(v.state == Looper::State::Playing && v.length == bar_frames && std::fabs(v.ticks - 384) < 1e-6 && v.tempo == 2400 && v.layers == 1);
+    CHECK(v.state == Looper::State::Playing && v.length == bar_frames && std::fabs(v.ticks - 3840) < 1e-6 && v.tempo == 2400 && v.layers == 1);
     // It plays what was played in its bar, on the beat: frame F of bar 3 is the frame a bar before.
-    while (tick < 1152 - 4 * looper::block * per) block();
+    while (tick < 11520 - 4 * looper::block * per) block();
     for (uint64_t f = take_start + bar_frames + 2000; f < take_start + 2 * bar_frames - 2000; f += 997)
         CHECK(std::fabs(heard[f] - signal(f - bar_frames)) < 2e-3f);
     // The waveform was drawn again from the take.
@@ -2786,7 +2787,7 @@ void looper_engine() {
     CHECK(looper.view(1).pending == Looper::Pending::Close);
     run_frames(bar_frames);
     v = looper.view(1);
-    CHECK(v.state == Looper::State::Playing && v.length == bar_frames && std::fabs(v.ticks - 384) < 1e-6);
+    CHECK(v.state == Looper::State::Playing && v.length == bar_frames && std::fabs(v.ticks - 3840) < 1e-6);
     // The source is fixed while it records; never itself.
     looper.ask(looper::Do::Source, 2, looper::source_loop(2));
     block();
@@ -2811,7 +2812,7 @@ void looper_engine() {
         looper.ask(looper::Do::Primary, 2, 0);
         block();
         v = looper.view(2);
-        CHECK(v.state == Looper::State::Playing && v.length == bar_frames && std::fabs(v.ticks - 384) < 1e-6);
+        CHECK(v.state == Looper::State::Playing && v.length == bar_frames && std::fabs(v.ticks - 3840) < 1e-6);
         clear();
         take(0);
         run_frames(bar_frames * 17 / 10);
@@ -2820,7 +2821,7 @@ void looper_engine() {
         CHECK(looper.view(2).state == Looper::State::Recording && looper.view(2).pending == Looper::Pending::Close);
         run_frames(bar_frames / 2);
         v = looper.view(2);
-        CHECK(v.state == Looper::State::Playing && v.length == 2 * bar_frames && std::fabs(v.ticks - 768) < 1e-6);
+        CHECK(v.state == Looper::State::Playing && v.length == 2 * bar_frames && std::fabs(v.ticks - 7680) < 1e-6);
         clear();
         take(0);
         run_frames(bar_frames / 4);
@@ -2836,7 +2837,7 @@ void looper_engine() {
         CHECK(looper.view(2).state == Looper::State::Recording);
         run_frames(bar_frames * 3 / 2);
         v = looper.view(2);
-        CHECK(v.state == Looper::State::Playing && v.length == 2 * bar_frames && std::fabs(v.ticks - 768) < 1e-6);
+        CHECK(v.state == Looper::State::Playing && v.length == 2 * bar_frames && std::fabs(v.ticks - 7680) < 1e-6);
         // Armed with that two-bar loop playing (the longest), a take waits for its next start, not the next bar.
         looper.ask(looper::Do::Primary, 3, 0);
         run_frames(bar_frames * 3 / 2);
@@ -2852,13 +2853,13 @@ void looper_engine() {
         looper.ask(looper::Do::Halt, 2, 0);
         block();
         v = looper.view(2);
-        CHECK(v.state == Looper::State::Stopped && v.length == bar_frames && std::fabs(v.ticks - 384) < 1e-6);
+        CHECK(v.state == Looper::State::Stopped && v.length == bar_frames && std::fabs(v.ticks - 3840) < 1e-6);
         clear();
         looper.ask(looper::Do::Length, 2, 0);
     }
 
     // Another tempo: loop 1 stays on the beat and keeps its pitch (stretched), then Push fits it and overdubs.
-    constexpr double faster = 96.0 * 300 / 60.0 / 44100.0;
+    constexpr double faster = 960.0 * 300 / 60.0 / 44100.0;
     auto block_at = [&](double p) {
         Looper::Clock c; c.tick = tick; c.per_frame = p; c.running = true; c.rate = 44100;
         Looper::Sources s; s.frames = looper::block; s.at[looper::source_input] = {src_l, src_r};
@@ -2878,15 +2879,57 @@ void looper_engine() {
     CHECK(!v.fitting && !v.stretched && v.length == 35280 && v.tempo == 3000 && v.state == Looper::State::Overdub && v.undo == looper::Undo::None);
     looper.ask(looper::Do::Primary, 0, 0);
     for (unsigned n = 0; n < 10; ++n) block_at(faster);
-    // A set length too long for a loop's memory at this tempo is refused.
+    // A set length too long for a loop's 64 s at this tempo (16 bars at 40 BPM: 96 s) gets memory made to its length:
+    // Growing until the service thread has made it, then it arms; a shorter length gives it back.
     looper.ask(looper::Do::Clear, 2, 0);
     looper.ask(looper::Do::Length, 2, 16);
-    Looper::Clock slow; slow.tick = tick; slow.per_frame = 96.0 * 40 / 60.0 / 44100.0; slow.running = true; slow.rate = 44100;
+    Looper::Clock slow; slow.tick = tick; slow.per_frame = 960.0 * 40 / 60.0 / 44100.0; slow.running = true; slow.rate = 44100;
     Looper::Sources none;
     looper.run(slow, none, looper::block, out_l, out_r);
+    const unsigned out_before = looper.buffers_out();
     looper.ask(looper::Do::Primary, 2, 0);
     looper.run(slow, none, looper::block, out_l, out_r);
-    CHECK(looper.view(2).state == Looper::State::Empty && looper.view(2).error == looper::Error::TooLong);
+    CHECK(looper.view(2).state == Looper::State::Empty && looper.view(2).error == looper::Error::Growing);
+    looper.service();
+    CHECK(looper.buffers_out() == out_before + 2);
+    looper.run(slow, none, looper::block, out_l, out_r);
+    looper.service(); // the two 64 s ones it held go back
+    CHECK(looper.buffers_out() == out_before);
+    looper.ask(looper::Do::Primary, 2, 0);
+    looper.run(slow, none, looper::block, out_l, out_r);
+    CHECK(looper.view(2).state == Looper::State::Armed);
+    looper.ask(looper::Do::Primary, 2, 0); // not now
+    // A hair slower (as MTC or MIDI clock in moves it): the memory made stays, rounded up a second, and arms at once.
+    Looper::Clock slower = slow; slower.per_frame *= 0.9999;
+    for (unsigned n = 0; n < 3; ++n) { looper.run(slower, none, looper::block, out_l, out_r); looper.service(); }
+    CHECK(looper.buffers_out() == out_before);
+    looper.ask(looper::Do::Primary, 2, 0);
+    looper.run(slower, none, looper::block, out_l, out_r);
+    CHECK(looper.view(2).state == Looper::State::Armed);
+    looper.ask(looper::Do::Primary, 2, 0);
+    looper.ask(looper::Do::Length, 2, 0);
+    looper.run(slow, none, looper::block, out_l, out_r);
+    looper.service(); looper.service();
+    for (unsigned n = 0; n < 4; ++n) { looper.run(slow, none, looper::block, out_l, out_r); looper.service(); }
+    CHECK(looper.view(2).state == Looper::State::Empty && looper.view(2).ready && looper.buffers_out() == out_before);
+    // A longer length set while armed: the memory made for it goes in while it waits (it records into it, not 64 s).
+    looper.ask(looper::Do::Length, 2, 1);
+    looper.ask(looper::Do::Primary, 2, 0);
+    looper.run(slow, none, looper::block, out_l, out_r);
+    CHECK(looper.view(2).state == Looper::State::Armed);
+    looper.ask(looper::Do::Length, 2, 16);
+    looper.service();
+    CHECK(looper.buffers_out() == out_before + 2);
+    looper.run(slow, none, looper::block, out_l, out_r);
+    looper.service();
+    CHECK(looper.view(2).state == Looper::State::Armed && looper.buffers_out() == out_before); // the 64 s pair went back
+    looper.ask(looper::Do::Primary, 2, 0);
+    looper.ask(looper::Do::Length, 2, 0);
+    for (unsigned n = 0; n < 4; ++n) { looper.run(slow, none, looper::block, out_l, out_r); looper.service(); }
+    // 128 bars, as long as a pattern, is a length to set.
+    looper.ask(looper::Do::Length, 2, 200);
+    looper.run(slow, none, looper::block, out_l, out_r);
+    CHECK(looper.view(2).bars == 128);
     looper.ask(looper::Do::Length, 2, 0);
 
     // Held for a save: granted once nothing writes it; a clear waits until it is let go.
@@ -2903,7 +2946,7 @@ void looper_engine() {
     // A saved loop comes back through the service thread, playing.
     auto* buffer = new LoopBuffer(looper::frames_at(44100));
     for (unsigned f = 0; f < 1000; ++f) buffer->left[f] = buffer->right[f] = 0.5f;
-    LoopLoad item; item.buffer = buffer; item.loop = 3; item.frames = 1000; item.ticks = 96; item.tempo = 2400;
+    LoopLoad item; item.buffer = buffer; item.loop = 3; item.frames = 1000; item.ticks = 960; item.tempo = 2400;
     CHECK(looper.give_load(item));
     for (unsigned n = 0; n < 4; ++n) block_at(per);
     v = looper.view(3);
@@ -2997,7 +3040,7 @@ void looper_engine() {
         Project saved;
         PatternBank no_patterns;
         saved.looper.on = true; saved.looper.quantize = 1; saved.looper.then = 2; saved.looper.transport = 1;
-        saved.looper.loops[2] = LoopTrack {4, 70, looper::source_mix, 176400, 1536.25, 1200, 3, true};
+        saved.looper.loops[2] = LoopTrack {4, 70, looper::source_mix, 176400, 15362.5, 1200, 3, true};
         saved.looper.loops[1].source = looper::source_loop(1); // itself: never (read back as the input)
         saved.loop_mix[3].level = 90; saved.loop_mix[3].pan = -30; saved.loop_mix[3].send = 40; saved.loop_mix[3].bus = 2; saved.loop_mix[3].mute = true;
         saved.loop_fx[3].slots[0].kind = uint8_t(EffectKind::Echo);
@@ -3006,7 +3049,7 @@ void looper_engine() {
         CHECK(load_project(save_project(saved, no_patterns), back, back_patterns).empty());
         const auto& l = back.looper.loops[2];
         CHECK(back.looper.on && back.looper.quantize == 1 && back.looper.then == 2 && back.looper.transport == 1);
-        CHECK(l.bars == 4 && l.feedback == 70 && l.source == looper::source_mix && l.frames == 176400 && std::fabs(l.ticks - 1536.25) < 1e-4 && l.tempo == 1200 && l.layers == 3 && l.stopped);
+        CHECK(l.bars == 4 && l.feedback == 70 && l.source == looper::source_mix && l.frames == 176400 && std::fabs(l.ticks - 15362.5) < 1e-4 && l.tempo == 1200 && l.layers == 3 && l.stopped);
         CHECK(back.looper.loops[1].source == looper::source_input);
         const auto& m = back.loop_mix[3];
         CHECK(m.level == 90 && m.pan == -30 && m.send == 40 && m.bus == 2 && m.mute && back.loop_fx[3].count() == 1);
@@ -5840,11 +5883,11 @@ void plugin_transport() {
     // Another tempo and time signature: what the plug-in reads next block.
     host.send({Command::Type::Stop});
     host.send({Command::Type::Tempo, 0, 0, 0, 900});
-    host.send({Command::Type::Signature, 0, 0, 48, 288}); // 6/8: a beat 48 ticks, a bar 288
+    host.send({Command::Type::Signature, 0, 0, ticks_per_quarter / 2, 3 * ticks_per_quarter}); // 6/8: a beat an eighth, a bar three quarters
     plugin.heard.clear();
     play(2);
     CHECK(plugin.heard.back().bpm == 90 && plugin.heard.back().sig_beats == 6 && plugin.heard.back().sig_unit == 8);
-    host.send({Command::Type::Signature, 0, 0, 96, 384});
+    host.send({Command::Type::Signature, 0, 0, ticks_per_quarter, 4 * ticks_per_quarter});
 }
 
 // Roadmap P0: a hit lands in Seq Record where it was heard, and plays at its own frame, a block late.
@@ -5868,7 +5911,7 @@ void hits_on_time() {
         auto project = std::make_unique<Project>();
         auto bank = std::make_unique<PatternBank>();
         synth(project->tracks[0], 0);
-        project->tempo = 1200; // 120 BPM: a tick every 229.6875 frames at 44.1 kHz
+        project->tempo = 1200; // 120 BPM: a tick every 22.96875 frames at 44.1 kHz
         EngineHost host;
         host.load(*project, *bank);
         tones_for(host, *project);
@@ -5877,18 +5920,18 @@ void hits_on_time() {
         host.send({Command::Type::Play}); // the patterns from tick 0, its first tick on the first frame
         for (int b = 0; b < 40; ++b) host.render(out.data(), 128, 1);
         const auto& clock = host.audio_clock();
-        CHECK(clock.known() && host.position_of(0) > 20);
-        const double tick = 44100 * 60.0 / 120 / 96;
+        CHECK(clock.known() && host.position_of(0) > 200);
+        const double tick = 44100 * 60.0 / 120 / ticks_per_quarter;
         const int64_t latency_ns = int64_t(384 * 1e9 / 44100);
         int position = -1;
         uint32_t ticks = 0;
-        // In as tick 10's frame reached the jacks: tick 10.
-        CHECK(host.heard_place(0, uint64_t(clock.heard_at(uint64_t(10 * tick))), position, ticks) && position == 10 && ticks == 11);
-        // In as that frame was rendered: heard 384 frames (1.67 ticks) before, tick 8. The playhead's own place would be 22.
-        CHECK(host.heard_place(0, uint64_t(clock.heard_at(uint64_t(10 * tick)) - latency_ns), position, ticks) && position == 8);
+        // In as tick 100's frame reached the jacks: tick 100.
+        CHECK(host.heard_place(0, uint64_t(clock.heard_at(uint64_t(100 * tick))), position, ticks) && position == 100 && ticks == 101);
+        // In as that frame was rendered: heard 384 frames (16.7 ticks) before, tick 83. The playhead's own place would be 222.
+        CHECK(host.heard_place(0, uint64_t(clock.heard_at(uint64_t(100 * tick)) - latency_ns), position, ticks) && position == 83);
         // The nearest tick: four tenths of a tick on, the same; six tenths, the next.
-        CHECK(host.place_at(0, uint64_t(10.4 * tick), position, ticks) && position == 10);
-        CHECK(host.place_at(0, uint64_t(10.6 * tick), position, ticks) && position == 11 && ticks == 12);
+        CHECK(host.place_at(0, uint64_t(100.4 * tick), position, ticks) && position == 100);
+        CHECK(host.place_at(0, uint64_t(100.6 * tick), position, ticks) && position == 101 && ticks == 102);
         CHECK(host.place_at(0, 0, position, ticks) && position == 0); // no tick of the run before its first
         CHECK(!host.heard_place(0, 0, position, ticks));              // no stamp: none (the playhead, in Context::record)
         host.send({Command::Type::Stop});
@@ -7471,6 +7514,86 @@ void modulators_p4() {
     host->render(out.data(), 128, 1);
 }
 
+// The sequencer's clock at 960 a quarter, as the MPC counts. A file without TPQN counted 96: each tick in it comes
+// back ten times as many (notes, punches, lanes, Motion and locks, the groove, the Looper's loops). Values past what
+// the older fields hold (a note longer than 17 bars, a long lock, a groove offset past a byte, a long loop) come
+// back whole from ELEN, MHLD, GRVW and LOOP's longer ticks.
+void clock_960() {
+    static_assert(ticks_per_quarter == 960 && sixteenth_ticks == 240, "the MPC's clock");
+    CHECK(division_ticks(Division::Quarter) == 960 && division_ticks(Division::SixteenthTriplet) == 160 &&
+          division_ticks(Division::SixtyFourth) == 60 && division_ticks(Division::ThirtySecondTriplet) == 80);
+    CHECK(note_ticks(0) == 1 && note_ticks(70000) == 70000 && note_ticks(uint64_t(1) << 40) == max_pattern_ticks);
+    CHECK(arp_rate_sequencer_ticks(arp_default_rate) == sixteenth_ticks && arp_rate_sequencer_ticks(9) == 40); // 1/16, 1/64T
+    auto project = std::make_unique<Project>();
+    auto bank = std::make_unique<PatternBank>();
+    auto& p = bank->at[2][7];
+    // Written on the old clock: a bar of 384, a note on 96 for 48, a punch, a lane, a lock, a groove; a loop of a bar.
+    p.length = 384;
+    p.add({96, 48, 60, 100, 100, 0});
+    p.punches = {{24, 72, 8, 255, 100, 2, 1}};
+    p.set_lane_length(40, 192);
+    MotionPoint lock; lock.tick = 12; lock.param = 3; lock.value = 50; lock.hold = 6;
+    p.write_motion(lock);
+    p.feel.groove_step = 24; p.feel.groove_offsets = {3, -5}; p.feel.groove_levels = {100, 80};
+    project->looper.on = true;
+    project->looper.loops[1] = LoopTrack {1, 100, looper::source_input, 88200, 384.5, 1200, 1, false};
+    auto bytes = save_project(*project, *bank);
+    const uint8_t tag[] {'T', 'P', 'Q', 'N'};
+    auto at = std::search(bytes.begin(), bytes.end(), std::begin(tag), std::end(tag));
+    CHECK(at != bytes.end() && at[8] == (960 & 0xff) && at[9] == 960 >> 8);
+    bytes.erase(at, at + 10); // a file from before: no TPQN
+    auto old = std::make_unique<Project>();
+    auto old_bank = std::make_unique<PatternBank>();
+    CHECK(load_project(bytes, *old, *old_bank).empty());
+    const auto& q = old_bank->at[2][7];
+    CHECK(q.length == 3840 && q.events.size() == 1 && q.events[0].tick == 960 && q.events[0].length == 480);
+    CHECK(q.punches.size() == 1 && q.punches[0].tick == 240 && q.punches[0].length == 720);
+    CHECK(q.lane_length(40) == 1920 && q.motion.size() == 1 && q.motion[0].tick == 120 && q.motion[0].hold == 60);
+    CHECK(q.feel.groove_step == 240 && q.feel.groove_offsets == std::vector<int16_t>({30, -50}) && q.feel.groove_levels[1] == 80);
+    CHECK(std::fabs(old->looper.loops[1].ticks - 3845) < 1e-6 && old->looper.loops[1].frames == 88200);
+
+    // On the new clock: long values whole, and a file read back as written (TPQN 960, nothing scaled).
+    p.length = 40 * 3840;
+    p.events.clear();
+    p.add({0, 30 * 3840, 60, 100, 100, 0});  // 30 bars
+    p.add({3840, 240, 62, 100, 100, 0});
+    p.motion.clear();
+    lock.tick = 0; lock.hold = 20 * 3840;
+    p.write_motion(lock);
+    lock.tick = 3840; lock.param = 4; lock.hold = 240;
+    p.write_motion(lock);
+    p.feel.groove_step = 1920; p.feel.groove_offsets = {700, -900}; // half a step of a half note: past a byte
+    project->looper.loops[1].ticks = 64 * 8640.25;                    // 64 bars of 9/4: past 65535
+    bytes = save_project(*project, *bank);
+    for (const char* name : {"ELEN", "MHLD", "GRVW"}) CHECK(std::search(bytes.begin(), bytes.end(), name, name + 4) != bytes.end());
+    auto back = std::make_unique<Project>();
+    auto back_bank = std::make_unique<PatternBank>();
+    CHECK(load_project(bytes, *back, *back_bank).empty());
+    CHECK(back_bank->at[2][7] == p);
+    CHECK(back_bank->at[2][7].events[0].length == 30 * 3840 && back_bank->at[2][7].motion[0].hold == 20 * 3840);
+    CHECK(std::fabs(back->looper.loops[1].ticks - 64 * 8640.25) < 1e-2);
+    project->looper.loops[1].ticks = 1234.567891; // a free take closed off the bar: as fine as the first field holds
+    bytes = save_project(*project, *bank);
+    CHECK(load_project(bytes, *back, *back_bank).empty() && std::fabs(back->looper.loops[1].ticks - 1234.567891) < 2e-5);
+    // Nothing long: none of the three.
+    p.events = {{0, 240, 60, 100, 100, 0}}; p.motion.clear(); p.feel = Feel {};
+    bytes = save_project(*project, *bank);
+    for (const char* name : {"ELEN", "MHLD", "GRVW"}) CHECK(std::search(bytes.begin(), bytes.end(), name, name + 4) == bytes.end());
+
+    // Humanize draws for a note on the old clock's ticks what it drew there (seeded by tick / 10): tick 96 then, 960
+    // now, moved by the same share of a quarter of a step.
+    auto old_draw = [](uint32_t tick, unsigned key, unsigned salt) { // pattern.cpp's humanize_draw before 960
+        uint32_t h = tick * 2654435761u ^ (uint32_t(key) << 16) ^ salt * 40503u;
+        auto next = [&] { h ^= h << 13; h ^= h >> 17; h ^= h << 5; return double(h % 10001) / 10000.0; };
+        return next() + next() - 1.0;
+    };
+    Pattern human;
+    human.length = 3840; human.feel.humanize = 100;
+    human.add({960, 240, 60, 100, 100, 0});
+    auto felt = feel_pattern(human);
+    CHECK(felt.events.size() == 1 && felt.events[0].tick == uint32_t(std::floor(960 + old_draw(96, 60, 1) * 240 / 4.0 + 0.5)));
+}
+
 // Roadmap P4: exports and imports. Standard MIDI Files out and in, a mixdown in integer PCM dithered, stems beside it.
 void exports_p4() {
     // A MIDI file written and read back: the notes, their channel and the tempo.
@@ -7488,13 +7611,13 @@ void exports_p4() {
         CHECK(back[0].name == "BASS" && back[0].channel == 2 && back[0].notes.size() == 3 && back[0].notes[1].tick == 96 &&
               back[0].notes[1].key == 43 && back[0].notes[1].length == 24 && back[0].notes[2].length == 96 && back[0].notes[1].velocity == 90);
         CHECK(back[1].channel == 10 && back[1].notes[1].key == 38 && back[1].notes[1].tick == 48);
-        // Another division, running status and a note on at velocity 0 as its off: 480 a quarter becomes 96.
+        // Another division, running status and a note on at velocity 0 as its off: 480 a quarter becomes 960.
         std::vector<uint8_t> other {'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0,
                                     'M', 'T', 'r', 'k', 0, 0, 0, 16,
                                     0x00, 0x91, 60, 100, 0x83, 0x60, 60, 0, 0x00, 62, 90, 0x81, 0x70, 62, 0, 0x00};
         // (the last byte is padding the length covers)
         CHECK(read_smf(other, back, why) && back.size() == 1 && back[0].channel == 2 && back[0].notes.size() == 2);
-        CHECK(back[0].notes[0].tick == 0 && back[0].notes[0].length == 96 && back[0].notes[1].tick == 96 && back[0].notes[1].length == 48);
+        CHECK(back[0].notes[0].tick == 0 && back[0].notes[0].length == 960 && back[0].notes[1].tick == 960 && back[0].notes[1].length == 480);
         CHECK(!read_smf({1, 2, 3}, back, why) && why == "not a MIDI file");
     }
     // A project's tracks as a MIDI file (no song: the patterns playing), and one laid on a kit's pattern.
@@ -8023,7 +8146,7 @@ void prints_f2a() {
     CHECK(changed([](Project& p, PatternBank&) { p.tracks[0].pads[0].pitch = 3; }));                          // its sound
     CHECK(changed([](Project& p, PatternBank&) { p.tracks[0].fx.slots[0].params[1] = 77; }));                 // its chain
     CHECK(changed([](Project& p, PatternBank&) { p.tempo = 1200; }));
-    CHECK(changed([](Project& p, PatternBank&) { p.tracks[0].speed = 3; }));
+    CHECK(changed([](Project& p, PatternBank&) { p.tracks[0].speed = 8; }));
     CHECK(changed([](Project& p, PatternBank&) { std::snprintf(p.samples.edit(0).path, sizeof(SampleRef::path), "/media/card/Other.wav"); }));
     CHECK(hash(*project, *bank, PrintTap::PreFx) != h && hash(*project, *bank, PrintTap::PostFx, PrintTail::Ring) != h);
     CHECK(hash(*project, *bank, PrintTap::PostFx, PrintTail::Loop, 44100) != h); // printed at another rate
@@ -8124,7 +8247,7 @@ void audio_track_playback() {
     auto project = std::make_unique<Project>();
     auto bank = std::make_unique<PatternBank>();
     project->tracks[0].engine = EngineKind::Audio;
-    bank->at[0][0].length = 384; // one bar
+    bank->at[0][0].length = 4 * ticks_per_quarter; // one bar
     const unsigned rate = unsigned(std::lround(dsp::sample_rate()));
     const size_t bar_frames = size_t(rate) * 2; // 4/4 at 120 BPM
     auto host = std::make_unique<EngineHost>();
@@ -8545,6 +8668,27 @@ void pad_sends_freeze() {
 // Pads sent to submixes (MPC 3's pad output): pad 3 into submix 3 leaves the kit's stem and plays in the submix's, at
 // the kit's level; soloing submix 3 keeps the kit heard; USB out's submix rows carry it; PSUB keeps it.
 void pad_outputs() {
+    { // A destination stays in the route mask until its last sounding pad moves or loses its sample.
+        SamplerEngine kit;
+        PadSound pad;
+        pad.out = 3;
+        kit.set_pad(0, pad);
+        CHECK(kit.routes() == 0);
+        pad.sample = 0;
+        kit.set_pad(0, pad);
+        kit.set_pad(1, pad);
+        CHECK(kit.routes() == 4);
+        pad.out = 8;
+        kit.set_pad(1, pad);
+        CHECK(kit.routes() == (4 | 128));
+        kit.move_pad(1, PadParam::Level, 42);
+        kit.restore_pads();
+        CHECK(kit.routes() == (4 | 128));
+        pad.sample = no_sample;
+        kit.set_pad(1, pad);
+        kit.set_pad(0, PadSound {});
+        CHECK(kit.routes() == 0);
+    }
     auto project = std::make_unique<Project>();
     auto bank = std::make_unique<PatternBank>();
     tone_kit(*project, 0);
@@ -9214,6 +9358,67 @@ void slice_hit_notes() {
     CHECK(render(whole, pad_note(key, 0, -1, 1)) == render(whole, key));
     chops[7] = &chop;
 
+    // A slice's own Reverse (Chop's Shift + Loop): that slice alone plays backwards; on a reversed pad it plays forwards.
+    {
+        PadSound back_pad = slice_sound(whole, 10000, 20000, 0);
+        back_pad.reverse = true;
+        const auto backwards = render(back_pad, key);
+        CHECK(loudest(backwards) > 0.05f && backwards != hit);
+        chop.reverse[1] = true;
+        CHECK(render(whole, pad_note(key, 0, -1, 1)) == backwards && render(whole, 0, 1) == backwards);
+        CHECK(render(whole, pad_note(key, 0, -1, 0)) == render(slice_sound(whole, 0, 10000, 0), key)); // the others as the pad
+        PadSound reversed_pad = whole;
+        reversed_pad.reverse = true;
+        CHECK(render(reversed_pad, pad_note(key, 0, -1, 1)) == hit); // the pad's Reverse turned round again
+        CHECK(chop_slice_sound(reversed_pad, chop, 0, 0).reverse && !chop_slice_sound(reversed_pad, chop, 1, 0).reverse);
+        auto& kit_track = project->tracks[2];
+        const uint8_t last_was = kit_track.last_pad;
+        kit_track.last_pad = 4;
+        CHECK(chop_kit_pad(kit_track, 7) == 4 && chop_kit_pad(kit_track, 9) == -1);
+        CHECK(slice_heard_reversed(kit_track, 7, chop, 1) && !slice_heard_reversed(kit_track, 7, chop, 0));
+        kit_track.pads[4].reverse = true;
+        CHECK(!slice_heard_reversed(kit_track, 7, chop, 1) && slice_heard_reversed(kit_track, 7, chop, 0));
+        kit_track.pads[4].reverse = false;
+        kit_track.last_pad = 0; // A01 holds another sample: the first pad holding it
+        CHECK(chop_kit_pad(kit_track, 7) == 4);
+        kit_track.last_pad = last_was;
+        chop.reverse[1] = false;
+        // Chop's audition with no kit pad (as the file is) backwards too.
+        auto heard = [&](bool reverse) {
+            SamplerEngine e;
+            e.set_samples(&table);
+            e.audition(7, 10000, 20000, 100, -1, reverse);
+            std::vector<float> out, l(128), r(128);
+            for (unsigned block = 0; block < 40; ++block) {
+                std::fill(l.begin(), l.end(), 0.0f); std::fill(r.begin(), r.end(), 0.0f);
+                e.render_stereo(l.data(), r.data(), 128);
+                out.insert(out.end(), l.begin(), l.end());
+            }
+            return out;
+        };
+        CHECK(loudest(heard(true)) > 0.05f && heard(true) != heard(false));
+        // The flag goes with its slice through a cut, a merge and a new chop; a cut in a reversed slice is reversed too.
+        Slices s;
+        s.whole(0, 40000);
+        CHECK(s.add(10000, 40000) && s.add(20000, 40000) && !s.any_reversed());
+        s.reverse[1] = true;
+        Slices was = s;
+        CHECK(!was.same(Slices {}) && s.same(was));
+        was.reverse[1] = false;
+        CHECK(!s.same(was));
+        CHECK(s.add(15000, 40000) && s.count == 4 && !s.reversed(0) && s.reversed(1) && s.reversed(2) && !s.reversed(3));
+        CHECK(s.add(5000, 40000) && s.reversed(2) && s.reversed(3) && !s.reversed(4)); // the slices after it move up
+        s.remove(2); // slice 3 into slice 2 (not reversed): it keeps its own
+        CHECK(s.count == 4 && !s.reversed(1) && s.reversed(2) && !s.reversed(3) && !s.reverse[4]);
+        Slices again;
+        again.whole(0, 40000);
+        CHECK(again.add(15200, 40000) && again.add(30000, 40000));
+        again.keep_reverse(s, hand_reach); // 15200 is 200 frames from the reversed slice's 15000
+        CHECK(!again.reversed(0) && again.reversed(1) && !again.reversed(2));
+        s.whole(0, 0);
+        CHECK(!s.any_reversed());
+    }
+
     // The host: the chop the project keeps, loaded; its pattern's slice hit as TO PADS' pad playing a plain note.
     project->chops.edit(7).slices = chop;
     project->chops.edit(7).to = 44100;
@@ -9258,6 +9463,15 @@ void slice_hit_notes() {
     const auto& laid = export_project->tracks[2].pads;
     CHECK(laid[5].start == 0 && laid[5].end == 10000 && laid[5].sample == 7);  // slice 1, hit first
     CHECK(laid[6].start == 20000 && laid[6].end == 0 && !laid[7].used());      // slice 3; slice 9 is past three: dropped
+    CHECK(!laid[5].reverse && !laid[6].reverse);
+    {
+        auto back_project = std::make_unique<Project>(*project);
+        auto back_bank = std::make_unique<PatternBank>(*bank);
+        Slices backwards = chop;
+        backwards.reverse[2] = true; // slice 3 reversed on its own: laid as a reversed pad
+        CHECK(lay_slice_hits(*back_project, *back_bank, [&](unsigned) -> const Slices& { return backwards; }) == 0);
+        CHECK(!back_project->tracks[2].pads[5].reverse && back_project->tracks[2].pads[6].reverse);
+    }
     CHECK(moved[0].key == key && moved[1].key == key + 1 && moved[2].key == key + 2 && moved[2].velocity == 50);
     // No pad free: the hits play their pad's whole region, counted.
     auto full = std::make_unique<Project>(*project);
@@ -9823,7 +10037,184 @@ void channel_strip_sound() {
 
 } // namespace
 
+
+// Elektron's sequencing: per track speed x1/64 .. x4, per track direction (FWD, REV, RND), per step PLAY (the way
+// the sample plays), SOUND (a sample of its own) and SLICE RND.
+void elektron_sequencing() {
+    // Speeds in order, x1 in the middle; the five a file before kept read as they were, today's as the nearest.
+    CHECK(speed_count == 11 && speed_of(speed_normal).num == 1 && speed_of(speed_normal).den == 1);
+    CHECK(speed_of(0).den == 64 && speed_of(speed_count - 1).num == 4);
+    for (unsigned s = 1; s < speed_count; ++s)
+        CHECK(double(speed_of(s).num) / speed_of(s).den > double(speed_of(s - 1).num) / speed_of(s - 1).den);
+    CHECK(speed_of_legacy(0) == 5 && speed_of_legacy(2) == speed_normal && speed_of_legacy(4) == 9 && speed_of_legacy(7) == speed_normal);
+    for (unsigned legacy = 0; legacy < 5; ++legacy) CHECK(legacy_speed(speed_of_legacy(legacy)) == legacy);
+    CHECK(legacy_speed(0) == 2 && legacy_speed(10) == 2);
+    { // x1/64: a note longer than any pattern as written still plays its whole length
+        Pattern p;
+        p.length = 4 * 16 * sixteenth_ticks;
+        put(p, 0, 60, 100, 64);
+        const Pattern slow = speed_pattern(p, 0);
+        CHECK(slow.length == p.length * 64 && slow.events[0].length == p.events[0].length * 64);
+    }
+    // The order of a pass's steps: every step once, another order for another seed.
+    for (uint32_t count : {1u, 2u, 3u, 7u, 16u, 100u, 8192u}) {
+        std::vector<int> seen(count, 0);
+        for (uint32_t k = 0; k < count; ++k) ++seen[shuffled_step(k, count, 1234)];
+        for (int n : seen) CHECK(n == 1);
+    }
+    {
+        bool other = false;
+        for (uint32_t k = 0; k < 16; ++k) other |= shuffled_step(k, 16, direction_seed(0, 0)) != shuffled_step(k, 16, direction_seed(0, 1));
+        CHECK(other && direction_seed(0, 3) == direction_seed(0, 3) && direction_seed(0, 3) != direction_seed(1, 3));
+    }
+    // A directed loop's ticks: REV plays the last step first, a note keeping its place in its step; over a pass every
+    // tick of the pattern is played once, at any speed, Q and length (a part step at the end included).
+    {
+        StepClock clock;
+        const uint32_t end = 16 * sixteenth_ticks;
+        auto first = directed_tick(0, end, clock, PlayDirection::Reverse, 0);
+        CHECK(first.from == 15 * sixteenth_ticks && first.to == first.from + 1 && first.step == 15);
+        auto later = directed_tick(sixteenth_ticks + 7, end, clock, PlayDirection::Reverse, 0);
+        CHECK(later.from == 14 * sixteenth_ticks + 7 && later.step == 14);
+        auto last = directed_tick(end - 1, end, clock, PlayDirection::Reverse, 0);
+        CHECK(last.from == sixteenth_ticks - 1 && last.to == sixteenth_ticks);
+        auto fwd = directed_tick(123, end, clock, PlayDirection::Forward, 0);
+        CHECK(fwd.from == 123 && fwd.to == 124);
+    }
+    for (unsigned speed : {0u, 4u, 6u, 7u, 8u, 10u})
+        for (Division q : {Division::Sixteenth, Division::SixteenthTriplet, Division::Quarter})
+            for (uint32_t written : {16u * sixteenth_ticks, 1000u, 3u * sixteenth_ticks + 50u})
+                for (PlayDirection d : {PlayDirection::Reverse, PlayDirection::Random}) {
+                    StepClock clock;
+                    clock.q = division_ticks(q);
+                    clock.speed = speed_of(speed);
+                    const uint32_t end = uint32_t(played_ticks(written, speed));
+                    std::vector<uint8_t> heard(end, 0);
+                    for (uint32_t at = 0; at < end; ++at) {
+                        auto here = directed_tick(at, end, clock, d, 99);
+                        CHECK(here.from <= here.to && here.to <= end);
+                        for (uint32_t k = here.from; k < here.to; ++k) ++heard[k];
+                    }
+                    for (auto n : heard) CHECK(n == 1);
+                }
+    // The engine: a MIDI track's four notes, backward, then shuffled (each once a pass), then forward again.
+    {
+        auto project = std::make_unique<Project>();
+        auto bank = std::make_unique<PatternBank>();
+        load_sound(project->tracks[0], EngineKind::Midi, 0);
+        project->tracks[0].params[midi_track::Port] = midi_track::UsbC; project->tracks[0].params[midi_track::Channel] = 1;
+        project->tracks[0].direction = uint8_t(PlayDirection::Reverse);
+        project->tempo = 1200;
+        auto& p = bank->at[0][0];
+        p.length = 4 * sixteenth_ticks;
+        for (unsigned s = 0; s < 4; ++s) put(p, s, uint8_t(60 + s), 100);
+        EngineHost host;
+        host.load(*project, *bank);
+        host.set_audio_format(44100, 384);
+        host.send({Command::Type::Play});
+        std::vector<int32_t> out(256);
+        auto keys = [&](unsigned blocks) {
+            std::vector<uint8_t> on;
+            for (unsigned n = 0; n < blocks; ++n) {
+                host.render(out.data(), 128, 1);
+                MidiOutEvent e;
+                while (host.take_midi(e)) if (e.kind == MidiOutEvent::Kind::NoteOn) on.push_back(e.a);
+            }
+            return on;
+        };
+        auto pass = keys(172); // four steps of 5512.5 frames: 22050
+        CHECK(pass.size() >= 4 && pass[0] == 63 && pass[1] == 62 && pass[2] == 61 && pass[3] == 60);
+        host.send({Command::Type::TrackDirection, 0, 0, 0, int16_t(PlayDirection::Random)});
+        auto shuffled = keys(172 * 4);
+        CHECK(shuffled.size() >= 12);
+        for (size_t from = 4; from + 4 <= 12; from += 4) { // whole passes after the one under way: each key once
+            std::vector<uint8_t> one(shuffled.begin() + long(from), shuffled.begin() + long(from + 4));
+            std::sort(one.begin(), one.end());
+            CHECK(one == (std::vector<uint8_t> {60, 61, 62, 63}));
+        }
+        CHECK(host.dropped() == 0);
+    }
+    // Step PLAY, SOUND and SLICE in the file: PLAY in the flags' bits 4-5, SOUND in ESMP, SLICE RND in SLCE.
+    {
+        auto project = std::make_unique<Project>();
+        auto bank = std::make_unique<PatternBank>();
+        tone_kit(*project, 0);
+        project->tracks[0].speed = 0; project->tracks[1].speed = 9;
+        project->tracks[0].direction = uint8_t(PlayDirection::Random);
+        auto& p = bank->at[0][3];
+        put(p, 0, uint8_t(sampler_first_note), 100);
+        p.events[0].flags = with_play(p.events[0].flags | step_accent, StepPlay::Reverse);
+        p.events[0].sample = 13;
+        p.events[0].slice = slice_random;
+        CHECK(step_play(p.events[0].flags) == StepPlay::Reverse && (p.events[0].flags & step_accent));
+        CHECK(step_play(with_play(p.events[0].flags, StepPlay::Pad)) == StepPlay::Pad);
+        Step st = p.step(0); // Step Edit's rewrite keeps the note's sample and slice
+        st.notes[0].velocity = 90;
+        p.set_step(0, st);
+        CHECK(p.events[0].sample == 13 && p.events[0].slice == slice_random && step_play(p.events[0].flags) == StepPlay::Reverse);
+        auto data = save_project(*project, *bank);
+        const std::string tags(data.begin(), data.end());
+        CHECK(tags.find("ESMP") != std::string::npos && tags.find("TSP2") != std::string::npos && tags.find("TDIR") != std::string::npos);
+        auto back = std::make_unique<Project>();
+        auto back_bank = std::make_unique<PatternBank>();
+        CHECK(load_project(data, *back, *back_bank).empty() && back_bank->at[0][3] == bank->at[0][3]);
+        CHECK(back->tracks[0].speed == 0 && back->tracks[1].speed == 9 && back->tracks[0].direction == uint8_t(PlayDirection::Random));
+    }
+    // The sampler: a step's sample through the pad (its whole sample), its way over the pad's, SLICE RND's draw.
+    {
+        auto noise = [](uint32_t seed) {
+            SampleData d;
+            d.frames = 30000; d.left.resize(d.frames); d.right.resize(d.frames);
+            for (unsigned n = 0; n < d.frames; ++n) {
+                seed = seed * 1664525u + 1013904223u;
+                d.left[n] = d.right[n] = float(int32_t(seed) >> 8) / float(1 << 23) * 0.5f * (1.0f - float(n) / d.frames);
+            }
+            return d;
+        };
+        SampleData a = noise(3), b = noise(77);
+        SamplerEngine::Table table {};
+        table[7] = &a; table[8] = &b;
+        Slices chop;
+        chop.count = 3;
+        chop.start[0] = 0; chop.start[1] = 10000; chop.start[2] = 20000;
+        chop.stop[0] = 10000; chop.stop[1] = 20000; chop.stop[2] = 0;
+        SamplerEngine::Chops chops {};
+        chops[8] = &chop;
+        PadSound pad;
+        pad.sample = 7; pad.start = 500; pad.end = 25000; pad.play = PadPlay::OneShot;
+        const int key = int(sampler_first_note) + 4;
+        auto render = [&](const PadSound& sound, int note, int sample, unsigned play, unsigned pick) {
+            SamplerEngine e;
+            e.set_samples(&table);
+            e.set_chops(&chops);
+            e.set_pad(4, sound);
+            if (sample >= 0 || play || pick) e.step_hit(sample, play, pick);
+            e.note_on(note, 100);
+            std::vector<float> out, l(128), r(128);
+            for (unsigned block = 0; block < 250; ++block) {
+                std::fill(l.begin(), l.end(), 0.0f); std::fill(r.begin(), r.end(), 0.0f);
+                e.render_stereo(l.data(), r.data(), 128);
+                out.insert(out.end(), l.begin(), l.end());
+            }
+            return out;
+        };
+        PadSound whole_b = pad; whole_b.sample = 8; whole_b.start = whole_b.end = 0;
+        const auto locked = render(pad, key, 8, 0, 0);
+        CHECK(peak_of(locked) > 0.05f && locked == render(whole_b, key, -1, 0, 0) && locked != render(pad, key, -1, 0, 0));
+        PadSound back_pad = pad; back_pad.reverse = true;
+        CHECK(render(pad, key, -1, unsigned(StepPlay::Reverse), 0) == render(back_pad, key, -1, 0, 0));
+        CHECK(render(back_pad, key, -1, unsigned(StepPlay::Forward), 0) == render(pad, key, -1, 0, 0));
+        // SLICE RND: slice draw % count of the step's sample's chop.
+        const int random_slice = pad_note(key, 0, -1, int(slice_random) - 1);
+        CHECK(render(pad, random_slice, 8, 0, 4) == render(whole_b, pad_note(key, 0, -1, 1), -1, 0, 0));
+        CHECK(render(pad, random_slice, -1, 0, 4) == render(pad, key, -1, 0, 0)); // no chop on its sample: the region
+    }
+    std::puts("elektron sequencing ok");
+}
+
 int main() {
+    elektron_sequencing();
+    clock_960();
     slice_hit_notes();
     mixer_strips();
     channel_strip_sound();

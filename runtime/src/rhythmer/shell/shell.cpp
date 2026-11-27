@@ -35,7 +35,11 @@
 #include "rhythmer/shell/mix_hub.h"
 #include "rhythmer/shell/mixer_channels.h"
 #include "rhythmer/shell/stage_map.h"
+#include "rhythmer/shell/step_edit.h"
+#include "rhythmer/shell/step_lane.h"
+#include "rhythmer/shell/step_sounds.h"
 #include "rhythmer/shell/zoom_view.h"
+#include "rhythmer/shell/browse_trim.h"
 #include "rhythmer/shell/sample_mode.h"
 #include "rhythmer/shell/progression_jobs.h"
 #include "rhythmer/shell/seq_layer.h"
@@ -437,6 +441,7 @@ void Shell::press(Button b, bool pressed) {
             return;
         }
         ui.erase_used = ui.shift || ui.copying != UiState::Copying::Off; // Copy, or leaving it, is the press's job
+        ui.erase_cleared = 0;
         if (ui.shift) { // Shift + Erase: Copy, as printed, of what the page holds (shell/erase_copy.h; again: off)
             ui.shift_used = true;
             if (ui.pad_bank) ui.pad_bank_used = true;
@@ -511,6 +516,7 @@ void Shell::press(Button b, bool pressed) {
             break;
         }
         if (!ui.shift) {
+            if (sounds_select(context_)) break; // Step Edit: the step's sounds on the pads (shell/step_sounds.h), or back
             bool kit = context_.track().sampled(); // a kit's or a keygroup's sounds are files
             PageId list = kit ? PageId::Samples : PageId::Sounds;
             if (ui.page == list) { context_.back(); break; } // its opener closes it (HUBS_PLAN T-a)
@@ -631,6 +637,11 @@ void Shell::pot(unsigned n, int position, bool syncing) {
     const bool acid_gen=selected.engine==EngineKind::Plugin&&selected.plugin<max_plugins&&std::string(project_->plugins[selected.plugin].name)=="Acid Engine";
     if((ui_.gen8_mode==2&&!break_gen)||(ui_.gen8_mode==4&&!acid_gen)||(ui_.gen8_mode==5&&!chord_gen_available(*project_,ui_.track))){ui_.gen8_mode=0;ui_.sheet_row=0;}
     auto bindings = page_bindings(*project_, ui_, context_.pattern());
+    // Samples, K2 / K3 on an audio file: its trim sheet comes up, the file read (shell/browse_trim.h).
+    if (!syncing && !ui_.browse.up() && ui_.page == PageId::Samples
+        && (bindings[n].kind == Binding::Kind::BrowseStart || bindings[n].kind == Binding::Kind::BrowseEnd || bindings[n].kind == Binding::Kind::BrowseZoom)
+        && context_.browse_open(bindings[n].kind == Binding::Kind::BrowseZoom ? unsigned(bindings[n].id) : bindings[n].kind == Binding::Kind::BrowseEnd))
+        bindings = page_bindings(*project_, ui_, context_.pattern());
     // A Trim or Chop handle's pot: that handle in focus, the view zoomed in round it (shell/zoom_view.h).
     if (!syncing && focus_handle(ui_, bindings[n])) bindings = page_bindings(*project_, ui_, context_.pattern());
     if (!syncing && (bindings[n].kind == Binding::Kind::ChopStart || bindings[n].kind == Binding::Kind::ChopEnd) && ui_.chop_zoom_auto) {
@@ -666,6 +677,17 @@ void Shell::pot(unsigned n, int position, bool syncing) {
         else context_.notice("No motion on " + lane_name(context_.track(), lane, project_.get()));
         return;
     }
+    if (ui_.erase && b.kind == Binding::Kind::Lock) { // Erase + pot on a lock card: that lane's lock out, the notes kept
+        const auto bit = uint8_t(1u << n);
+        if (context_.clear_lock(b, !(ui_.erase_cleared & bit))) ui_.erase_cleared |= bit; // the rest of the turn: quiet
+        pot.engaged = false; pot.bound = 0;
+        return;
+    }
+    if (ui_.erase && (b.kind == Binding::Kind::StepSound || b.kind == Binding::Kind::StepSlice || b.kind == Binding::Kind::StepPlay)) {
+        context_.apply(b, 0); // Erase + pot on Step Edit's SOUND row: that card back to PAD (the pad's own)
+        pot.engaged = false; pot.bound = 0;
+        return;
+    }
     if (ui_.erase && b.kind == Binding::Kind::Param) { // Erase + pot: back to the initial value
         context_.apply(b, engine_info(context_.track().engine).params[b.id].initial);
         pot.engaged = false; pot.bound = 0;
@@ -673,6 +695,11 @@ void Shell::pot(unsigned n, int position, bool syncing) {
     }
     if (ui_.erase && b.kind == Binding::Kind::PluginParam) { // a plug-in's: back to its default
         if (const auto* card = plugin_card(ui_.plugin_panel, b.id)) context_.apply(b, card->initial);
+        pot.engaged = false; pot.bound = 0;
+        return;
+    }
+    if (ui_.erase && (b.kind == Binding::Kind::BrowseStart || b.kind == Binding::Kind::BrowseEnd)) { // the trim sheet: that end back to the file's
+        context_.browse_erase(b.kind == Binding::Kind::BrowseEnd);
         pot.engaged = false; pot.bound = 0;
         return;
     }
@@ -797,13 +824,14 @@ void Shell::hit(unsigned pad, uint8_t velocity, bool down) {
         else context_.delete_pad(kit);
         return;
     case PadContext::PadCopy:
-        if (ui_.copy_from < 0) { // first the pad to copy
-            if (context_.track().pads[kit].used()) { ui_.copy_from = int8_t(kit); context_.track().last_pad = uint8_t(kit); }
-            else context_.notice(pad_text("Empty", kit));
+        if (ui_.copy_from < 0) { // first the pad to copy, and its track: Pad Bank + pad between takes it to another kit (issue 48)
+            if (context_.track().pads[kit].used()) {
+                ui_.copy_from = int8_t(kit); ui_.copy_track = uint8_t(ui_.track % track_count); context_.track().last_pad = uint8_t(kit);
+            } else context_.notice(pad_text("Empty", kit));
             return;
         }
-        if (unsigned(ui_.copy_from) == kit) return; // then where it goes
-        context_.copy_pad(unsigned(ui_.copy_from), kit);
+        if (ui_.copy_track == ui_.track % track_count && unsigned(ui_.copy_from) == kit) return; // then where it goes
+        context_.copy_pad(ui_.copy_track, unsigned(ui_.copy_from), kit);
         context_.track().last_pad = uint8_t(kit);
         ui_.stop_copying();
         return;
@@ -850,6 +878,7 @@ void Shell::end_copy_away() {
     case UiState::Copying::Keys: here = key_pads() || ui_.page == PageId::Roll || (ui_.page == PageId::StepEdit && !ui_.step_pads); break;
     case UiState::Copying::Steps: here = ui_.page == PageId::StepEdit && ui_.step_pads; break;
     case UiState::Copying::Notes: here = ui_.page == PageId::Roll; break;
+    case UiState::Copying::Scenes: here = ui_.page == PageId::Scenes; break;
     default: break;
     }
     if (ui_.copying != UiState::Copying::Off && !here) ui_.stop_copying();
@@ -858,6 +887,7 @@ void Shell::end_copy_away() {
 FrameView Shell::zoomed_view() const {
     const auto& t = project_->tracks[ui_.track % track_count];
     if (ui_.page == PageId::Chop && ui_.chop_zoom) return chop_view(*project_, ui_);
+    if (ui_.page == PageId::Samples && ui_.browse.up()) return browse_view(*project_, ui_.browse); // the trim sheet's close view
     if (ui_.page == PageId::Stage && ui_.trim_zoom && stage_page_now(ui_, t, stage_skip(*project_, ui_, t)).kind == StageKind::Trim) return trim_view(*project_, ui_);
     return {};
 }
@@ -990,6 +1020,12 @@ void Shell::snapshot(Snapshot& out, uint32_t now) {
     if (store_ && (ui_.page == PageId::Project || ui_.exit_open)) store_->view(out.projects);
     if (context_.plugins && ui_.page == PageId::Plugins) out.plugins = context_.plugins->view();
     if (context_.plugins && ui_.page == PageId::PluginPresets) out.presets = context_.plugins->programs(ui_.presets_entry);
+    out.own_sounds.clear();
+    if (ui_.page == PageId::Sounds) { // in Context::user_sound()'s order, as sound_list() numbers them
+        EngineKind engine = project_->tracks[ui_.track % track_count].engine;
+        for (const auto& own : context_.user_sounds)
+            if (own.engine == engine) out.own_sounds.emplace_back(own.name, strnlen(own.name, sizeof(own.name)));
+    }
     out.plugin_skin = context_.plugins && ui_.plugin_panel.skin_page != -1 ? context_.plugins->skin(ui_.plugin_panel.entry) : nullptr;
     out.plugin_picture = context_.plugins && ui_.plugin_panel.screen ? context_.plugins->screen_picture() : nullptr;
     if (context_.plugins && ui_.page == PageId::Stage) { // Stage PRESETS: the track's plug-in's
@@ -999,7 +1035,23 @@ void Shell::snapshot(Snapshot& out, uint32_t now) {
     }
     if (library_) {
         const auto& t = project_->tracks[ui_.track];
-        unsigned slot = ui_.page == PageId::Chop ? context_.chop_cut_slot() : t.pads[t.last_pad % sampler_pads].sample; // Chop: CLEAN shows the drums stem
+        // Step Edit's SOUND row: the sample the step in hand plays (its own, else its pad's)
+        unsigned step_slot = no_sample;
+        if (ui_.page == PageId::StepEdit && step_set(t, ui_.step_cards) == cards_sound) {
+            const auto& p = patterns_->at[ui_.track % track_count][t.pattern % pattern_count]; // the pattern Step Edit edits
+            const int n = lane_event(p, sound_step(ui_, p), steps_lane(t));
+            if (n >= 0) {
+                const auto& e = p.events[size_t(n)];
+                step_slot = e.sample ? e.sample - 1u
+                          : t.engine == EngineKind::Keygroup ? t.pads[0].sample
+                          : e.key >= sampler_first_note ? t.pads[(e.key - sampler_first_note) % sampler_pads].sample : no_sample;
+            }
+        }
+        unsigned slot = ui_.page == PageId::Chop ? context_.chop_cut_slot() // Chop: CLEAN shows the drums stem
+                      : ui_.page == PageId::Samples && ui_.browse.up() ? unsigned(ui_.browse.slot) // the trim sheet's file
+                      : sounds_open(ui_) && ui_.sounds_slices && step_slot < sample_slots ? step_slot // the sounds' SLICES: the step's sample
+                      : t.pads[t.last_pad % sampler_pads].sample;
+        out.step_wave_shown = step_slot < sample_slots && library_->thumbnail(step_slot, 0, 0, out.step_wave.data(), unsigned(out.step_wave.size()));
         out.sample = slot < sample_slots ? library_->slot(slot) : LoadedSample {};
         out.zone_file = out.sample.instrument && ui_.page != PageId::Chop ? library_->zone_file(slot, ui_.zone) : std::string();
         // Trim and Chop zoomed in: the view's own peaks, from the audio (the overview's 512 are too few that close).
@@ -1010,7 +1062,14 @@ void Shell::snapshot(Snapshot& out, uint32_t now) {
             out.detail_from = view.from; out.detail_to = view.to;
         }
         out.pad_waves_shown = 0;
-        if ((ui_.page == PageId::Pads || ui_.sample_held) && t.engine == EngineKind::Sampler) // pads B (and Sample held's): the bank's sixteen waveforms
+        if (sounds_open(ui_) && !ui_.sounds_slices) { // Step Edit's sounds on the pads: the shown track's bank
+            const auto& source = project_->tracks[ui_.sounds_track % track_count];
+            for (unsigned n = 0; n < 16; ++n) {
+                const auto& pad = source.pads[(ui_.sounds_bank % sampler_banks * 16 + n) % sampler_pads];
+                if (pad.used() && library_->thumbnail(pad.sample, pad.start, pad.end, out.pad_waves[n].data(), 32))
+                    out.pad_waves_shown = uint16_t(out.pad_waves_shown | 1u << n);
+            }
+        } else if ((ui_.page == PageId::Pads || ui_.sample_held) && t.engine == EngineKind::Sampler) // pads B (and Sample held's): the bank's sixteen waveforms
             for (unsigned n = 0; n < 16; ++n) {
                 const auto& pad = t.pads[t.bank % sampler_banks * 16 + n];
                 if (pad.used() && library_->thumbnail(pad.sample, pad.start, pad.end, out.pad_waves[n].data(), 32))
@@ -1026,7 +1085,7 @@ void Shell::snapshot(Snapshot& out, uint32_t now) {
     if (ui_.history) { // the undo list's rows, top down: the steps undone, then the steps done (shell/history_list.h)
         const auto& edits = context_.edits;
         const unsigned redos = unsigned(edits.redos()), kept = unsigned(edits.size());
-        out.history_redos = uint8_t(redos);
+        out.history_redos = uint16_t(redos);
         for (unsigned row = 0; row + 1 < history_rows(redos, kept); ++row) {
             bool redo = false;
             unsigned index = 0;

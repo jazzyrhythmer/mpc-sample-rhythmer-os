@@ -64,7 +64,7 @@ public:
     void set_pager(StreamPager* streams) { pager = streams; } // nullptr: instruments' frames are all safe to read (tests)
     // A pad's sound. What the pad plays now hears it too (at the next render, gliding there: refresh), while it
     // plays the same sample: its level, pan, tune, envelopes, filter, speed, play mode, region and loop.
-    void set_pad(unsigned pad, const PadSound& sound) { if (pad < sampler_pads) { pads[pad] = base[pad] = sound; mark(pad); } }
+    void set_pad(unsigned pad, const PadSound& sound);
     bool pad_used(unsigned pad) const { return pad < sampler_pads && pads[pad].used(); } // a sample on it
     // Round 3 "instrument C": the track's zone trims (model/sampler.h), as a whole or one; a zone of pad `pad`
     // at UINT32_MAX lets every trim of the pad go. A zone sounding hears its trim at once.
@@ -94,13 +94,17 @@ public:
     bool pad_muted(unsigned pad) const { return pad < sampler_pads && ((muted[pad / 64] >> (pad % 64)) & 1); }
     // A region of a sample on no pad, for Chop's audition (plays one shot). With kit pad `pad` holding the sample, at
     // that pad's speed and pitch (Warp, Semi, Fine) as its slice's pad plays it; -1 as the file is.
-    void audition(uint16_t sample, uint32_t start, uint32_t end, int velocity, int pad = -1, uint16_t own_tempo = 0);
+    void audition(uint16_t sample, uint32_t start, uint32_t end, int velocity, int pad = -1, bool reverse = false, uint16_t own_tempo = 0);
     // A sample is about to change: whatever plays it stops now.
     void sample_gone(uint16_t sample);
     // A kit pad shifted by `semitones`, its filter at `cutoff` (0..100; -1 its
     // own): 16 Levels; or slice `slice` of its sample's chop (-1 its own region): Chop under Seq Record (issue 24).
     // note_off for the pad's note releases it.
     void play_pad(unsigned pad, int velocity, int semitones, int cutoff = -1, int slice = -1);
+    // The next hit's own sound, a sequenced note's (step SOUND and PLAY): `sample` a slot played through the pad in
+    // place of its own (-1 its own), `play` StepPlay Forward or Reverse (else the pad's way), `pick` the draw a SLICE
+    // RND note takes its slice by. Taken by that hit alone (note_on just after).
+    void step_hit(int sample, unsigned play, unsigned pick) { next_sample = sample; next_play = uint8_t(play); next_pick = uint16_t(pick); }
     // Note Repeat holds a kit pad: on a pad of Cycle hold or Random hold, every repeat plays the layer the
     // first one picked, until the hold ends (model/sampler.h LayerPlay).
     void hold_layer(unsigned pad, bool on) { if (pad < sampler_pads) held_layer[pad] = int8_t(on ? -2 : -1); }
@@ -162,11 +166,7 @@ public:
     static constexpr unsigned sub_outs = 8;
     void set_sub_out(unsigned n, float* l, float* r) { if (n < sub_outs) { sub_l[n] = l; sub_r[n] = r; } }
     unsigned subs_fed() const { return sub_used; } // a bit a submix: the last render put something there
-    uint8_t routes() const {                          // a bit a submix a pad with a sound is sent to
-        uint8_t bits = 0;
-        for (const auto& pad : pads) if (pad.out && pad.out <= sub_outs && pad.used()) bits |= uint8_t(1u << (pad.out - 1));
-        return bits;
-    }
+    uint8_t routes() const { return sub_routes; } // a bit a submix a pad with a sound is sent to
     // Knob FX (parity phase 7): the voices of these pads (a bit a pad) play
     // into the host's l / r instead, after their own chain and punch, added to
     // what is there, for the host to put through Knob FX. No bits: none. Like
@@ -278,6 +278,7 @@ private:
         uint8_t velocity = 0;
         int8_t layer = -1;                  // the pad's layer it plays (layers_on), -1 the pad itself
         int8_t slice = -1;                  // issue 24: the slice of its sample's chop it plays (a slice hit), -1 the pad's region
+        uint8_t play = 0;                   // step PLAY: StepPlay Forward or Reverse it keeps over the pad's Reverse (0 the pad's)
         int16_t levels_cutoff = -1;         // 16 Levels' cutoff it was hit with, -1 the pad's own
         float accent = 1, fall = 1;         // the sequencer's accent; a release sample's rt_decay
         const SampleGrowth* grow = nullptr; // its sample is still being read: it reads only what landed (admit_grown)
@@ -375,6 +376,10 @@ private:
     unsigned tempo = 1200;
     uint16_t audition_tempo=0;
     uint32_t seed = 99;
+    // step_hit(): the next hit's sample, way and slice draw; `starting_play` the way the voices start() takes.
+    int next_sample = -1;
+    uint8_t next_play = 0, starting_play = 0;
+    uint16_t next_pick = 0;
     // A choke's fade and an instrument zone's duck move this far a frame: 64 44.1 kHz frames (1.5 ms) at any rate.
     float edge_step = 1.0f / 64;
     const Table* samples = nullptr;
@@ -422,6 +427,8 @@ private:
     float* sub_l[sub_outs] {};
     float* sub_r[sub_outs] {};
     unsigned sub_used = 0;
+    std::array<unsigned, sub_outs> sub_members {}; // only set_pad changes a pad's sample or output
+    uint8_t sub_routes = 0;
     int routed(int pad) const { // the submix the pad plays into, or -1: the kit
         if (pad < 0 || pad >= int(sampler_pads)) return -1;
         const unsigned out = pads[size_t(pad)].out;

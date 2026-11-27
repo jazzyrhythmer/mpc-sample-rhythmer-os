@@ -70,7 +70,8 @@ struct ClapInstance::Library
     static Library* acquire (const File& file, String& error)
     {
         std::lock_guard<std::mutex> held (lock());
-        void* handle = dlopen (file.getFullPathName().toRawUTF8(), RTLD_NOW | RTLD_LOCAL);
+        // NODELETE: a plug-in with a static C++ runtime (zig's libc++) leaves exit handlers that crash Rhythmer once unmapped.
+        void* handle = dlopen (file.getFullPathName().toRawUTF8(), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
         if (handle == nullptr) { error = dlerror(); return nullptr; }
         for (auto& l : all())
             if (l->handle == handle) { dlclose (handle); ++l->users; return l.get(); } // the same object again
@@ -113,6 +114,7 @@ struct ClapInstance::Host
     std::atomic<bool> remoteChanged { false }; // remote-controls changed(): its pages to be read again
     std::atomic<bool> process { false }; // request_process or request_flush: run the next block even if it sleeps
     std::atomic<bool> redraw { false };  // its screen asked to be drawn (sdk/rhythmer-screen/rhythmer_screen.h)
+    std::atomic<uint32_t> keys { 0 };    // the printed buttons its screen's page takes (RHYTHMER_SCREEN_KEY_ bits)
 
     Host()
     {
@@ -183,14 +185,20 @@ struct ClapInstance::Host
         };
         if (std::strcmp (id, CLAP_EXT_PRESET_LOAD) == 0 || std::strcmp (id, CLAP_EXT_PRESET_LOAD_COMPAT) == 0) return &presetLoad;
         if (std::strcmp (id, CLAP_EXT_REMOTE_CONTROLS) == 0 || std::strcmp (id, CLAP_EXT_REMOTE_CONTROLS_COMPAT) == 0) return &remote;
-        // Its own screen: a draw asked for (any thread), and maybe a block run for an input its audio side takes.
-        static const rhythmer_screen_host screenHost { [] (const void* h, uint32_t flags) {
-            if (h == nullptr) return;
-            auto& self = of (static_cast<const clap_host*> (h));
-            self.redraw.store (true, std::memory_order_release);
-            if ((flags & RHYTHMER_SCREEN_RUN) != 0) self.process.store (true, std::memory_order_release);
-        } };
-        if (std::strcmp (id, RHYTHMER_SCREEN_CLAP_HOST) == 0) return &screenHost;
+        // Its own screen: a draw asked for (any thread), and maybe a block run for an input its audio side takes; the
+        // printed buttons its page takes (version 2, which begins as version 1 does).
+        static const rhythmer_screen_host_2 screenHost {
+            [] (const void* h, uint32_t flags) {
+                if (h == nullptr) return;
+                auto& self = of (static_cast<const clap_host*> (h));
+                self.redraw.store (true, std::memory_order_release);
+                if ((flags & RHYTHMER_SCREEN_RUN) != 0) self.process.store (true, std::memory_order_release);
+            },
+            [] (const void* h, uint32_t keys) {
+                if (h != nullptr) of (static_cast<const clap_host*> (h)).keys.store (keys, std::memory_order_release);
+            },
+        };
+        if (std::strcmp (id, RHYTHMER_SCREEN_CLAP_HOST) == 0 || std::strcmp (id, RHYTHMER_SCREEN_CLAP_HOST_2) == 0) return &screenHost;
         return nullptr;
     }
 };
@@ -523,6 +531,7 @@ bool ClapInstance::screenControls (std::array<int, 3>& indices)
 }
 
 bool ClapInstance::takeRedraw() { return host->redraw.exchange (false, std::memory_order_acq_rel); }
+uint32_t ClapInstance::screenKeys() const { return host->keys.load (std::memory_order_acquire); }
 
 bool ClapInstance::wantsProcess() const
 {

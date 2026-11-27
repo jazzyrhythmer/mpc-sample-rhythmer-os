@@ -106,6 +106,8 @@ public:
     // the screen in view, null none (any thread). panel() gives `screen` once the plug-in has drawn and named K1-K3.
     void screen_view(const ScreenView& view);
     void screen_input(unsigned entry, const ScreenInput& input);
+    // The printed buttons the page of `entry`'s screen takes now (screen_key_mute, screen_key_erase), 0 none. Any thread.
+    uint8_t screen_keys(unsigned entry) const;
     void set_screen_param(unsigned entry, unsigned k, int value);
     ScreenPicturePtr screen_picture() const;
     // Companion screens (plugin/companion_screen.h, sdk/rhythmer-screen/rhythmer_companion.h). MIDI thread:

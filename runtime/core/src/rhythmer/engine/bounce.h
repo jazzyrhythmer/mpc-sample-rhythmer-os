@@ -55,7 +55,7 @@ public:
     bool cued() const { return state_.load(std::memory_order_relaxed) == State::Cued; }
     bool running() const { return state_.load(std::memory_order_relaxed) == State::Running; }
     void begin(unsigned offset) { if (cued()) { start_at = int(offset); state_.store(State::Running); } }
-    void finish(unsigned offset) { if (running()) stop_at = int(offset); }
+    void finish(unsigned offset) { if (running() && stop_at < 0) stop_at = int(offset); } // the first: later ticks of the block are past it
     void tail() { if (running()) { state_.store(State::Tail); tail_frames = 0; quiet = 0; } }
     void cancel() { // a tail is cut short, but kept
         auto s = state_.load();

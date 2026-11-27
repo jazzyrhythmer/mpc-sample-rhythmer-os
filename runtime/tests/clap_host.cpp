@@ -143,6 +143,11 @@ int main(int argc, char** argv) {
         CHECK(sine->screenDraw(frame, changed) && changed && pixels[190] == 0xff8000u);
         rhythmer_screen_input_t step {RHYTHMER_SCREEN_STEP, 1, 0};
         CHECK(sine->screenInput(step, used) && !used); // Minus / Plus are not its
+        // The printed buttons its page takes: none until it says (rhythmer.screen-host/2), then Erase, then none again.
+        CHECK(sine->screenKeys() == 0);
+        rhythmer_screen_input_t push {RHYTHMER_SCREEN_PUSH, 1, 0}, erase {RHYTHMER_SCREEN_ERASE, 1, 0};
+        CHECK(sine->screenInput(push, used) && used && sine->screenKeys() == RHYTHMER_SCREEN_KEY_ERASE);
+        CHECK(sine->screenInput(erase, used) && used && sine->screenKeys() == 0);
         std::array<int, 3> controls {};
         CHECK(sine->screenControls(controls) && controls[0] == 0 && controls[1] == 1 && controls[2] == -1); // Level, Wave
         run(*sine);

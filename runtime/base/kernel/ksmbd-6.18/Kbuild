@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0
+# kernel/ksmbd for firmware 1.4's kernel (6.18.59-imb-2026-10-26-rt9), built
+# only with KERNEL=6.18 (tools/build_kernel_modules.sh): fs/smb/server (SMB
+# Direct left out), the headers it takes from fs/smb/common,
+# fs/nls/nls_ucs2_utils.c and lib/crypto/arc4.c (NLS_UCS2_UTILS's and
+# CRYPTO_LIB_ARC4's, both off in the MPC's kernel) from the 6.18.59 tree,
+# unchanged, at their kernel paths so their includes hold.
+obj-m := sample_base_smb.o
+server := fs/smb/server
+sample_base_smb-y := $(addprefix $(server)/, unicode.o auth.o vfs.o vfs_cache.o server.o ndr.o \
+	misc.o oplock.o connection.o ksmbd_work.o crypto_ctx.o \
+	mgmt/ksmbd_ida.o mgmt/user_config.o mgmt/share_config.o \
+	mgmt/tree_connect.o mgmt/user_session.o smb_common.o \
+	transport_tcp.o transport_ipc.o smbacl.o smb2pdu.o \
+	smb2ops.o smb2misc.o ksmbd_spnego_negtokeninit.asn1.o \
+	ksmbd_spnego_negtokentarg.asn1.o asn1.o) \
+	fs/nls/nls_ucs2_utils.o lib/crypto/arc4.o
+$(obj)/$(server)/asn1.o: $(obj)/$(server)/ksmbd_spnego_negtokeninit.asn1.h $(obj)/$(server)/ksmbd_spnego_negtokentarg.asn1.h

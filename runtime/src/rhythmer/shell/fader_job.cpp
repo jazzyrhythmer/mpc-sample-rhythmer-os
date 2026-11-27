@@ -80,6 +80,18 @@ FaderLearned fader_learnable(const Track& track, unsigned t, const Binding& b) {
     return l;
 }
 
+void assign_fader_target(Track& track, FaderTarget target) {
+    track.fader_target = uint8_t(target);
+    track.fader_learned = {}; // the pot it followed gives way
+    track.fader_on = true;
+    track.fader_pin = true;
+}
+
+FaderLearned fader_follow(const Track& track, unsigned t, const Binding& b, bool on_fader_page) {
+    if (track.fader_pin && !on_fader_page) return {};
+    return fader_learnable(track, t, b);
+}
+
 Binding fader_learned_binding(const Track& track, unsigned t) {
     const auto& l = track.fader_learned;
     switch (l.what) {

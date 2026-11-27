@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-2.0
+# The kernel's SMB3 server (ksmbd), for File Sharing (src/drivers/file_share.h):
+# the card as a network drive over the USB-C network. The MPC's kernel is built
+# without it. These are fs/smb/server (SMB Direct left out), the headers it
+# takes from fs/smb/common, fs/smb/common/cifs_arc4.c and
+# fs/nls/nls_ucs2_utils.c (CIFS's and NLS_UCS2_UTILS's, both off in the MPC's
+# kernel) from inMusic's public 6.12.60 release, unchanged, at their kernel
+# paths so their includes hold.
+obj-m := sample_base_smb.o
+server := fs/smb/server
+sample_base_smb-y := $(addprefix $(server)/, unicode.o auth.o vfs.o vfs_cache.o server.o ndr.o \
+	misc.o oplock.o connection.o ksmbd_work.o crypto_ctx.o \
+	mgmt/ksmbd_ida.o mgmt/user_config.o mgmt/share_config.o \
+	mgmt/tree_connect.o mgmt/user_session.o smb_common.o \
+	transport_tcp.o transport_ipc.o smbacl.o smb2pdu.o \
+	smb2ops.o smb2misc.o ksmbd_spnego_negtokeninit.asn1.o \
+	ksmbd_spnego_negtokentarg.asn1.o asn1.o) \
+	fs/smb/common/cifs_arc4.o fs/nls/nls_ucs2_utils.o
+$(obj)/$(server)/asn1.o: $(obj)/$(server)/ksmbd_spnego_negtokeninit.asn1.h $(obj)/$(server)/ksmbd_spnego_negtokentarg.asn1.h

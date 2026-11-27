@@ -6,7 +6,7 @@
         for(unsigned n=0;n<a.frames;n++){a.left[n]=.25f*std::sin(n*.08f);b.left[n]=.25f*std::sin(n*.13f);}
         for(unsigned i=0;i<16;i++){t.pads[i].sample=0;t.pads[i].start=a.frames*i/16;t.pads[i].end=a.frames*(i+1)/16;}
         t.pads[0].layers[0].sample=1;t.pads[0].layers[0].end=b.frames;
-        auto& pattern=x.pattern();pattern.length=768;pattern.events.clear();Event gate;gate.key=36;gate.length=768;pattern.add(gate);
+        auto& pattern=x.pattern();pattern.length=8*ticks_per_quarter;pattern.events.clear();Event gate;gate.key=36;gate.length=8*ticks_per_quarter;pattern.add(gate);
         h.load(x.project,x.patterns);h.offer_sample(0,&a);h.offer_sample(1,&b);h.send({Command::Type::Play});
         std::array<int32_t,256> audio{};h.render(audio.data(),128,1);
         x.ui.recording=true;x.ui.settings.rec_quantize=false;x.ui.break_perf_page=0;
@@ -41,7 +41,7 @@
     {
         EngineHost h;Shell s(h);auto& x=s.context();x.ui.page=PageId::Patterns;x.ui.sheet_open=true;x.ui.gen8_mode=4;
         x.track().engine=EngineKind::Plugin;x.track().plugin=0;std::strcpy(x.project.plugins[0].name,"Acid Engine");
-        x.pattern().length=768;x.pattern().events.clear();x.track().acid_gen.seed=0xdeadbeef;
+        x.pattern().length=8*ticks_per_quarter;x.pattern().events.clear();x.track().acid_gen.seed=0xdeadbeef;
         auto song_seed=x.project.gen8.seed;x.gen8_action(12);auto first=x.pattern().events;
         if(first.empty()||x.project.gen8.seed!=song_seed||x.track().acid_gen.seed!=0xdeadbeef)return gen_failure(411,__LINE__);
         x.gen8_action(12);if(x.pattern().events!=first)return gen_failure(412,__LINE__);
@@ -125,7 +125,7 @@
     // Undo/Redo and project serialization retain A/B, hold, mode and all patterns.
     {
         EngineHost h;Shell s(h);auto& x=s.context();x.ui.track=0;x.track().engine=EngineKind::Midi;
-        x.pattern().length=768;Event e;e.key=48;e.length=96;x.pattern().add(e);auto before=x.pattern().events;
+        x.pattern().length=8*ticks_per_quarter;Event e;e.key=48;e.length=ticks_per_quarter;x.pattern().add(e);auto before=x.pattern().events;
         x.ui.break_pending=0;x.ui.break_job_track=0;x.ui.break_job_bank=2;x.ui.break_job_bars=3;x.project.samples.edit(0).frames=264600;
         x.gen_break_tick();auto made=x.pattern().events;if(made!=before)return gen_failure(466,__LINE__);x.track().break_perf[4]=1;x.track().break_perf[9]=0;
         auto saved=save_project(x.project,x.patterns);auto project=std::make_unique<Project>();auto bank=std::make_unique<PatternBank>();
@@ -181,7 +181,7 @@
         EngineHost h;Shell s(h);auto& x=s.context();x.track().engine=EngineKind::Sampler;x.track().break_bars=2;
         x.track().pads[0].sample=1;x.track().pads[0].layers[0].sample=2;
         x.track().pads[0].pitch=7;x.track().pads[0].cutoff=42;x.track().break_perf[4]=1;
-        x.pattern().length=1152;Event note;note.key=42;note.tick=96;note.length=48;x.pattern().add(note);
+        x.pattern().length=12*ticks_per_quarter;Event note;note.key=42;note.tick=ticks_per_quarter;note.length=ticks_per_quarter/2;x.pattern().add(note);
         auto original=x.pattern();
         x.ui.break_pending=0;x.ui.break_job_track=0;x.ui.break_job_bars=uint8_t(bars);x.project.samples.edit(0).frames=264600;
         x.gen_break_tick();

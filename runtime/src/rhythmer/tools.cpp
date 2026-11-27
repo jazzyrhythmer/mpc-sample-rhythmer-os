@@ -19,6 +19,7 @@
 #include "rhythmer/shell/mixer_channels.h"
 #include "rhythmer/shell/history_list.h"
 #include "rhythmer/shell/sample_lists.h"
+#include "rhythmer/shell/browse_trim.h"
 #include "rhythmer/shell/controls_rules.h"
 #include "rhythmer/shell/usage_log.h"
 #include "rhythmer/shell/stage_map.h"
@@ -34,6 +35,7 @@
 #include "rhythmer/shell/pad_bank.h"
 #include "rhythmer/shell/sample_library.h"
 #include "rhythmer/shell/seq_layer.h"
+#include "rhythmer/shell/step_lane.h"
 #include "rhythmer/engine/auto_probe.h"
 #include "rhythmer/engine/engine_host.h"
 #include "rhythmer/engine/effect_info.h"
@@ -126,7 +128,7 @@ void starter_project(Project& project, PatternBank& patterns) {
     patterns.clear();
     auto note = [](Pattern& p, unsigned step, uint8_t key, uint8_t velocity, unsigned length) {
         Event e;
-        e.tick = step * sixteenth_ticks; e.length = uint16_t(length * sixteenth_ticks); e.key = key; e.velocity = velocity;
+        e.tick = step * sixteenth_ticks; e.length = note_ticks(length * sixteenth_ticks); e.key = key; e.velocity = velocity;
         p.add(e);
     };
     struct { unsigned step; uint8_t key, length, velocity; } line[] {
@@ -253,6 +255,33 @@ LoadedSample break_sample() {
     s.hit_count = 12;
     for (unsigned n = 0; n < 12; ++n) s.hits[n] = {230087u * n / 12, 200};
     return s;
+}
+
+// Samples' trim sheet (shell/browse_trim.h) over the card's Samples folder: DRUM LOOP read into slot 6 as BREAK's
+// waveform, START and END there (end 0: the file's), `focus` the end turned last; the closer view's own peaks.
+void trim_sheet(Snapshot& s, uint32_t start, uint32_t end, unsigned focus) {
+    s.ui.page = PageId::Samples; s.ui.track = 3; s.ui.settings.preview = true; s.ui.files_cursor = 5; s.sample_root = "/media/card/Rhythmer/Samples";
+    s.files_folder = s.sample_root; s.files_top = false;
+    for (auto name : {"EDITS", "LOOPER", "RECORDED"}) s.files.push_back({std::string("/media/card/Rhythmer/Samples/") + name, name, 0, true});
+    for (auto name : {"BASS LOOP", "BREAK", "DRUM LOOP", "KEYS", "PERC", "VOCAL"})
+        s.files.push_back({std::string("/media/card/Rhythmer/Samples/") + name + ".wav", name, 0, false});
+    s.files[4].path = s.project.samples[4].path;
+    s.ui.files_count = uint16_t(s.files.size()); s.ui.files_audio = true;
+    s.sample = break_sample();
+    auto& ref = s.project.samples.edit(6);
+    std::snprintf(ref.path, sizeof(ref.path), "%s", s.files[5].path.c_str());
+    std::snprintf(ref.name, sizeof(ref.name), "DRUM LOOP");
+    ref.frames = s.sample.frames;
+    auto& b = s.ui.browse;
+    b.slot = 6; b.fresh = true; b.start = start; b.end = end; b.focus = uint8_t(focus); b.opened_at = s.now - 1000;
+    s.ui.turning = int8_t(1 + focus); s.ui.turned_at = s.now; s.ui.last_pot = int8_t(1 + focus);
+    const FrameView view = browse_view(s.project, b);
+    s.detail_from = view.from; s.detail_to = view.to;
+    for (unsigned c = 0; c < s.detail.size(); ++c) { // BREAK's hits a twelfth apart, each a decaying tone
+        const double at = view.from + double(view.width()) * c / s.detail.size(), hit = s.sample.frames / 12.0;
+        const double since = std::fmod(at, hit), level = std::exp(-since / 9000.0) * (0.4 + 0.6 * std::fabs(std::sin(since / 380.0)));
+        s.detail[c] = uint8_t(std::clamp(0.03 + 0.92 * level, 0.0, 1.0) * 255);
+    }
 }
 
 // Pads B: each used pad of the bank in view as a waveform of its own, a hit or a few and their decay.
@@ -425,7 +454,7 @@ void step_edit_kit(Shell& shell, Snapshot& s) {
     pattern = Pattern {};
     pattern.length = 2 * 4 * ticks_per_quarter;
     const struct { unsigned tick; uint8_t pad, velocity; uint16_t length; } hits[] {
-        {0, 0, 118, 24}, {48, 2, 70, 12}, {96, 0, 112, 24}, {96, 2, 84, 12}, {103, 1, 104, 36}, {144, 2, 66, 12}, {192, 1, 110, 24},
+        {0, 0, 118, 240}, {480, 2, 70, 120}, {960, 0, 112, 240}, {960, 2, 84, 120}, {1030, 1, 104, 360}, {1440, 2, 66, 120}, {1920, 1, 110, 240},
     };
     for (const auto& h : hits) {
         Event e;
@@ -457,7 +486,7 @@ void roll_bass(Shell& shell, Snapshot& s, unsigned step, uint8_t key) {
     };
     for (const auto& n : notes) {
         Event e;
-        e.tick = n.step * sixteenth_ticks; e.length = uint16_t(n.length * sixteenth_ticks);
+        e.tick = n.step * sixteenth_ticks; e.length = note_ticks(n.length * sixteenth_ticks);
         e.key = n.key; e.velocity = n.velocity; e.flags = n.flags;
         pattern.add(e);
     }
@@ -530,7 +559,7 @@ void kick_bar(Snapshot& s, float at, float depth) {
 void loose_hand(Pattern& p) {
     p = Pattern {};
     p.length = 4 * 4 * ticks_per_quarter;
-    const unsigned played[] {3, 21, 52, 70, 98, 117, 140, 165};
+    const unsigned played[] {30, 210, 520, 700, 980, 1170, 1400, 1650};
     for (unsigned n = 0; n < 8; ++n) { Event e; e.tick = played[n]; e.key = uint8_t(48 + n % 3 * 4); p.add(e); }
 }
 
@@ -719,7 +748,7 @@ void mixer_other_scene(Snapshot& s, unsigned strip, unsigned block) {
 
 void looper_scene(Snapshot& s) {
     s.ui.page = PageId::Looper; s.playing = true; s.ui.loop = 0;
-    s.project.looper.on = true; s.looper_on = true; s.loop_tick = 384 * 2 + 96 * 2 + 10;
+    s.project.looper.on = true; s.looper_on = true; s.loop_tick = 3840 * 2 + 960 * 2 + 100;
     auto fill = [](Snapshot::LoopShown& l, unsigned seed) {
         for (unsigned c = 0; c < looper::peak_columns; ++c) {
             unsigned beat = c % 32;
@@ -727,13 +756,13 @@ void looper_scene(Snapshot& s) {
             l.peaks[c] = uint8_t(std::min(255.0f, 40 + 200 * env * (0.6f + 0.4f * std::fabs(std::sin(c * 0.37f + seed)))));
         }
     };
-    auto& a = s.loops[0].view; a.state = Looper::State::Overdub; a.length = 176400; a.position = 70000; a.span = a.length; a.ticks = 4 * 384;
+    auto& a = s.loops[0].view; a.state = Looper::State::Overdub; a.length = 176400; a.position = 70000; a.span = a.length; a.ticks = 4 * 3840;
     a.tempo = 1200; a.layers = 3; a.undo = looper::Undo::Undo; a.ready = true; a.stretched = true; a.source = looper::source_input; fill(s.loops[0], 1);
     s.loops[0].meter = 0.5f;
     auto& b = s.loops[1].view; b.state = Looper::State::Recording; b.length = 0; b.position = 60000; b.span = 176400; b.ready = true; b.layers = 1;
     b.source = looper::source_track(2); fill(s.loops[1], 3);
     auto& c = s.loops[2].view; c.state = Looper::State::Stopped; c.pending = Looper::Pending::Play; c.length = 44100; c.position = 12000; c.span = c.length;
-    c.ticks = 384; c.tempo = 1200; c.layers = 1; c.ready = true; c.source = looper::source_mix; fill(s.loops[2], 5);
+    c.ticks = 3840; c.tempo = 1200; c.layers = 1; c.ready = true; c.source = looper::source_mix; fill(s.loops[2], 5);
     auto& d = s.loops[3].view; d.state = Looper::State::Armed; d.bars = 2; d.ready = true; d.source = looper::source_loop(0);
     s.project.looper.loops[3].bars = 2; s.project.looper.loops[1].source = looper::source_track(2);
     s.project.loop_mix[0].level = 110; s.project.loop_mix[0].send = 30; s.project.loop_mix[1].pan = -20; s.project.loop_mix[2].mute = true;
@@ -1179,7 +1208,7 @@ const Preview previews[] {
     // The place bar (shell/place_bar.h) on the kit's Pads, its pattern slot 8 made 4 bars long (no other preview
     // plays it): playing, at the top; recording, at the bottom; stopped, held where Shift + Play carries on.
     {"placebar", [](Shell& shell, Snapshot& s) {
-         place_scene(shell, s); s.playing = true; s.position = 22 * sixteenth_ticks + 2;
+         place_scene(shell, s); s.playing = true; s.position = 22 * sixteenth_ticks + 20;
      }},
     {"placebarbottom", [](Shell& shell, Snapshot& s) {
          place_scene(shell, s); s.playing = true; s.ui.recording = true; s.ui.settings.place_bottom = true; s.position = 53 * sixteenth_ticks;
@@ -1793,7 +1822,7 @@ const Preview previews[] {
          s.ui.settings.rec_quantize = false;
      }},
     {"recarmed", [](Shell&, Snapshot& s) { // Seq Record pressed while stopped: Play starts the take
-         s.ui.page = PageId::Patterns; s.ui.track = 0; s.ui.rec_armed = true; s.ui.locate = 5 * ticks_per_quarter + 12;
+         s.ui.page = PageId::Patterns; s.ui.track = 0; s.ui.rec_armed = true; s.ui.locate = 5 * ticks_per_quarter + 120;
      }},
     {"timecorrect", [](Shell& shell, Snapshot& s) { // Shift + Pad 14 (time-correct C): 70 % toward Q, swung 62 %, as it plays
          s.ui.page = PageId::TimeCorrect; s.ui.track = 0;
@@ -1812,7 +1841,7 @@ const Preview previews[] {
     {"song", [](Shell&, Snapshot& s) {
          s.ui.page = PageId::Song; s.ui.track = 2; s.ui.song_cursor = 24; s.ui.song_view = 16; s.ui.song_zoom = 2;
          s.ui.song_pattern = 2; s.ui.song_length = 4;
-         s.playing = s.song_playing = true; s.song_bar = 20; s.ticks = 48 * 4;
+         s.playing = s.song_playing = true; s.song_bar = 20; s.ticks = 480 * 4;
          // Punches written with Seq Record: a stutter on the master, a low pass on track 3.
          s.project.song.add_punch({23, 12, 4, 4, 255, 100});
          s.project.song.add_punch({27, 0, 16, 8, 2, 80});
@@ -1821,7 +1850,7 @@ const Preview previews[] {
      }},
     {"songzoom", [](Shell&, Snapshot& s) {
          s.ui.page = PageId::Song; s.ui.track = 2; s.ui.song_cursor = 26; s.ui.song_view = 24; s.ui.song_zoom = 0;
-         s.playing = s.song_playing = true; s.song_bar = 25; s.ticks = 40 * 4;
+         s.playing = s.song_playing = true; s.song_bar = 25; s.ticks = 400 * 4;
          s.ui.turning = 0; s.ui.turned_at = s.now;
      }},
     {"songclip", [](Shell&, Snapshot& s) { // the cursor on a clip: B2 and B3 are its jobs
@@ -1836,7 +1865,7 @@ const Preview previews[] {
     {"songtempo", [](Shell&, Snapshot& s) {
          s.ui.page = PageId::Song; s.ui.track = 2; s.ui.song_cursor = 16; s.ui.song_view = 4; s.ui.song_zoom = 2; s.ui.shift = true;
          s.project.song.tempo.set(8, 1280, false); s.project.song.tempo.set(16, 1400, true); s.project.song.tempo.set(24, 1000, false);
-         s.playing = s.song_playing = true; s.song_bar = 13; s.ticks = 48 * 4;
+         s.playing = s.song_playing = true; s.song_bar = 13; s.ticks = 480 * 4;
      }},
     {"songtempoadd", [](Shell&, Snapshot& s) { // the cursor between points: Shift + K1 adds one at the lane's tempo there
          s.ui.page = PageId::Song; s.ui.track = 2; s.ui.song_cursor = 12; s.ui.song_view = 4; s.ui.song_zoom = 2; s.ui.shift = true;
@@ -1968,7 +1997,8 @@ const Preview previews[] {
          for (auto name : files) s.files.push_back({std::string("/media/card/Rhythmer/Samples/") + name + ".wav", name, 0, false});
          s.files[6].path = s.project.samples[4].path;
          s.files[5].starred = true;
-         s.ui.files_count = uint16_t(s.files.size()); s.ui.turning = 1; s.ui.turned_at = s.now;
+         s.ui.files_count = uint16_t(s.files.size()); s.ui.turning = 0; s.ui.turned_at = s.now; // K1 JUMP turned
+         s.ui.files_audio = true; // a sample under the cursor: K2 START, K3 END (the trim sheet)
      }},
     {"samplesstar", [](Shell&, Snapshot& s) { // Shift held on the browser: B3 STAR, its LED lit on a starred file
          s.ui.page = PageId::Samples; s.ui.track = 3; s.ui.files_cursor = 2; s.sample_root = "/media/card/Rhythmer/Samples";
@@ -2048,11 +2078,30 @@ const Preview previews[] {
          const char* files[] {"BASS LOOP", "BREAK", "DRUM LOOP", "KEYS", "PERC", "VOCAL"};
          for (auto name : files) s.files.push_back({std::string("/media/card/Rhythmer/Samples/") + name + ".wav", name, 0, false});
          s.files[4].path = s.project.samples[4].path;
-         s.ui.files_count = uint16_t(s.files.size());
+         s.ui.files_count = uint16_t(s.files.size()); s.ui.files_audio = true;
          PlayHead h; // the audition voice on the preview slot
          h.serial = 50; h.pad = int16_t(sampler_pads); h.slot = uint16_t(preview_slot);
          h.from = 0; h.to = 137592; h.loop_at = 0; h.at = 52920; h.step = 1; h.level = 0.85f; h.wake = 1;
          s.heads[0] = h;
+     }},
+    {"samplestrim", [](Shell&, Snapshot& s) { // K2 turned on an audio file: the trim sheet up, the closer view round START
+         trim_sheet(s, 19000, 0, 0);
+     }},
+    {"samplestrimend", [](Shell&, Snapshot& s) { // K3 turned: the view round END, its last second heard once
+         trim_sheet(s, 19000, 210800, 1);
+         PlayHead h; // the sheet's audition voice
+         h.serial = 51; h.pad = int16_t(sampler_pads); h.slot = 6;
+         h.from = 210800 - 44100; h.to = 210800; h.loop_at = h.from; h.at = 209600; h.step = 1; h.level = 0.85f; h.wake = 1;
+         s.heads[0] = h;
+     }},
+    {"samplestrimrise", [](Shell&, Snapshot& s) { // 60 ms after the turn: the sheet on its way up from the cards
+         trim_sheet(s, 19000, 0, 0);
+         s.ui.browse.opened_at = s.now - 60;
+     }},
+    {"samplestrimloading", [](Shell&, Snapshot& s) { // the file still being read: no handles yet
+         trim_sheet(s, 0, 0, 0);
+         s.project.samples.edit(6).frames = 0; s.sample = LoadedSample {};
+         s.detail_from = s.detail_to = 0;
      }},
     {"banks", [](Shell&, Snapshot& s) { // the card's Samples/Banks: bank files, Push loads one into the bank in view
          s.ui.page = PageId::Samples; s.ui.track = 3; s.ui.files_cursor = 1; s.sample_root = "/media/card/Rhythmer/Samples";
@@ -2252,19 +2301,19 @@ const Preview previews[] {
     {"stageaudiorec", [](Shell&, Snapshot& s) { // recording A1, in its second bar
          audio_scene(s, false); on_stage(s, 12, 1, 0);
          s.ui.recording = true; s.ui.audio_rec_track = 12; s.ui.audio_rec_running = true; s.speaker_quieted = true;
-         s.playing = true; s.position = 480; s.take.left = 0.5f; s.take.right = 0.45f;
+         s.playing = true; s.position = 4800; s.take.left = 0.5f; s.take.right = 0.45f;
      }},
     {"stageaudioagain", [](Shell&, Snapshot& s) { // recording over A1's take: the old one dim under the new
          audio_scene(s, true); on_stage(s, 12, 1, 0);
          s.ui.recording = true; s.ui.audio_rec_track = 12; s.ui.audio_rec_running = true; s.speaker_quieted = true;
-         s.playing = true; s.position = 230; s.take.left = 0.5f; s.take.right = 0.45f;
+         s.playing = true; s.position = 2300; s.take.left = 0.5f; s.take.right = 0.45f;
      }},
     {"stageaudioclip", [](Shell&, Snapshot& s) { // A1's take playing; its start trimmed and faded in
          audio_scene(s, true); on_stage(s, 12, 0, 0);
          auto& r = s.pattern.audio;
          r.gain = 15; r.offset = 3175; r.frames -= 3175; r.fade_in = 1323; r.fade_out = 6615;
          s.sketches[12][0].audio = r;
-         s.playing = true; s.position = 290;
+         s.playing = true; s.position = 2900;
      }},
     {"stageaudiowarp", [](Shell&, Snapshot& s) { // A1's take fitted to the tempo, kept at its pitch
          audio_scene(s, true); on_stage(s, 12, 0, 2);
@@ -2801,7 +2850,7 @@ const Preview previews[] {
      }},
     {"extmtc", [](Shell&, Snapshot& s) { // the song while MTC in leads (parity phase 9b): EXT MTC, the song's own tempo
          s.ui.page = PageId::Song; s.ui.track = 2; s.ui.song_cursor = 25; s.ui.song_view = 16; s.ui.song_zoom = 2;
-         s.playing = s.song_playing = true; s.song_bar = 25; s.ticks = 48 * 4;
+         s.playing = s.song_playing = true; s.song_bar = 25; s.ticks = 480 * 4;
          s.following = true; s.following_mtc = true;
          s.ui.settings.midi.sync_in = MidiSync::Mtc;
      }},
@@ -3041,16 +3090,16 @@ const Preview previews[] {
     {"stepsratchet", [](Shell& shell, Snapshot& s) { // Steps' TRIG row on the kit, the hat's lane: step 5 a ratchet of three rising, Shift held
          step_edit_kit(shell, s);
          s.ui.page = PageId::StepEdit; s.ui.step_pads = true; s.project.tracks[3].last_pad = 2;
-         for (auto& e : shell.patterns().at[3][0].events) if (e.tick == 96 && e.key == sampler_first_note + 2) { e.ratchet = 3; e.ramp = 40; e.pitch_ramp = 5; }
-         for (auto& e : shell.patterns().at[3][0].events) if (e.tick == 144) { e.ratchet = 2; }
+         for (auto& e : shell.patterns().at[3][0].events) if (e.tick == 960 && e.key == sampler_first_note + 2) { e.ratchet = 3; e.ramp = 40; e.pitch_ramp = 5; }
+         for (auto& e : shell.patterns().at[3][0].events) if (e.tick == 1440) { e.ratchet = 2; }
          s.ui.step_cards = 2; s.ui.shift = true;
      }},
     {"stepstrig", [](Shell& shell, Snapshot& s) { // Steps' TRIG row: K3 turning a trig condition, the hat at step 5 on 3:4, step 3 FILL
          step_edit_kit(shell, s);
          s.ui.page = PageId::StepEdit; s.ui.step_pads = true; s.project.tracks[3].last_pad = 2;
          for (auto& e : shell.patterns().at[3][0].events) {
-             if (e.tick == 96 && e.key == sampler_first_note + 2) { e.ratchet = 3; e.ramp = 40; e.condition = uint8_t(trig_of(3, 4)); }
-             if (e.tick == 48) e.condition = uint8_t(trig_fill);
+             if (e.tick == 960 && e.key == sampler_first_note + 2) { e.ratchet = 3; e.ramp = 40; e.condition = uint8_t(trig_of(3, 4)); }
+             if (e.tick == 480) e.condition = uint8_t(trig_fill);
          }
          s.ui.step_cards = 2; s.ui.turning = 2; s.ui.turned_at = s.now;
      }},
@@ -3060,10 +3109,10 @@ const Preview previews[] {
          auto& p = shell.patterns().at[3][0];
          auto lock = [&](uint32_t tick, PadParam which, int value) {
              MotionPoint m;
-             m.tick = tick; m.param = uint8_t(motion_pad_param(which)); m.pad = 2; m.value = int16_t(value); m.hold = 24;
+             m.tick = tick; m.param = uint8_t(motion_pad_param(which)); m.pad = 2; m.value = int16_t(value); m.hold = 240;
              p.write_motion(m);
          };
-         lock(96, PadParam::Pitch, 5); lock(96, PadParam::Level, 70); lock(144, PadParam::Pitch, -3);
+         lock(960, PadParam::Pitch, 5); lock(960, PadParam::Level, 70); lock(1440, PadParam::Pitch, -3);
          s.ui.turning = 0; s.ui.turned_at = s.now;
      }},
     {"motionlocks", [](Shell& shell, Snapshot& s) { // Motion with locks: the hat's tune recorded, two steps locked over it
@@ -3081,6 +3130,38 @@ const Preview previews[] {
          s.ui.page = PageId::StepEdit; s.ui.step_pads = true; s.project.tracks[3].last_pad = 2;
          lay_euclid(shell.patterns().at[3][0], uint8_t(sampler_first_note + 2), 5, 8, 0, 90);
          s.ui.step_cards = 3; s.ui.turning = 0; s.ui.turned_at = s.now;
+     }},
+    {"stepeditsound", [](Shell& shell, Snapshot& s) { // SOUND on the kit's hat lane, step 5 held: B01's sample, PLAY REV; step 7 forward
+         step_edit_kit(shell, s);
+         s.ui.page = PageId::StepEdit; s.ui.step_pads = true; s.project.tracks[3].last_pad = 2; s.ui.held_step = 4;
+         s.ui.step_cards = cards_sound;
+         const uint16_t other = s.project.tracks[3].pads[0].sample; // the kick's sample on the hat's step
+         for (auto& e : shell.patterns().at[3][0].events) {
+             if (e.tick == 960 && e.key == sampler_first_note + 2) { e.sample = uint16_t(other + 1); e.flags = with_play(e.flags, StepPlay::Reverse); }
+             if (e.tick == 1440) e.flags = with_play(e.flags, StepPlay::Random);
+         }
+         s.ui.turning = 2; s.ui.turned_at = s.now;
+     }},
+    {"stepeditsounds", [](Shell& shell, Snapshot& s) { // step 5 held + SAMPLE SELECT: the kit's sounds on the pads, the kick's picked
+         step_edit_kit(shell, s);
+         s.ui.page = PageId::StepEdit; s.ui.step_pads = true; s.project.tracks[3].last_pad = 2; s.ui.step_cards = cards_sound;
+         s.ui.sounds_step = 4; s.ui.sounds_for = 3; s.ui.sounds_track = 3; s.ui.sounds_bank = 0;
+         const uint16_t other = s.project.tracks[3].pads[0].sample;
+         for (auto& e : shell.patterns().at[3][0].events) if (e.tick == 960 && e.key == sampler_first_note + 2) e.sample = uint16_t(other + 1);
+     }},
+    {"patternsdirection", [](Shell&, Snapshot& s) { // Patterns: track 2 backward at x1/2, track 3 (selected) shuffled at x1/4, track 4 at x2
+         s.ui.page = PageId::Patterns; s.ui.track = 2; s.playing = true;
+         const uint8_t live[] {1, 0, 0, 2, 1, 0, 0, 0};
+         for (unsigned t = 0; t < 8; ++t) { s.playing_patterns[t] = live[t]; s.project.tracks[t].pattern = live[t]; s.positions[t] = int((4 + t) * sixteenth_ticks); }
+         s.project.tracks[1].direction = uint8_t(PlayDirection::Reverse); s.project.tracks[1].speed = 5;
+         s.project.tracks[2].direction = uint8_t(PlayDirection::Random); s.project.tracks[2].speed = 4;
+         s.project.tracks[3].speed = 9;
+     }},
+    {"patternsspeed", [](Shell&, Snapshot& s) { // Shift held on Patterns: K3 SPEED turning, x1/4
+         s.ui.page = PageId::Patterns; s.ui.track = 2; s.playing = true; s.ui.shift = true;
+         for (unsigned t = 0; t < 8; ++t) { s.playing_patterns[t] = 0; s.positions[t] = int((4 + t) * sixteenth_ticks); }
+         s.project.tracks[2].speed = 4;
+         s.ui.turning = 2; s.ui.turned_at = s.now;
      }},
     {"patternsvary", [](Shell& shell, Snapshot& s) { // Shift + B3 on Patterns: VARY, Busier picked, amount 30 %
          step_edit_kit(shell, s);
@@ -3490,7 +3571,7 @@ static int mpc_import(const char* path) {
 // pad P of track T (from 0), "T.P^N" plays that pad's notes N semitones up, "T.P^A,B,C" each next note at the next,
 // "T@P=PATH" makes track T a plug-in track with PATH as its print of pattern P (the prints all in one folder),
 // "T.P~W" warps that pad at W (1 Seq, 50..200 %), "S:T.P@B+N" puts a song clip of pattern P on track T's lane at bar B
-// (from 0) for N bars, "L:T.P=TICKS" sets pattern P of track T that long (96 a quarter), "K:T=PATH" makes track T a
+// (from 0) for N bars, "L:T.P=TICKS" sets pattern P of track T that long (960 a quarter), "K:T=PATH" makes track T a
 // keygroup of PATH (its notes kept, as MIDI notes), "M:T=CH,PROG" a MIDI track on channel CH sending program PROG
 // (as Stage shows it, 0 Off; its notes kept).
 static int project_export(bool live, const char* path, const char* folder, const char* name, int changes, char** change) {
@@ -3666,7 +3747,7 @@ static int project_export(bool live, const char* path, const char* folder, const
 namespace {
 // A plug-in's own screen (sdk/rhythmer-screen/rhythmer_screen.h) for its maker, without an MPC: opens the plug-in at
 // `path` (a CLAP library's first, or a VST2 .so) as Edit on its PLUGIN track shows it and writes the screen into
-// `folder` as PNGs, 0.png and one after each step but wait. Steps: wheel:N, push, minus, plus, shift (held until shift again), k1:V, k2:V,
+// `folder` as PNGs, 0.png and one after each step but wait. Steps: wheel:N, push, minus, plus, mute, erase, shift (held until shift again), k1:V, k2:V,
 // k3:V (a pot to V, 0..127, driving its parameter from then), play, stop, wait:MS.
 std::unique_ptr<juce::AudioPluginInstance> open_plugin(const char* path, juce::String& error) {
     const juce::File file {juce::String(path)};
@@ -3858,6 +3939,8 @@ int plugin_screen(const char* path, const std::string& folder, const std::vector
         else if (word == "push") send(RHYTHMER_SCREEN_PUSH, 1);
         else if (word == "minus") send(RHYTHMER_SCREEN_STEP, -1);
         else if (word == "plus") send(RHYTHMER_SCREEN_STEP, 1);
+        else if (word == "mute") send(RHYTHMER_SCREEN_MUTE, 1);   // sent whatever keys() says: the plug-in's answer is what is tried
+        else if (word == "erase") send(RHYTHMER_SCREEN_ERASE, 1);
         else if (word == "shift") frame.shift = frame.shift ? 0 : 1;
         else if (word == "play" || word == "stop") frame.playing = word == "play" ? 1 : 0;
         else if (word.size() == 2 && word[0] == 'k' && word[1] >= '1' && word[1] <= '3') {

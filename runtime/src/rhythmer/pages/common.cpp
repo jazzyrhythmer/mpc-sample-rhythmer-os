@@ -10,6 +10,7 @@
 #include "rhythmer/shell/pad_job.h"
 #include "rhythmer/pages/common.h"
 #include "rhythmer/shell/free_length.h"
+#include "rhythmer/shell/step_sounds.h"
 #include "rhythmer/shell/undo_scope.h"
 #include "rhythmer/shell/midi_ports.h"
 #include "rhythmer/shell/midi_config_rows.h"
@@ -185,6 +186,7 @@ std::array<ui::KnobCard, 3> cards_of(const Snapshot& s) {
         if (!b.bound()) continue;
         if (second[n].bound()) c.shift = s.ui.shift ? 2 : 1;
         if (s.ui.page == PageId::Stage) c.focus = int(n) == stage_focus(s.ui, s.track()); // the wheel's card
+        if (s.ui.page == PageId::Samples && s.ui.browse.up()) c.focus = int(n) == 1 + s.ui.browse.focus; // the trim sheet: the wheel's end
         if (s.ui.page == PageId::FaderPage) c.focus = followed.bound() && followed.kind == b.kind && followed.id == b.id;
         // A bus or the master belongs to no track: its cards are neutral.
         bool neutral = s.ui.page == PageId::Bus || s.ui.page == PageId::Master;
@@ -398,6 +400,29 @@ void describe_card(const Snapshot& s, const Binding& b, ui::KnobCard& c) {
         c.label = m.info->label; c.value = shown.value; c.unit = shown.unit; c.bipolar = bipolar(*m.info); c.fill = gauge_of(*m.info, b.value);
         break;
     }
+    case Kind::StepSound: { // Step Edit's SOUND row: the step's own sample by the pad and track it is on ("B05" T1), else PAD
+        c.label = "SOUND";
+        const auto choices = step_sound_choices(s.project);
+        if (b.value > 0 && size_t(b.value) <= choices.size()) { // the panel names the sample
+            const auto& choice = choices[size_t(b.value - 1)];
+            char label[4];
+            pad_label(choice.pad, label);
+            c.value = label;
+            c.unit = "T" + juce::String(choice.track + 1);
+        } else if (b.id > 0 && unsigned(b.id) <= sample_slots) { // a sample no pad holds now: the step keeps it
+            c.value = juce::String::fromUTF8(s.project.samples[unsigned(b.id) - 1].name);
+        } else {
+            c.value = "PAD";
+        }
+        break;
+    }
+    case Kind::StepSlice: // 0 the pad's region, a slice of the chop (id: how many), id + 1 a slice at random each hit
+        c.label = "SLICE";
+        if (b.id <= 0 || b.value <= 0) c.value = "PAD";
+        else if (b.value > b.id) c.value = "RND";
+        else { c.value = juce::String(b.value); c.unit = "/ " + juce::String(b.id); }
+        break;
+    case Kind::StepPlay: c.label = "PLAY"; c.value = step_play_name(StepPlay(std::clamp(b.value, 0, 3))); break;
     case Kind::StepCondition: case Kind::EventCondition: // trig conditions (roadmap P1)
         c.label = "COND"; c.value = trig_name(unsigned(b.value));
         break;
@@ -717,6 +742,20 @@ void describe_card(const Snapshot& s, const Binding& b, ui::KnobCard& c) {
     case Kind::FileJump:
         c.label = "JUMP"; c.value = juce::String(b.value + 1).paddedLeft('0', 2); c.unit = "/ " + juce::String(s.ui.files_count);
         break;
+    case Kind::BrowseStart: case Kind::BrowseEnd: { // Samples' trim sheet (shell/browse_trim.h): frames, as seconds
+        c.label = b.kind == Kind::BrowseEnd ? "END" : "START";
+        uint32_t frames = uint32_t(std::max(b.value, 0));
+        if (b.id) { // not read yet: the file's length where this project has it already
+            frames = 0;
+            const auto* file = s.ui.files_cursor < s.files.size() ? &s.files[s.ui.files_cursor] : nullptr;
+            if (b.kind == Kind::BrowseEnd && file)
+                for (const auto& ref : s.project.samples) if (ref.used() && ref.frames && file->path == ref.path) { frames = ref.frames; break; }
+            if (b.kind == Kind::BrowseEnd && !frames) { c.value = juce::String::fromUTF8("\xe2\x80\x94"); break; } // an em dash: not known yet
+        }
+        c.value = juce::String(frames / 44100.0, !b.id && b.max - b.min < 4410 ? 4 : 3); c.unit = "s"; // zoomed under 0.1 s: a tenth of a ms
+        break;
+    }
+    case Kind::BrowseZoom: c.label = b.id ? "ZOOM END" : "ZOOM START"; c.value = juce::String(b.value); c.unit = "%"; break;
     case Kind::PluginJump:
         c.label = s.ui.page==PageId::PluginPresets?"PRESET":"JUMP"; c.value = juce::String(b.value + 1); c.unit = "/ " + juce::String(s.ui.page==PageId::PluginPresets?b.max+1:int(s.plugins.files.size()));
         break;

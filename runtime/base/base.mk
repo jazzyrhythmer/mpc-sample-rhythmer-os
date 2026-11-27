@@ -89,4 +89,19 @@ build/obj/base/drivers/kernel_modules.o: $(BASE_SRC)/drivers/kernel_modules.S $(
 	@mkdir -p $(@D)
 	$(CC) -c $(MIRROR_DEFINES) $< -o $@
 endif
+# File Sharing's module (kernel/ksmbd, kernel/ksmbd-6.18; src/drivers/file_share.h),
+# embedded the same way, one for each kernel; a build without one for the
+# running kernel has no File Sharing.
+SMB_MODULE ?= $(BASE_SRC)/../kernel/ksmbd/sample_base_smb.ko
+SMB_MODULE_6_18 ?= $(BASE_SRC)/../kernel/ksmbd-6.18/sample_base_smb-6.18.ko
+SMB_FILES := $(wildcard $(SMB_MODULE) $(SMB_MODULE_6_18))
+SMB_DEFINES := $(if $(wildcard $(SMB_MODULE)),-DSMB_MODULE='"$(SMB_MODULE)"') \
+	$(if $(wildcard $(SMB_MODULE_6_18)),-DSMB_MODULE_6_18='"$(SMB_MODULE_6_18)"')
+ifneq ($(SMB_FILES),)
+OBJECTS += build/obj/base/drivers/smb_module.o
+$(TARGET): build/obj/base/drivers/smb_module.o
+build/obj/base/drivers/smb_module.o: $(BASE_SRC)/drivers/smb_module.S $(SMB_FILES)
+	@mkdir -p $(@D)
+	$(CC) -c $(SMB_DEFINES) $< -o $@
+endif
 -include $(OBJECTS:.o=.d)

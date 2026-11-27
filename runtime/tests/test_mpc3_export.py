@@ -165,8 +165,8 @@ class Mpc3Export(unittest.TestCase):
         self.assertIn("name=Beat tracks=1 sequences=128 pads=2 notes=3 over_limit=0 missing=0 tempo=725 seq_tempo=1 signature=3/4", text)
         self.assertIn("pad A01 file=Kick start=10 end=90 level=100 pan=0 pitch=0 play=1 mono=1 group=2 filter=Off", text)
         self.assertIn("pad A02 file=Snare start=20 end=80 level=51 pan=0 pitch=0 play=0 mono=1 group=0 filter=LPF4 cutoff=50", text)
-        self.assertIn("pattern 0 1 length=768 notes=2 first=0:36:127", text)
-        self.assertIn("pattern 0 0 length=768 notes=1 first=0:37:127", text)
+        self.assertIn("pattern 0 1 length=7680 notes=2 first=0:36:127", text)
+        self.assertIn("pattern 0 0 length=7680 notes=1 first=0:37:127", text)
 
     def test_keygroup_instrument(self):
         # An SFZ of two key zones on the Snare's pad: a Keygroup track of its own, the pad's notes with it at
@@ -530,7 +530,7 @@ class Mpc3Export(unittest.TestCase):
         self.assertEqual(sum(length for _, length in times), sequence["lengthPulses"])
 
     def test_song(self):
-        # The song as one sequence "Song" in the first free pattern number (2): pattern 1 (two notes in a 768-tick
+        # The song as one sequence "Song" in the first free pattern number (2): pattern 1 (two notes in a 7680-tick
         # pattern) at bar 0 for 4 bars of 3/4 plays twice and a little; a print's clip from bar 2; it plays first.
         with tempfile.TemporaryDirectory() as folder:
             prints = Path(folder) / "Song Prints"
@@ -554,11 +554,11 @@ class Mpc3Export(unittest.TestCase):
         # A one-bar pattern in a two-bar sequence plays twice, written out; every track as long as the sequence
         # (MPC 3's drum tracks were two bars of their own and looped them).
         with tempfile.TemporaryDirectory() as folder:
-            # Drum 001's pattern 1 cut to 384 ticks (its notes at 0 and 96 stay); the plug-in track's pattern 1 is 768
+            # Drum 001's pattern 1 cut to 3840 ticks (its notes at 0 and 960 stay); the plug-in track's pattern 1 is 7680
             prints = Path(folder) / "Song Prints"
             prints.mkdir()
             float_wav(prints / "T02 A2.wav", 44100, 2, 100)
-            _, out = self.export(folder, "L:0.1=384", f"1@1={prints}/T02 A2.wav", "L:1.1=768")
+            _, out = self.export(folder, "L:0.1=3840", f"1@1={prints}/T02 A2.wav", "L:1.1=7680")
             _, data = read(out / "Beat.xpj")
         second = next(s["value"] for s in data["sequences"] if s["key"] == 1)
         self.assertEqual(second["lengthPulses"], 7680)

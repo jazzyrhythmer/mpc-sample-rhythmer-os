@@ -25,9 +25,10 @@ void mute_button(Context& c, bool pressed) {
     if (!ui.mute) return;
     ui.mute = false;
     // A tap turns the latch on or off; a hold (or one that muted something) leaves it as it was. On the mixer's FX
-    // block, with no latch to undo, a tap switches the lit effect off or on instead (held, it still mutes channels).
+    // block, with no latch to undo, a tap switches the lit effect off or on instead (held, it still mutes channels);
+    // on a plug-in's own page that takes Mute (rhythmer_screen.h keys()), the tap is the plug-in's.
     if (!ui.mute_used && c.now - ui.mute_down <= mute_hold_ms) {
-        if (!ui.mute_latch && mute_effect(c)) return;
+        if (!ui.mute_latch && (mute_effect(c) || c.plugin_screen_key(ScreenKey::Mute))) return;
         ui.mute_latch = !ui.mute_latch;
     }
 }

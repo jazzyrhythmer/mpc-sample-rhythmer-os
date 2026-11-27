@@ -6,11 +6,11 @@
 #include <string>
 #include <vector>
 
-// Roadmap P4: Standard MIDI Files, in and out, at Rhythmer's 96 ticks a quarter. Plain data, no I/O.
+// Roadmap P4: Standard MIDI Files, in and out, at the sequencer's 960 ticks a quarter. Plain data, no I/O.
 namespace rhythmer {
 
 struct SmfNote {
-    uint32_t tick = 0, length = 1; // ticks at 96 a quarter
+    uint32_t tick = 0, length = 1; // ticks at smf_ppq a quarter
     uint8_t key = 60, velocity = 100;
 };
 struct SmfTrack {
@@ -18,7 +18,7 @@ struct SmfTrack {
     uint8_t channel = 1; // 1..16
     std::vector<SmfNote> notes;
 };
-constexpr unsigned smf_ppq = 96;
+constexpr unsigned smf_ppq = ticks_per_quarter; // the file's division: the sequencer's ticks as they are (960, as the MPC writes)
 
 // Format 1: a first track with the tempo (tenths of a BPM) and time signature (beats over unit), then one track a
 // SmfTrack, each its name and notes on its channel. Roadmap P5: `changes`, the tempo after that (tick, tenths, in
@@ -28,7 +28,7 @@ std::vector<uint8_t> write_smf(const std::vector<SmfTrack>& tracks, unsigned tem
                                const SmfTempos& changes = {});
 // Roadmap P5: the song's tempo lane as tempo changes, every sixteenth a ramp moves by a tenth or more; none without one.
 SmfTempos smf_tempos(const Project& project);
-// Format 0 or 1, any division (ticks a quarter; SMPTE time is refused): every note, at 96 ticks a quarter, a track
+// Format 0 or 1, any division (ticks a quarter; SMPTE time is refused): every note, at smf_ppq ticks a quarter, a track
 // each MTrk with notes (format 0: one a channel); the first tempo found (tenths of a BPM; 0 none). False and `why`
 // when it is no MIDI file.
 bool read_smf(const std::vector<uint8_t>& data, std::vector<SmfTrack>& out, std::string& why, unsigned* tempo_tenths = nullptr);

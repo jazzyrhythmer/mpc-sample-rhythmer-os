@@ -75,6 +75,8 @@ public:
         unsigned n = (wanted >> 1 & 7) % ScreenMirror::size_count;
         return {(wanted & 1) != 0, ScreenMirror::widths[n], ScreenMirror::heights[n], (wanted & 16) ? 60u : 30u};
     }
+    // Any thread: Settings' File sharing, published with the audio format.
+    bool file_sharing() const { return file_sharing_wanted.load(std::memory_order_relaxed); }
     // Before the threads start: the card's settings (Settings::read() text), so that the runtime opens the audio
     // device at their rate and buffer at once. The service thread reads the same file again later.
     void start_settings(const std::string& text);
@@ -180,7 +182,7 @@ private:
     std::atomic<unsigned> screen_wanted {0}; // 0 until the settings say; then 20..100 %
     std::atomic<uint32_t> audio_wanted {44100u | 3u << 20}; // rate | periods << 20
     std::atomic<uint32_t> mirror_wanted {3u << 1}; // on | size << 1 | 60 fps << 4: off, 1280 x 960, 30 fps
-    std::atomic<bool> usb_full {true}, usb_direct {true}, usb_submixes {false};
+    std::atomic<bool> usb_full {true}, usb_direct {true}, usb_submixes {false}, file_sharing_wanted {true};
     std::atomic<float> direct_gain {1.0f};
     void want_audio_format() {
         audio_wanted.store(ui_.settings.audio_rate | uint32_t(ui_.settings.audio_periods) << 20, std::memory_order_relaxed);
@@ -189,6 +191,7 @@ private:
         usb_full.store(ui_.settings.usb_full, std::memory_order_relaxed);
         usb_direct.store(ui_.settings.usb_direct, std::memory_order_relaxed);
         usb_submixes.store(ui_.settings.usb_submixes, std::memory_order_relaxed);
+        file_sharing_wanted.store(ui_.settings.file_sharing, std::memory_order_relaxed);
         direct_gain.store(ui_.settings.direct_gain(), std::memory_order_relaxed);
     }
     std::atomic<unsigned> power {0};

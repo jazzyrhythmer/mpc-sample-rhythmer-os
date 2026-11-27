@@ -1019,6 +1019,7 @@ void PluginRack::panel(unsigned entry, unsigned row, PluginPanel& out) const {
     }
     if (h->has_screen && h->screen_drawn && in_view) {
         out.screen = true;
+        out.screen_keys = uint8_t(h->screen_source ? h->screen_source->screenKeys() : 0u);
         for (unsigned k = 0; k < 3; ++k) {
             out.params[k] = {};
             read_param(h->screen_controls[k], {}, out.params[k]);
@@ -1886,6 +1887,14 @@ void PluginRack::screen_view(const ScreenView& view) {
     if (poke) screen_wake.notify_one();
 }
 
+uint8_t PluginRack::screen_keys(unsigned entry) const {
+    if (entry >= max_plugins) return 0;
+    std::lock_guard<std::mutex> held(lock);
+    const auto& e = entries[entry];
+    if (!e.live || e.status != PluginStatus::Ready || !e.live->has_screen || !e.live->screen_source) return 0;
+    return uint8_t(e.live->screen_source->screenKeys() & (screen_key_mute | screen_key_erase));
+}
+
 void PluginRack::screen_input(unsigned entry, const ScreenInput& input) {
     {
         std::lock_guard<std::mutex> held(screen_lock);
@@ -1983,6 +1992,8 @@ void PluginRack::screen_run() {
         if (source->takeRedraw()) owed = true;
         while (!inputs.empty()) {
             const auto& in = inputs.front().second;
+            static_assert(uint32_t(ScreenKey::Mute) == RHYTHMER_SCREEN_MUTE && uint32_t(ScreenKey::Erase) == RHYTHMER_SCREEN_ERASE
+                          && screen_key_mute == RHYTHMER_SCREEN_KEY_MUTE && screen_key_erase == RHYTHMER_SCREEN_KEY_ERASE);
             rhythmer_screen_input_t raw {uint32_t(in.key), in.value, in.shift ? 1u : 0u};
             bool used = false;
             if (!source->screenInput(raw, used)) break; // busy: the next tick

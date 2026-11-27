@@ -283,6 +283,12 @@ hooks, their threads and how to wire in an app.
   scaled by a whole number, 320 × 240 to 1280 × 960: uncompressed where USB
   has room, else made JPEG by the RK3566's own encoder, sent from a steady
   buffer; an app turns it on with `App::screen_mirror()`.
+- **File Sharing** ([src/drivers/file_share.h](src/drivers/file_share.h))
+  makes the SD card a network drive (SMB 2 and 3) for the computer on the
+  USB-C network while the card stays the MPC's: the kernel's own SMB server
+  (ksmbd), built as a module, answered by the runtime; an app turns it on
+  with `App::file_sharing()`. Firmware 1.3.0.12 only: 1.4 loads no base
+  module.
 - Fonts come from the MPC's existing Liberation Sans installation.
 
 The hardware reference is inMusic's
