@@ -2,6 +2,10 @@
 
 Changes in Rhythmer for the Akai MPC Sample. Install and update steps, and the notes of earlier versions, are on the [releases page](https://github.com/keremimo/melodee-sample/releases).
 
+## Melodee 0.9.1 integration
+
+- Step Edit shows the selected slice, its waveform boundaries and the numbered SLICES pads for the step’s sample.
+
 ## 0.9.0 (2026-11-26)
 
 Back up `Rhythmer/Projects` before you update. A project saved in 0.9.0 plays ten times too slow in 0.8.3 and earlier.

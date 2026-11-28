@@ -61,4 +61,16 @@ inline unsigned sound_step(const UiState& ui, const Pattern& pattern) {
     return unsigned(step) % std::max(1u, pattern.steps());
 }
 
+// The screen's copy of the project leaves the chop table out (Shell::snapshot). Step Edit draws from chops: the
+// SOUND row's SLICE card, the panel's slice edges, the SLICES on the pads. This copies into `to` the chops of the
+// samples on `track`'s pads and of the samples `pattern`'s steps play.
+inline void copy_step_chops(Project& to, const Project& from, const Track& track, const Pattern& pattern) {
+    auto take = [&](unsigned slot) {
+        if (slot < sample_slots && from.chops[slot].used() && !to.chops[slot].used()) to.chops.edit(slot) = from.chops[slot];
+    };
+    for (const auto& sound : track.pads) take(sound.sample);
+    for (const auto& e : pattern.events)
+        if (e.sample) take(e.sample - 1u);
+}
+
 } // namespace rhythmer

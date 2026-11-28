@@ -12738,6 +12738,17 @@ void step_sound_cards() {
     CHECK(row[0].kind == Binding::Kind::StepSound && row[0].value == 4 && row[0].id == 8 && row[0].max == 4);
     CHECK(row[1].kind == Binding::Kind::StepSlice && row[1].id == 12 && row[1].value == 13 && row[1].max == 13);
     CHECK(row[2].kind == Binding::Kind::StepPlay && row[2].value == int(StepPlay::Reverse));
+    { // The screen's copy, made without the chop table (Shell::snapshot): its SLICE card has the chop back on Step Edit.
+        auto drawn = std::make_unique<Project>();
+        SlotTable<SampleChop> chops = std::move(project->chops);
+        *drawn = *project;
+        project->chops = std::move(chops);
+        CHECK(page_bindings(*drawn, ui, q, false)[1].max == 0); // without it: no SLICE card
+        copy_step_chops(*drawn, *project, drawn->tracks[1], q);
+        const auto drawn_row = page_bindings(*drawn, ui, q, false);
+        CHECK(drawn_row[1].kind == Binding::Kind::StepSlice && drawn_row[1].id == 12 && drawn_row[1].max == 13);
+        CHECK(drawn->chops[7].slices.count == 12 && !drawn->chops[4].used() && drawn->chops.blocks_held() == 1);
+    }
     q.events[0].sample = 0; q.events[0].slice = 0;
     row = page_bindings(*project, ui, q, false);
     CHECK(row[0].value == 0 && row[0].id == 0 && row[1].max == 0); // its pad's own sample, no chop: SLICE stays PAD

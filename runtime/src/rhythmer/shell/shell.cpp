@@ -975,10 +975,12 @@ void Shell::snapshot(Snapshot& out, uint32_t now) {
     const uint64_t serial = context_.heavy_serial;
     const bool whole = !snapshot_light || preview_editable_.load(std::memory_order_relaxed)
                     || out.heavy_serial != serial || out.sent_seen != context_.sent || now - out.whole_at >= 500;
-    if (whole) { // The project, without each sample's chop: no page draws one (Chop draws the slices in hand, UiState's).
+    if (whole) { // The project, without each sample's chop (Chop draws the slices in hand, UiState's).
         SlotTable<SampleChop> chops = std::move(project_->chops);
         out.project = *project_;
         project_->chops = std::move(chops);
+        if (ui_.page == PageId::StepEdit) // except the ones Step Edit draws (shell/step_sounds.h)
+            copy_step_chops(out.project, *project_, project_->tracks[ui_.track % track_count], context_.pattern());
     } else {
         copy_light(out.project, *project_);
     }
